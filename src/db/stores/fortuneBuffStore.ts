@@ -2,7 +2,7 @@
 import { FortuneBuff } from "@db/models/FortuneBuff.js";
 
 // ── per-user fortune luck store (FUTURE_PLANS item 88, v1) ──────────────────
-// Owns every DB touch for the /fortune luck buff and the pity streak. Features
+// Owns every DB touch for the fortune luck buff and the pity streak. Features
 // never import the model directly (store layering); they call these functions.
 export const fortuneBuffStore = {
 	// The user's luck state for a reading: their buffed weight (undefined = the base

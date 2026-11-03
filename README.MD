@@ -1,7 +1,7 @@
 # 🔱 Dero Discord Bot
 
 A Discord bot built to help Rise of Kingdoms alliances manage KvK season events,
-track player participation, and rank members for MGE priority access — all through
+track player participation, and rank members for MGE priority access, all through
 an automated reminder system and activity tracker.
 
 > _"I do not serve out of kindness. I exist because my Creator has willed it so."_
@@ -13,13 +13,13 @@ an automated reminder system and activity tracker.
 Dero Discord Bot automates the repetitive but critical work of managing a KvK
 alliance in Rise of Kingdoms:
 
-- **Event reminders** — automatically posts reminders 15 and 30 minutes before
+- **Event reminders**: automatically posts reminders 15 and 30 minutes before
   Ancient Ruins, Altar of Darkness, and Trial of Kau Karuak
-- **Activity tracking** — tracks who acknowledges reminders, who joins voice
+- **Activity tracking**: tracks who acknowledges reminders, who joins voice
   during events, and who is online at event start
-- **Participation scoring** — scores every player per event occurrence so leaders
+- **Participation scoring**: scores every player per event occurrence so leaders
   can make data-driven MGE priority decisions
-- **Self-setup** — constructs its own home base (🪧 NOTICE BOARD) with
+- **Self-setup**: constructs its own home base (🪧 NOTICE BOARD) with
   channels and permissions the moment it joins a server
 
 ---
@@ -149,7 +149,7 @@ src/
 | `/configure-kvk-season`    | Configure reminders for all KvK events for the season |
 | `/list-events`             | View all configured events for the current season     |
 | `/delete-event`            | Remove a configured event                             |
-| `/leaderboard`             | View participation rankings — public or ephemeral     |
+| `/leaderboard`             | View participation rankings, public or ephemeral     |
 
 ### Utility
 
@@ -177,15 +177,26 @@ Bot DMs server owner
 Owner runs /setup @AdminRole
       │
       ▼
-🪧 NOTICE BOARD constructed
-  ├── category created (hidden from @everyone)
-  ├── #📜introductions  → bot introduces itself
-  ├── #📖command-center → command guide
-  ├── #🏆leaderboard    → public rankings
-  ├── #📅event-schedule → upcoming events
-  ├── #📢announcements  → reminders post here
-  └── #🔒inner-sanctum  → admin only, completely hidden
+TWO categories constructed
+      │
+🪧 NOTICE BOARD
+  ├── #📜introductions   → bot introduces itself (the one member-writable channel)
+  ├── #📖command-center  → command guide
+  ├── #🏆leaderboard     → public rankings
+  ├── #📅event-schedule  → upcoming events
+  ├── #📢announcements   → reminders post here
+  ├── #🔜upcoming-events → a post per event inside the 24h horizon
+  ├── #🔒inner-sanctum   → admin only, completely hidden
+  └── #🎛️admin-controls  → admin command guide and control panel
+      │
+🎮 ARCADE GAMES
+  ├── #📋arcade-rules    → what you can play, with who, and what a room is
+  └── #⚔️challenges      → where a match starts; rooms are created under here
 ```
+
+Ten channels across two categories. A **game room** is a per-match channel created
+under 🎮 ARCADE GAMES and deleted four hours after the match ends; its transcript is
+kept in Mongo and outlives the channel.
 
 ### ② Admin configures the season
 
@@ -203,7 +214,7 @@ Bot calculates:
   └── kau karuak: easy → normal (+14d) → hard (+17d) → nightmare (+6d)
       │
       ▼
-Confirmation embed posted — admin clicks ✅ Confirm or ✏️ Edit
+Confirmation embed posted, admin clicks ✅ Confirm or ✏️ Edit
       │
       ▼
 Events saved to DB
@@ -368,14 +379,14 @@ npm start
 This is a passion project for a private alliance. Contributions are welcome but
 please follow the established conventions before opening a PR:
 
-1. **Follow the naming conventions** — see the table above
-2. **No logic in command files** — commands validate input and delegate to
+1. **Follow the naming conventions**: see the table above
+2. **No logic in command files**: commands validate input and delegate to
    `features/`. Business logic lives in features, never in commands
-3. **No raw DB calls outside stores** — all reads and writes go through
+3. **No raw DB calls outside stores**: all reads and writes go through
    `db/stores/`. Nothing else should know MongoDB exists
-4. **All embed text in `embed-content.ts`** — no hardcoded strings in
+4. **All embed text in `embed-content.ts`**: no hardcoded strings in
    `embedBuilder.ts` or anywhere else
-5. **Catch and log all errors** — every catch block should
+5. **Catch and log all errors**: every catch block should
    `console.error("descriptive message:", error)` before replying to the user
 
 ---

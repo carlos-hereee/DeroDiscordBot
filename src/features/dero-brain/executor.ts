@@ -1,0 +1,270 @@
+import type { Guild, GuildMember, MessageMentionOptions } from "discord.js";
+import { NO_PINGS } from "@utils/mentions.js";
+import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
+import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
+import { renderCallSpeech, type CallSpeechInput, type CallSpeechResult } from "@features/voice/callSpeech.js";
+import { voiceSessions, type VoiceSessionView } from "@features/voice/voiceSessions.js";
+import { voiceCopy } from "@features/voice/voiceCopy.js";
+import { isServerCovered } from "@features/entitlements/serverPlanAccess.js";
+import type { BrainAction, BrainActionType, OpenHoldemAction, PostMessageAction, SayAction } from "./brainTypes.js";
+import { isAuthorizedSpeaker } from "./authorizer.js";
+import { readSpeakerAdminRoleId } from "./speakerAdminRole.js";
+import { readTaskChannelIds } from "./taskChannel.js";
+import { checkPostableChannel, type ChannelRefusal } from "./channelGate.js";
+import { deroBrainCopy } from "./deroBrainCopy.js";
+import { describeTerms, describeTermsRefusal, resolveTerms } from "./holdemTerms.js";
+import { createHoldemRequest } from "./holdemRequests.js";
+
+// ── executor ──────────────────────────────────────────────────────────────
+// What:  carry out a parsed brain result in one guild, for one speaker, and
+//        report one human readable line per action.
+// Who:   /dero tell, after the brain answered "ok". Later phases call it for
+//        voice turns too. It is the ONLY code that touches Discord or a voice
+//        call on the brain's behalf.
+// When:  once per answered job, with a voice config re-read just before.
+// Where: the result is bound to the JOB's guild, passed in by the caller; no
+//        action can name a guild, and no channel is ever looked up by name.
+//        `say` and `leave_voice` act only on the call already open in that
+//        guild; the brain can never make Dero join one.
+// How:   ① the kill switch, re-checked here because a job can wait 20 seconds;
+//        ② open_holdem opens NOTHING: it makes a pending table request with the
+//        rules in effect and reports its id, and the caller shows the rules card
+//        (a private reply for /dero tell, a post in the call's channel for a
+//        voice turn); the card's buttons are the only way a table opens, and any
+//        channelId the brain sent is ignored, because the room's channel comes
+//        from the provisioner and the arcade category; ③ the pure checks first
+//        (a post's channel against the task channel, 💬dero-commands, read fresh
+//        through taskChannel.ts; whether a call is open), so a refused action costs
+//        zero Discord API calls; ④ the speaker re-fetched and re-authorized,
+//        only when an action survived ③ (a role removed while the brain was
+//        thinking stops the action); ⑤ the channel gate against the live
+//        cache; ⑥ the send, with every ping disabled; ⑦ `say` renders through
+//        callSpeech (metered, cached) and queues at brain priority;
+//        `leave_voice` ends the call.
+//
+// ⚠️ PRIVACY: a send failure logs ids and an error code, never the text, and a
+// spoken line is never logged or stored.
+
+export type ActionOutcome =
+	| "posted"
+	| ChannelRefusal
+	| "not_authorized"
+	| "switched_off"
+	| "send_failed"
+	| "rules_card"
+	| "terms_refused"
+	| "spoke"
+	| "no_call"
+	| "cap_reached"
+	| "voice_failed"
+	| "queue_full"
+	| "left_call";
+
+/** What happened to one action, with the line the member is shown. */
+export interface ActionReport {
+	type: BrainActionType;
+	outcome: ActionOutcome;
+	line: string;
+	/** Set on a "rules_card" report: the pending table request the caller presents as the rules card. */
+	holdemRequestId?: string;
+}
+
+/** The voice calls the executor makes, injected so tests use a fake call. */
+export interface ExecutorVoiceDeps {
+	sessionIn(guildId: string): VoiceSessionView | null;
+	leave(guildId: string): boolean;
+	render(input: CallSpeechInput): Promise<CallSpeechResult>;
+	/** Whether the server is covered, which picks the budget line (2026-10 item 262). */
+	isCovered(guildId: string): Promise<boolean>;
+}
+
+export interface ExecutorDeps {
+	/** A fresh read of the member, bypassing the cache, or null when they left. */
+	fetchMember(guild: Guild, userId: string): Promise<GuildMember | null>;
+	/**
+	 * GuildConfig.adminRoleId, which authorizes by itself (post-launch plan item 12).
+	 * Optional so a test rig that never builds it keeps the allowlist only rule; the
+	 * default deps always wire it to readSpeakerAdminRoleId.
+	 */
+	loadAdminRoleId?(guildId: string): Promise<string | null>;
+	/**
+	 * The channels a post may go to: 💬dero-commands (2026-10 item 263 Phase 4b). Optional
+	 * so a rig that never posts need not build it; without it no post goes out, the way the
+	 * gate refuses any unlisted channel. The default deps wire it to readTaskChannelIds.
+	 */
+	loadTaskChannelIds?(guildId: string): Promise<string[]>;
+	/** Optional so a caller that never speaks need not build it; defaults to the live calls. */
+	voice?: ExecutorVoiceDeps;
+}
+
+export interface ExecuteInput {
+	guild: Guild;
+	speakerId: string;
+	actions: BrainAction[];
+	voiceConfig: IDeroVoiceConfig | null;
+	deps?: ExecutorDeps;
+}
+
+// Every brain originated post goes out with no pings of any kind. The parser
+// already refuses mention text; this is the second wall for anything it missed.
+// The shared NO_PINGS under the name the executor's callers and tests know, so
+// the two can never drift apart.
+export const SAFE_MENTIONS: MessageMentionOptions = NO_PINGS;
+
+const MASS_MENTION_GLOBAL = /@(everyone|here)/gi;
+const ZERO_WIDTH_SPACE = "​";
+
+const REFUSAL_LINES: Record<ChannelRefusal, string> = {
+	channel_not_allowed: deroBrainCopy.result.channelNotAllowed,
+	channel_unavailable: deroBrainCopy.result.channelUnavailable,
+	bot_lacks_permission: deroBrainCopy.result.botLacksPermission,
+	channel_not_visible: deroBrainCopy.result.channelNotVisible,
+};
+
+export const defaultExecutorVoiceDeps: ExecutorVoiceDeps = {
+	sessionIn: (guildId) => voiceSessions.get(guildId),
+	leave: (guildId) => voiceSessions.leave(guildId, "left"),
+	render: renderCallSpeech,
+	isCovered: isServerCovered,
+};
+
+export const defaultExecutorDeps: ExecutorDeps = {
+	// force: true because the cached member is exactly the stale copy this
+	// re-check exists to get past. A member who left resolves to null.
+	fetchMember: (guild, userId) => guild.members.fetch({ user: userId, force: true }).catch(() => null),
+	loadAdminRoleId: readSpeakerAdminRoleId,
+	loadTaskChannelIds: readTaskChannelIds,
+	voice: defaultExecutorVoiceDeps,
+};
+
+/**
+ * Break "@everyone" and "@here" with a zero width space after the at sign, so
+ * the text renders but can never be read by Discord as a mass mention.
+ */
+export function neutralizeMassMentions(text: string): string {
+	return text.replace(MASS_MENTION_GLOBAL, `@${ZERO_WIDTH_SPACE}$1`);
+}
+
+function report(type: BrainActionType, outcome: ActionOutcome, line: string): ActionReport {
+	return { type, outcome, line };
+}
+
+const isVoiceAction = (action: BrainAction): boolean => action.type === "say" || action.type === "leave_voice";
+
+async function sendPost(
+	guild: Guild,
+	speaker: GuildMember,
+	action: PostMessageAction,
+	allowedChannelIds: readonly string[],
+): Promise<ActionReport> {
+	// ⑤
+	const gate = checkPostableChannel({ guild, channelId: action.channelId, allowedChannelIds, speaker });
+	if (!gate.ok) return report(action.type, gate.reason, REFUSAL_LINES[gate.reason]);
+
+	// ⑥
+	try {
+		await gate.channel.send({ content: neutralizeMassMentions(action.text), allowedMentions: SAFE_MENTIONS });
+		return report(action.type, "posted", deroBrainCopy.result.posted(action.channelId));
+	}
+	catch (err) {
+		const code = (err as { code?: unknown }).code ?? "unknown";
+		console.error(`[dero-brain] post failed guild=${guild.id} channel=${action.channelId} code=${String(code)}`);
+		return report(action.type, "send_failed", deroBrainCopy.result.sendFailed);
+	}
+}
+
+// ⑦ say: render, then queue only if the call it was rendered for is still open.
+async function sayInCall(guild: Guild, action: SayAction, voiceId: string, voice: ExecutorVoiceDeps): Promise<ActionReport> {
+	const session = voice.sessionIn(guild.id);
+	if (!session) return report(action.type, "no_call", deroBrainCopy.result.sayNoCall);
+
+	const speech = await voice.render({ guildId: guild.id, voiceId, text: action.text });
+	if (speech.status === "capReached") {
+		return report(action.type, "cap_reached", deroBrainCopy.result.sayCapReached(await voice.isCovered(guild.id)));
+	}
+	if (speech.status === "failed") return report(action.type, "voice_failed", deroBrainCopy.result.sayFailed);
+	// The call can end during the render; a line for a call that is gone is dropped.
+	if (voice.sessionIn(guild.id) !== session) return report(action.type, "no_call", deroBrainCopy.result.sayNoCall);
+
+	if (session.speaker.speak(speech.pcm48kStereo, "brain") === "dropped") {
+		return report(action.type, "queue_full", deroBrainCopy.result.sayQueueFull);
+	}
+	return report(action.type, "spoke", deroBrainCopy.result.spoke);
+}
+
+// ② The pending request, or the bound the terms broke. The parser already holds
+// the brain to the same bounds, so a refusal here is a guard, not a live path.
+function makeRulesCard(guild: Guild, speakerId: string, action: OpenHoldemAction): ActionReport {
+	const resolved = resolveTerms({ maxSeats: action.maxSeats, startingStack: action.startingStack, bigBlind: action.bigBlind });
+	if (!resolved.ok) {
+		return report(action.type, "terms_refused", deroBrainCopy.result.holdemTermsRefused(describeTermsRefusal(resolved.reason)));
+	}
+	const request = createHoldemRequest({ guildId: guild.id, speakerId, terms: resolved.terms });
+	return { ...report(action.type, "rules_card", deroBrainCopy.result.holdemCard(describeTerms(resolved.terms))), holdemRequestId: request.id };
+}
+
+function leaveCall(guild: Guild, voice: ExecutorVoiceDeps): ActionReport {
+	const session = voice.sessionIn(guild.id);
+	if (!session) return report("leave_voice", "no_call", deroBrainCopy.result.leaveNoCall);
+	voice.leave(guild.id);
+	return report("leave_voice", "left_call", voiceCopy.call.left(session.channelId));
+}
+
+/** Run a parsed result's actions and say what happened to each, in order. */
+export async function executeActions({
+	guild,
+	speakerId,
+	actions,
+	voiceConfig,
+	deps = defaultExecutorDeps,
+}: ExecuteInput): Promise<ActionReport[]> {
+	// ① a config for another guild counts as no config at all
+	if (!voiceConfig || !voiceConfig.enabled || voiceConfig.guildId !== guild.id) {
+		return actions.map((action) => report(action.type, "switched_off", deroBrainCopy.result.switchedOff));
+	}
+	const voice = deps.voice ?? defaultExecutorVoiceDeps;
+
+	// ③ before any API call: the posts that could possibly go out, and whether a
+	// voice action has a call to act on (the session map is local memory)
+	// Read only when a post was asked for, so a voice only answer costs no database read.
+	const asksToPost = actions.some((action) => action.type === "post_message");
+	const allowed: readonly string[] = asksToPost && deps.loadTaskChannelIds ? await deps.loadTaskChannelIds(guild.id) : [];
+	const postable = actions.filter(
+		(action): action is PostMessageAction => action.type === "post_message" && allowed.includes(action.channelId),
+	);
+	const callActionable = actions.some(isVoiceAction) && voice.sessionIn(guild.id) !== null;
+	const asksForTable = actions.some((action) => action.type === "open_holdem");
+
+	// ④ only fetched when an action survived ③, so a refused result costs no
+	// Discord call at all
+	let speaker: GuildMember | null = null;
+	let speakerAuthorized = false;
+	if (postable.length > 0 || callActionable || asksForTable) {
+		speaker = await deps.fetchMember(guild, speakerId);
+		const adminRoleId = deps.loadAdminRoleId ? await deps.loadAdminRoleId(guild.id) : null;
+		speakerAuthorized = isAuthorizedSpeaker({ member: speaker, guildOwnerId: guild.ownerId, adminRoleId, voiceConfig });
+	}
+
+	const reports: ActionReport[] = [];
+	for (const action of actions) {
+		if (action.type === "post_message" && !allowed.includes(action.channelId)) {
+			reports.push(report(action.type, "channel_not_allowed", REFUSAL_LINES.channel_not_allowed));
+			continue;
+		}
+		// No call means nothing to say or leave, and saying so needs no member.
+		if (isVoiceAction(action) && !voice.sessionIn(guild.id)) {
+			const line = action.type === "say" ? deroBrainCopy.result.sayNoCall : deroBrainCopy.result.leaveNoCall;
+			reports.push(report(action.type, "no_call", line));
+			continue;
+		}
+		if (!speaker || !speakerAuthorized) {
+			reports.push(report(action.type, "not_authorized", deroBrainCopy.result.notAuthorized));
+			continue;
+		}
+		if (action.type === "open_holdem") reports.push(makeRulesCard(guild, speakerId, action));
+		else if (action.type === "say") reports.push(await sayInCall(guild, action, resolveDeroVoiceId(voiceConfig), voice));
+		else if (action.type === "leave_voice") reports.push(leaveCall(guild, voice));
+		else reports.push(await sendPost(guild, speaker, action, allowed));
+	}
+	return reports;
+}

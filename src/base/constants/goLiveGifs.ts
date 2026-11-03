@@ -3,7 +3,7 @@
 // thumbnail when a guild has NOT set its own defaultEventImageUrl. These are
 // external (Tenor's CDN) and reliable, so nothing is bundled in the repo for
 // this. IMPORTANT: use the DIRECT media url (https://media.tenor.com/<id>/<name>.gif),
-// NOT a tenor.com/view/... share link — share links do not render in a Discord
+// NOT a tenor.com/view/... share link, share links do not render in a Discord
 // embed image/thumbnail slot.
 //
 // Widen the rotation by pasting more direct urls into this array. An empty array
@@ -34,7 +34,7 @@ export const GO_LIVE_GIF_URLS: readonly string[] = [
 ];
 
 // Pick a random go-live gif, or null when none are configured yet. Runtime only
-// (Math.random) — never call from a deterministic context (e.g. a workflow script
+// (Math.random), never call from a deterministic context (e.g. a workflow script
 // that must replay identically across a resume).
 export function pickRandomGoLiveGif(): string | null {
 	if (GO_LIVE_GIF_URLS.length === 0) return null;

@@ -3,8 +3,7 @@ import { reminderStore } from "@db/stores/reminderStore.js";
 import { activityStore } from "@db/stores/activityStore.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
-import { isEventWindowOpen } from "@features/events/occurrenceCalculator.js";
-import { getUpcomingOccurrences } from "@features/events/occurrenceCalculator.js";
+import { openWindowStart } from "@features/events/occurrenceCalculator.js";
 import { IVoiceSession } from "./activity.types.js";
 import { computeScore } from "./ParticipationStore.js";
 import { scheduleLeaderboardRefresh } from "@features/leaderboard/LeaderboardBoard.js";
@@ -13,13 +12,31 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 
 // in-memory map of active voice sessions
 // key is userId, value is the session details
-// this resets if the bot restarts — acceptable for a single server bot
+// this resets if the bot restarts, acceptable for a single server bot
 const activeSessions = new Map<string, IVoiceSession>();
 
 export function registerActivityListeners(client: Client): void {
 	// ─────────────────────────────────────────
-	// LISTENER 1 — Reaction tracking
+	// LISTENER 1, Reaction tracking
 	// fires when any user reacts to any message
+	//
+	// ⚠️ THIS IS NOT THE ONLY MessageReactionAdd LISTENER. A second one lives in
+	// src/features/leveling/reactionXp.ts and both are registered from main.ts.
+	// Two listeners on one event reads as a bug on sight, so this comment exists
+	// to say it is not. The differences are total:
+	//
+	//   this one     filters to the ✅ emoji, ONLY on a message that is a stored
+	//                ReminderLog, ONLY when that log is not a test fire, and
+	//                writes PlayerActivity (did this warrior show up for this
+	//                KvK event).
+	//   reactionXp   accepts ANY emoji on ANY message, ignores ReminderLog
+	//                entirely, and writes MemberLevel (how present is this member
+	//                in this server over time).
+	//
+	// Neither may touch the other's model, and neither may be folded into the
+	// other: leveling through PlayerActivity would need a fake eventId for "just
+	// chatting", which corrupts the participation score, /leaderboard, the
+	// dashboard players route and the pinned board all at once.
 	// ─────────────────────────────────────────
 
 	client.on(
@@ -74,7 +91,7 @@ export function registerActivityListeners(client: Client): void {
 				// When:  resolved at write time on every activity event so the
 				//        cached display name follows nickname renames within a
 				//        single occurrence. Older records keep the username
-				//        they had at the time of the activity (acceptable —
+				//        they had at the time of the activity (acceptable,
 				//        they reflect what was true that day).
 				// Where: the message guild gives us a GuildMember to read the
 				//        nickname from. Fallback to globalName (the new Discord
@@ -108,7 +125,7 @@ export function registerActivityListeners(client: Client): void {
 	);
 
 	// ─────────────────────────────────────────
-	// LISTENER 2 — Voice join/leave tracking
+	// LISTENER 2, Voice join/leave tracking
 	// fires whenever any user's voice state changes
 	// ─────────────────────────────────────────
 	client.on(Events.VoiceStateUpdate, async (oldState: VoiceState, newState: VoiceState) => {
@@ -141,14 +158,14 @@ export function registerActivityListeners(client: Client): void {
 
 			// ── player joined voice ──
 			if (joined) {
-				// VoiceState.guild is always populated for guild voice channels — the
+				// VoiceState.guild is always populated for guild voice channels, the
 				// only path with no guild is direct DM voice, which doesn't reach this
 				// listener.
 				const guildId = newState.guild?.id ?? oldState.guild?.id ?? "";
 				if (!guildId) return;
 				// check if any event window is currently open in this guild
 				const activeEvent = await getActiveEvent(guildId);
-				if (!activeEvent) return; // no event happening right now — don't track
+				if (!activeEvent) return; // no event happening right now, don't track
 
 				// cache session in memory
 				activeSessions.set(userId, {
@@ -158,7 +175,7 @@ export function registerActivityListeners(client: Client): void {
 					joinedAt: Date.now(),
 				});
 
-				// mark that they joined — voiceMinutes updated when they leave
+				// mark that they joined, voiceMinutes updated when they leave
 				await activityStore.upsert({
 					eventId: activeEvent.eventId,
 					eventOccurrence: activeEvent.occurrence,
@@ -167,14 +184,14 @@ export function registerActivityListeners(client: Client): void {
 					data: { joinedVoiceDuring: true },
 				});
 
-				// coalesced leaderboard refresh — see the reaction listener note.
+				// coalesced leaderboard refresh, see the reaction listener note.
 				scheduleLeaderboardRefresh(client, guildId);
 			}
 
 			// ── player left voice ──
 			if (left) {
 				const session = activeSessions.get(userId);
-				if (!session) return; // they joined before bot started — no session data
+				if (!session) return; // they joined before bot started, no session data
 
 				// calculate how long they were in VC
 				const voiceMinutes = Math.floor((Date.now() - session.joinedAt) / 60_000);
@@ -196,7 +213,7 @@ export function registerActivityListeners(client: Client): void {
 
 				await updateScore(session.eventId, session.eventOccurrence, userId);
 
-				// coalesced leaderboard refresh — see the reaction listener note.
+				// coalesced leaderboard refresh, see the reaction listener note.
 				if (voiceGuildId) scheduleLeaderboardRefresh(client, voiceGuildId);
 			}
 		} catch (error) {
@@ -205,7 +222,7 @@ export function registerActivityListeners(client: Client): void {
 	});
 
 	// ─────────────────────────────────────────
-	// LISTENER 3 — Presence tracking
+	// LISTENER 3, Presence tracking
 	// fires when a user's online status changes
 	// ─────────────────────────────────────────
 	client.on(Events.PresenceUpdate, async (oldPresence, newPresence) => {
@@ -218,7 +235,7 @@ export function registerActivityListeners(client: Client): void {
 			if (!wasOffline || !isOnline) return;
 
 			// PresenceUpdate fires with a guild context (presence is per-guild). Pull
-			// guildId off the new presence — without it the per-guild event lookup
+			// guildId off the new presence, without it the per-guild event lookup
 			// can't run.
 			const guildId = newPresence.guild?.id ?? "";
 			if (!guildId) return;
@@ -229,7 +246,7 @@ export function registerActivityListeners(client: Client): void {
 
 			const userId = newPresence.member.id;
 			// Same per guild displayName precedence as the voice and reaction
-			// listeners — keep the three write paths in sync so a leaderboard
+			// listeners, keep the three write paths in sync so a leaderboard
 			// row never flips between nickname and raw username depending on
 			// which event happened to write last.
 			const username = newPresence.member.displayName ?? newPresence.member.user.globalName ?? newPresence.member.user.username;
@@ -264,16 +281,13 @@ async function getActiveEvent(guildId: string, windowMinutes = 60) {
 	const events = await eventStore.findByGuildId(guildId);
 
 	for (const event of events) {
-		if (!isEventWindowOpen(event, new Date(), windowMinutes)) continue;
+		// The occurrence that just started: a one time event's own start, or the
+		// recurring occurrence before the next one (one local week for a weekly event
+		// with a zone, one interval otherwise). 2026-10 item 280.
+		const occurrence = openWindowStart(event, new Date(), windowMinutes);
+		if (!occurrence) continue;
 
-		const [occurrence] = getUpcomingOccurrences(event, 1);
-
-		// getUpcomingOccurrences returns the NEXT future occurrence
-		// but we want the one that just started — so look back one interval
-		const intervalMs = event.intervalHours * 60 * 60 * 1000;
-		const lastOccurrence = new Date(occurrence.getTime() - intervalMs);
-
-		return { ...event, occurrence: lastOccurrence };
+		return { ...event, occurrence };
 	}
 
 	return null;

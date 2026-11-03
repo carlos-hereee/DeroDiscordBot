@@ -2,6 +2,10 @@ import { Client, Events, GuildMember, PermissionFlagsBits, TextChannel } from "d
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { ICEBREAKERS } from "./icebreakers.js";
+import { attachListenRow } from "@features/voice/listenButton.js";
+import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
+import type { IPluginCopy } from "@base/copy/types.js";
+import { renderWelcomeCard, WELCOME_AVATAR_SIZE, type WelcomeCardView } from "./welcomeCardRenderer.js";
 
 // ── new-member greeter (v1.6) ──────────────────────────────────────────────
 // What:  on guildMemberAdd, post a welcome in the guild's introductions channel
@@ -15,9 +19,11 @@ import { ICEBREAKERS } from "./icebreakers.js";
 // When:  every non-bot join in a setup-complete guild that has an intro channel.
 // How:   compose a random pack-voiced framing (kingdom vs neutral) with a random
 //        icebreaker from the shared bank, then post as message CONTENT (not an
-//        embed) so the mention actually notifies — Discord does not fire a
+//        embed) so the mention actually notifies, Discord does not fire a
 //        notification for a mention inside an embed description. allowedMentions
 //        is scoped to the one joining member so nothing else can be pinged.
+//        The welcome card (2026-10 item 243 Phase 4) rides the same message as
+//        a file under the text; when it does not draw, the text posts alone.
 
 // Uniform random pick. Math.random is fine in bot runtime (the no-random rule
 // only applies to resumable Workflow scripts, not the bot itself).
@@ -31,7 +37,7 @@ function pick<T>(arr: readonly T[]): T | undefined {
 // uses it to give the admin an honest success/failure ack instead of a blind
 // confirmation.
 export async function welcomeNewMember(member: GuildMember): Promise<boolean> {
-	// Never greet bots — they don't read it and it would clutter the channel.
+	// Never greet bots, they don't read it and it would clutter the channel.
 	if (member.user.bot) return false;
 
 	try {
@@ -42,14 +48,28 @@ export async function welcomeNewMember(member: GuildMember): Promise<boolean> {
 		const channel = await member.client.channels.fetch(config.introChannelId).catch(() => null);
 		if (!(channel instanceof TextChannel)) return false;
 
-		const framing = pick(getPluginCopy(config).greeter.framings);
+		const copy = getPluginCopy(config);
+		const framing = pick(copy.greeter.framings);
 		const question = pick(ICEBREAKERS);
 		if (!framing || !question) return false;
 
-		await channel.send({
+		// Drawn BEFORE the send, so the card arrives with the ping rather than as
+		// a second notification. Both callers can wait: the join path is fire and
+		// forget and the admin button deferred its reply first.
+		const card = await withRenderFallback(
+			() => renderWelcomeCard(welcomeCardView(member, copy.greeter.card)),
+			() => null
+		);
+		const message = await channel.send({
 			content: framing(`<@${member.id}>`, question),
 			allowedMentions: { users: [member.id] },
+			...(isRenderPayload(card) ? { files: [card.attachment] } : {}),
 		});
+		// Dero's voice can read the welcome aloud. Added by an edit AFTER the send,
+		// fire and forget, so the voice config read can never delay or block the
+		// greeting; the edit touches components only, so the mention does not ping
+		// a second time.
+		void attachListenRow(member.guild.id, (components) => message.edit({ components }));
 		return true;
 	} catch (error) {
 		// Fire-and-forget on the join path: a greeting failure must never throw
@@ -57,6 +77,20 @@ export async function welcomeNewMember(member: GuildMember): Promise<boolean> {
 		console.error(`[greeter] failed to welcome ${member.id} in guild ${member.guild?.id}`, error);
 		return false;
 	}
+}
+
+// The welcome card's view of one newcomer, in the guild pack's voice. The member
+// count is the guild's own, which already includes the newcomer.
+export function welcomeCardView(member: GuildMember, copy: IPluginCopy["greeter"]["card"]): WelcomeCardView {
+	const count = member.guild.memberCount;
+	return {
+		kicker: copy.kicker,
+		title: copy.title(member.displayName),
+		subtitle: copy.subtitle(member.guild.name),
+		memberCount: Number.isFinite(count) && count > 0 ? copy.memberCount(count) : null,
+		displayName: member.displayName,
+		avatar: avatarRequestFor(member.user, WELCOME_AVATAR_SIZE),
+	};
 }
 
 // ── boot: make existing guilds' introductions channels member-writable ──────
@@ -94,22 +128,30 @@ export async function ensureIntroChannelsWritable(client: Client): Promise<void>
 // Per-guild rolling-window cap so a raid / invite-blast / mass-join cannot turn
 // the greeter into a self-inflicted flood: at most GREET_BURST greetings per
 // GREET_WINDOW_MS per guild; joins past that are skipped (logged). Only the
-// on-join path is throttled — the admin "Fire a greeting" button calls
+// on-join path is throttled, the admin "Fire a greeting" button calls
 // welcomeNewMember directly and is never rate-limited. In-memory like the bot's
 // other cooldowns (announce / test-fire routes); resets on restart, which is fine.
 const GREET_WINDOW_MS = 60_000;
 const GREET_BURST = 8;
+const GREETER_BUCKET = "greeter";
 const recentGreets = new Map<string, number[]>();
 
-function greetAllowed(guildId: string): boolean {
+/**
+ * The per guild join flood throttle: true when a post fits the rolling window, and
+ * records it. `bucket` keeps each caller's budget apart (2026-10 item 247 Phase 2):
+ * the welcome log posts on the same joins, and sharing one window would halve how
+ * many newcomers the greeter welcomes in a burst.
+ */
+export function greetAllowed(guildId: string, bucket: string = GREETER_BUCKET): boolean {
+	const key = `${bucket}:${guildId}`;
 	const now = Date.now();
-	const times = (recentGreets.get(guildId) ?? []).filter((t) => now - t < GREET_WINDOW_MS);
+	const times = (recentGreets.get(key) ?? []).filter((t) => now - t < GREET_WINDOW_MS);
 	if (times.length >= GREET_BURST) {
-		recentGreets.set(guildId, times); // keep the trimmed window so it decays
+		recentGreets.set(key, times); // keep the trimmed window so it decays
 		return false;
 	}
 	times.push(now);
-	recentGreets.set(guildId, times);
+	recentGreets.set(key, times);
 	return true;
 }
 

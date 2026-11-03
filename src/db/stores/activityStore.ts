@@ -10,7 +10,7 @@ interface IUpsertActivity {
 }
 
 export const activityStore = {
-	// core method — creates record if it doesn't exist, updates if it does
+	// core method, creates record if it doesn't exist, updates if it does
 	// this is called from multiple places so upsert is safer than create
 	async upsert({ eventId, eventOccurrence, userId, username, data }: IUpsertActivity) {
 		return PlayerActivityModel.findOneAndUpdate(
@@ -101,17 +101,23 @@ export const activityStore = {
 		return PlayerActivityModel.find({ userId }).sort({ eventOccurrence: -1 });
 	},
 
-	// used to get one specific record — e.g. to update voiceMinutes
+	// used to get one specific record, e.g. to update voiceMinutes
 	async findOne(eventId: string, eventOccurrence: Date, userId: string) {
 		return PlayerActivityModel.findOne({ eventId, eventOccurrence, userId });
 	},
 
 	// Retention cleanup (audit H7). Deletes rows whose occurrence is older than
 	// `cutoff`. Called by the daily retention cron, which only runs when the
-	// owner has set PLAYER_ACTIVITY_RETENTION_DAYS — this method never runs on
+	// owner has set PLAYER_ACTIVITY_RETENTION_DAYS, this method never runs on
 	// its own. Returns the delete count for the cron's log line.
 	async deleteOlderThan(cutoff: Date): Promise<number> {
 		const result = await PlayerActivityModel.deleteMany({ eventOccurrence: { $lt: cutoff } });
 		return result.deletedCount ?? 0;
+	},
+
+	// Self destruct's server data delete (post-launch plan item 10). Attendance rows carry
+	// no guildId, so the caller passes the guild's event ids.
+	async deleteByEvents(eventIds: string[]) {
+		return PlayerActivityModel.deleteMany({ eventId: { $in: eventIds } });
 	},
 };

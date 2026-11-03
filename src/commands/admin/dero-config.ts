@@ -1,0 +1,287 @@
+import {
+	SlashCommandBuilder,
+	SlashCommandSubcommandGroupBuilder,
+	ChatInputCommandInteraction,
+	type RepliableInteraction,
+	ChannelType,
+	type EmbedBuilder,
+} from "discord.js";
+import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { deroVoiceConfigStore, type DeroVoiceListField } from "@db/stores/deroVoiceConfigStore.js";
+import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
+import { COLORS } from "@base/copy/brand.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { voiceCopy } from "@features/voice/voiceCopy.js";
+// Hidden by the owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b); returns later.
+// import { currentMonthCents } from "@features/voice/spendMeter.js";
+// import { formatUsd } from "@features/voice/pricing.js";
+import { isTtsKeyConfigured } from "@features/voice/elevenLabsTts.js";
+import { voiceSessions } from "@features/voice/voiceSessions.js";
+import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
+import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { adminLog, type AdminLogKind } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
+import { refreshHeadquartersCards } from "@features/setup/headquartersCards.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
+
+// ── /dero-config ──────────────────────────────────────────────────────
+// What:  Dero's voice and task list, one per guild, in one admin command: the kill
+//        switch, Listen on or off, and the two allowlists later phases authorize
+//        against (the task roles and the voice channels). The monthly cap is hidden
+//        (still enforced by spendMeter at the stored value or $5), and the text
+//        channel list is retired: a Dero task posts in 💬dero-commands
+//        (dero-brain/taskChannel.ts, 2026-10 item 263 Phase 4b). The voice itself is not a setting: Dero speaks
+//        with DERO_DEFAULT_VOICE_ID, so enable works straight away. The arcade's
+//        settings are /arcade (commands/admin/arcade.ts), since none has anything to
+//        do with the voice.
+// Who:   server admins, gated at runtime by ADMIN_COMMANDS in main.ts (guild
+//        owner or the bot's admin role), from the slash command or the /dero-config
+//        button on the admin guide, which runs this same run. It carries no Discord
+//        default permission, which would hide it from that admin role.
+// When:  on demand. Every write is idempotent with an explicit "already X"
+//        reply, so repeating a command never reads as a fake change.
+// Where: writes DeroVoiceConfig through deroVoiceConfigStore. Read by the Listen
+//        button and handler and by the spend meter.
+// How:   ① guild gate (rejects DM use); ② setup gate (a guild that never ran
+//        /setup has no admin role for the runtime gate to check); ③ dispatch on
+//        the subcommand group or subcommand; ④ one ephemeral embed reply.
+//
+// Every write records one 🗒️admin-log line through the Audit callback run() builds
+// (post-launch plan item 11); an "already X" reply wrote nothing and logs nothing.
+//
+// ⚠️ DISABLE NEVER DELETES. It flips `enabled` and nothing else, so enable
+// restores the guild exactly as it was, lists and cap included. It
+// (and a cap of 0) DOES end a live voice call at once: that is a session, not a
+// setting, and a kill switch that left Dero talking would not be one.
+
+const c = voiceCopy.config;
+const audited = setupCopy.adminLog;
+
+/** Records one admin log line for a write that just landed. */
+type Audit = (kind: AdminLogKind, subject: string, detail: string) => void;
+const VOICE_ID_TAIL_LENGTH = 4;
+
+type ListKind = "role" | "voicechannel";
+
+// Where Dero may join. Stage channels are left out on purpose: the plan allowlists
+// ordinary voice channels only.
+const VOICE_CHANNEL_TYPES = [ChannelType.GuildVoice] as const;
+
+// One row per allowlist: the option it reads, the stored field, how an id renders.
+const LISTS: Record<ListKind, { field: DeroVoiceListField; option: string; mention: (id: string) => string; title: string }> = {
+	role: { field: "allowedRoleIds", option: "role", mention: (id) => `<@&${id}>`, title: c.listTitle.roles },
+	voicechannel: { field: "allowedVoiceChannelIds", option: "channel", mention: (id) => `<#${id}>`, title: c.listTitle.voiceChannels },
+};
+
+/** The last characters of a voice id, the only part any reply ever shows. */
+export function voiceIdTail(id: string): string {
+	return id.slice(-VOICE_ID_TAIL_LENGTH);
+}
+
+function listGroup(kind: ListKind, description: string): SlashCommandSubcommandGroupBuilder {
+	const group = new SlashCommandSubcommandGroupBuilder().setName(kind).setDescription(description);
+	for (const action of ["add", "remove"] as const) {
+		group.addSubcommand((sub) => {
+			sub.setName(action).setDescription(action === "add" ? c.sub.add : c.sub.remove);
+			if (kind === "role") {
+				return sub.addRoleOption((option) => option.setName("role").setDescription(c.sub.roleOption).setRequired(true));
+			}
+			return sub.addChannelOption((option) =>
+				option
+					.setName("channel")
+					.setDescription(c.sub.voiceChannelOption)
+					.setRequired(true)
+					.addChannelTypes(...VOICE_CHANNEL_TYPES)
+			);
+		});
+	}
+	return group;
+}
+
+export const data = new SlashCommandBuilder()
+	.setName("dero-config")
+	.setDescription(c.commandDescription)
+	.addSubcommand((sub) => sub.setName("status").setDescription(c.sub.status))
+	.addSubcommand((sub) => sub.setName("enable").setDescription(c.sub.enable))
+	.addSubcommand((sub) => sub.setName("disable").setDescription(c.sub.disable))
+	.addSubcommand((sub) =>
+		sub
+			.setName("listen")
+			.setDescription(c.sub.listen)
+			.addBooleanOption((option) => option.setName("enabled").setDescription(c.sub.listenOption).setRequired(true))
+	)
+	// Hidden by the owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b); returns later.
+	// .addSubcommand((sub) =>
+	// 	sub
+	// 		.setName("cap")
+	// 		.setDescription(c.sub.cap)
+	// 		.addIntegerOption((option) =>
+	// 			option
+	// 				.setName("dollars")
+	// 				.setDescription(c.sub.capOption)
+	// 				.setRequired(true)
+	// 				.setMinValue(0)
+	// 				.setMaxValue(BOT_CONSTANTS.DERO_VOICE_MAX_CAP_USD)
+	// 		)
+	// )
+	.addSubcommandGroup(listGroup("role", c.sub.roleGroup))
+	.addSubcommandGroup(listGroup("voicechannel", c.sub.voiceChannelGroup));
+
+// ── handlers, one per subcommand ──
+
+const info = (body: string, title: string = c.statusTitle): EmbedBuilder => infoEmbed(title, body, COLORS.ADMIN);
+
+async function status(current: IDeroVoiceConfig | null): Promise<EmbedBuilder> {
+	// Hidden by the owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b); returns later.
+	// const spentCents = await currentMonthCents(guildId);
+	const voiceId = resolveDeroVoiceId(current);
+	return info(
+		c.statusBody({
+			enabled: current?.enabled ?? false,
+			voiceIdTail: voiceIdTail(voiceId),
+			isDefaultVoice: voiceId === BOT_CONSTANTS.DERO_DEFAULT_VOICE_ID,
+			listenEnabled: current?.listenEnabled ?? true,
+			keyConfigured: isTtsKeyConfigured(),
+			roles: current?.allowedRoleIds.length ?? 0,
+			voiceChannels: current?.allowedVoiceChannelIds.length ?? 0,
+			// Hidden by the owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b); returns later.
+			// spentUsd: formatUsd(spentCents),
+			// capUsd: current?.monthlyCapUsd ?? BOT_CONSTANTS.DERO_VOICE_DEFAULT_CAP_USD,
+		})
+	);
+}
+
+async function enable(guildId: string, current: IDeroVoiceConfig | null, audit: Audit): Promise<EmbedBuilder> {
+	if (current?.enabled) return info(c.alreadyEnabled);
+	await deroVoiceConfigStore.upsert(guildId, { enabled: true });
+	audit("config.change", audited.subjects.voice, audited.on);
+	return info(c.enabledBody, c.enabledTitle);
+}
+
+// The kill switch ends this guild's live call, if there is one, and says so in
+// the admin's reply (the call's own channel gets its line from voiceSessions).
+// Called BEFORE the write, so the switch fails closed: a save that throws below
+// has still sent Dero out of the call.
+function endCallForKillSwitch(guildId: string): string | null {
+	const channelId = voiceSessions.get(guildId)?.channelId;
+	if (!channelId) return null;
+	voiceSessions.leave(guildId, "switched_off");
+	return c.leftCall(channelId);
+}
+
+const withLine = (body: string, line: string | null): string => (line ? `${body}\n\n${line}` : body);
+
+async function disable(guildId: string, current: IDeroVoiceConfig | null, audit: Audit): Promise<EmbedBuilder> {
+	// Even an "already off" disable ends a call, so the command always means "stop".
+	const leftCall = endCallForKillSwitch(guildId);
+	if (!current?.enabled) return info(withLine(c.alreadyDisabled, leftCall));
+	await deroVoiceConfigStore.upsert(guildId, { enabled: false });
+	audit("config.change", audited.subjects.voice, audited.off);
+	return info(withLine(c.disabledBody, leftCall), c.disabledTitle);
+}
+
+async function setListen(guildId: string, current: IDeroVoiceConfig | null, on: boolean, audit: Audit): Promise<EmbedBuilder> {
+	if ((current?.listenEnabled ?? true) === on) return info(c.listenUnchanged(on));
+	await deroVoiceConfigStore.upsert(guildId, { listenEnabled: on });
+	audit("config.change", audited.subjects.listen, on ? audited.on : audited.off);
+	return info(c.listenSet(on));
+}
+
+// Hidden by the owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b); returns later.
+// async function setCap(guildId: string, current: IDeroVoiceConfig | null, dollars: number, audit: Audit): Promise<EmbedBuilder> {
+// 	// The option's bounds are a hint Discord enforces in its client; this clamp is the gate.
+// 	const usd = Math.min(Math.max(Math.trunc(dollars), 0), BOT_CONSTANTS.DERO_VOICE_MAX_CAP_USD);
+// 	// A cap of 0 is the second kill switch, so it ends a live call the same way.
+// 	const leftCall = usd === 0 ? endCallForKillSwitch(guildId) : null;
+// 	if ((current?.monthlyCapUsd ?? BOT_CONSTANTS.DERO_VOICE_DEFAULT_CAP_USD) === usd) return info(withLine(c.capUnchanged(usd), leftCall));
+// 	await deroVoiceConfigStore.upsert(guildId, { monthlyCapUsd: usd });
+// 	audit("voice.cap", audited.subjects.cap, audited.capSet(usd));
+// 	return info(withLine(c.capSet(usd), leftCall));
+// }
+
+async function editList(
+	guildId: string,
+	current: IDeroVoiceConfig | null,
+	kind: ListKind,
+	action: string,
+	id: string,
+	audit: Audit
+): Promise<EmbedBuilder> {
+	const list = LISTS[kind];
+	const mention = list.mention(id);
+	const present = current?.[list.field].includes(id) ?? false;
+	if (action === "add") {
+		if (present) return info(c.listAlreadyThere(mention), list.title);
+		await deroVoiceConfigStore.addToList(guildId, list.field, id);
+		audit("voice.allowlist", list.title, audited.added(mention));
+		return info(c.listAdded(mention), list.title);
+	}
+	if (!present) return info(c.listNotThere(mention), list.title);
+	await deroVoiceConfigStore.removeFromList(guildId, list.field, id);
+	audit("voice.allowlist", list.title, audited.removed(mention));
+	return info(c.listRemoved(mention), list.title);
+}
+
+function isListKind(group: string | null): group is ListKind {
+	return group === "role" || group === "voicechannel";
+}
+
+/** The one handler the slash command and the admin guide's /dero-config button share. */
+export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
+	// ① guild gate
+	const guildId = interaction.guildId;
+	if (!guildId) {
+		await showNotice(interaction, { title: deroBrainCopy.noticeTitle, sections: [c.notInGuild] });
+		return;
+	}
+
+	// ② setup gate
+	const guildConfig = await guildConfigStore.findByGuildId(guildId);
+	if (!guildConfig) {
+		await showNotice(interaction, { title: deroBrainCopy.noticeTitle, sections: [c.setupRequired] });
+		return;
+	}
+
+	// Every write below records one admin log line, by the member who ran the command.
+	const audit: Audit = (kind, subject, detail) =>
+		adminLog.emit({ guild: { id: guildId, client: interaction.client }, kind, actor: { userId: interaction.user.id }, payload: { subject, detail } });
+
+	try {
+		// ③ dispatch
+		const group = options.getSubcommandGroup(false);
+		const sub = options.getSubcommand(true);
+		const current = await deroVoiceConfigStore.findByGuildId(guildId);
+
+		let embed: EmbedBuilder;
+		if (isListKind(group)) {
+			const id =
+				group === "role"
+					? options.getRole(LISTS.role.option, true).id
+					: options.getChannel(LISTS[group].option, true).id;
+			embed = await editList(guildId, current, group, sub, id, audit);
+		}
+		else if (sub === "enable") embed = await enable(guildId, current, audit);
+		else if (sub === "disable") embed = await disable(guildId, current, audit);
+		else if (sub === "listen") embed = await setListen(guildId, current, options.getBoolean("enabled", true), audit);
+		// Hidden by the owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b); returns later.
+		// else if (sub === "cap") embed = await setCap(guildId, current, options.getInteger("dollars", true), audit);
+		else embed = await status(current);
+
+		// ④ a status or a change made is an answer, so it posts in ⚙️dero-config (owner rule 1)
+		await answerInChannel(interaction, "deroConfig", { embeds: [embed] });
+		// ⑤ ⚙️dero-config's steps card and chart follow every change, fire and forget
+		// (2026-10 item 257 Phase 2b); the settings panel runs this same handler.
+		refreshHeadquartersCards(interaction.guild, "deroConfig");
+	}
+	catch (err) {
+		console.error(`[dero-config] failed guild=${guildId}`, err);
+		await showErrorNotice(interaction, c.saveFailed);
+	}
+}
+
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+	await run(interaction, interaction.options);
+}

@@ -10,10 +10,10 @@ import express from "express";
 // (envelope shape, status codes, log call args, miss-collapse).
 //
 // What we deliberately do NOT test here:
-//   - generateCode randomness / single-use atomicity — those are unit
+//   - generateCode randomness / single-use atomicity, those are unit
 //     tested in pendingPairingStore.test.ts and are properties of Mongo's
 //     findOneAndUpdate. The route only consumes the store contract.
-//   - verifySignature behavior — covered in verifySignature.test.ts. We
+//   - verifySignature behavior, covered in verifySignature.test.ts. We
 //     mount the router without the signature middleware so each test can
 //     send a request without recomputing HMACs, the same pattern
 //     events.routes.test.ts uses.
@@ -149,7 +149,7 @@ describe("POST /api/pairing/redeem", () => {
 		});
 		logMock.log.mockRejectedValue(new Error("mongo down"));
 		// Silence the console.warn so the test output stays clean. Asserting
-		// it was called is overkill — the user-visible contract is the 200.
+		// it was called is overkill, the user-visible contract is the 200.
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
 		const res = await request(buildApp()).post("/api/pairing/redeem").send({ code: "abc234" });
@@ -241,7 +241,7 @@ describe("POST /api/pairing/redeem", () => {
 		// A redeem throw means the atomic findOneAndUpdate did not commit,
 		// so retrying is safe: either the code is still live (next call
 		// succeeds) or the row is already gone (next call returns 410).
-		// The bot does not need to retry on behalf of the caller — the
+		// The bot does not need to retry on behalf of the caller, the
 		// signed proxy will, and the 500 body stays sparse so a probing
 		// attacker cannot fingerprint the underlying failure.
 		storeMock.redeem.mockRejectedValue(new Error("connection reset"));

@@ -1,0 +1,458 @@
+import { DiscordAPIError, RESTJSONErrorCodes, type AttachmentBuilder, type Client, type TextChannel } from "discord.js";
+import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { botLogStore } from "@db/stores/botLogStore.js";
+import { gameRoomArchivedEvent } from "@base/constants/BOT_LOG_EVENTS.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { awardXp } from "@features/leveling/awardXp.js";
+import { buildRoomOverwrites, type RoomPhase } from "./roomPermissions.js";
+import { roomResultEmbed, roomArchiveRow } from "./gameRoomsEmbeds.js";
+import { deleteSatellites, labelEmbedForRoom, lockSatellites } from "./satelliteRooms.js";
+import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
+import { challengeResultLine, closeChallengeCard } from "./challengeCard.js";
+import { announceMatchResult } from "./roomAnnouncer.js";
+import type { OutcomeBucket } from "./matchOutcome.js";
+import { settleTableChips } from "./holdemChips.js";
+import { refundStrandedLateCharges, settleBlackjackStacks } from "./blackjackChips.js";
+import { refundAllJoiners, refundHeldBuyIns } from "./holdemDraftBuyIn.js";
+import { settleChipPot } from "./chipPot.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { revokeRoomInvite } from "./roomInvite.js";
+import { isSoloLuckGame, offersRematch } from "./roomTypes.js";
+import type { IGameRoom } from "@db/models/GameRoom.js";
+
+// ── roomLifecycle ────────────────────────────────────────────────────
+// What:  the terminal transitions of a room. `finish` ends the match, locks the
+//        channel and starts the archive clock; `releaseChannel` hands a finished room's
+//        channel to the rematch that plays on in it; `archiveNow` and `archiveRoom`
+//        delete the channel and close the row. A network table's satellites in other
+//        servers follow the host room through finish and archiveRoom, always after it
+//        and never able to stop it (satelliteRooms, 2026-10 item 244 Phase 5a).
+// Who:   finish is called by whatever ended the match (a game's win condition, the
+//        forfeit control, the boot recovery sweep). releaseChannel is called by the
+//        Rematch button (challengeBoard.rematchFromRoom). archiveNow is the button;
+//        archiveRoom is what the cron sweep calls.
+// When:  once per room each, at most.
+// Where: `archiveAt` is written HERE and nowhere else: stamped by finish, and cleared
+//        to null by releaseChannel, the only other writer, which never writes a date.
+//        That property is exactly what makes the sweep safe: a room that is still
+//        playing has a null archiveAt, so no filter bug in the sweep can reach a live
+//        match (risk R3).
+// How:   persist before locking, and share one delete path between the button and the
+//        cron. Both choices are explained where they happen.
+
+async function resolveRoomChannel(client: Client, channelId: string | null): Promise<TextChannel | null> {
+	if (!channelId) return null;
+	const channel = await client.channels.fetch(channelId).catch(() => null);
+	if (!channel || !channel.isTextBased() || channel.isDMBased()) return null;
+	return channel as TextChannel;
+}
+
+export interface FinishRoomInput {
+	winnerId?: string | null;
+	// The payoff image, resolved by the GAME because only it knows which frame the
+	// ending earned (a full gallows, a coin, the winning throw). Optional: an
+	// abandoned room and a forfeit have no art to show, and resolveGameAsset already
+	// degrades to the Dero avatar when a file is not on disk yet, so a caller never
+	// has to check whether the art exists.
+	art?: { attachment: AttachmentBuilder; ref: string };
+	// True when nobody chose this ending: the channel was deleted underneath a live
+	// room, or a boot found a room whose channel no longer exists. It changes only the
+	// wording, so a reaped room does not read as though somebody lost.
+	abandoned?: boolean;
+	// How the match was won (post-launch plan item 21), from the game that ended it. It
+	// only chooses the flavor line on the closed challenge card.
+	outcome?: { bucket: OutcomeBucket; roomWon?: boolean };
+	// How long the finished channel stays before the sweep deletes it. Absent is the
+	// ordinary GAME_ROOM_ARCHIVE_DELAY_MS; only a solo luck round against Dero passes
+	// the shorter GAME_ROOM_SOLO_LUCK_ARCHIVE_DELAY_MS (soloRooms). finish still stamps
+	// the date itself, so it stays the one writer of a date into archiveAt.
+	archiveDelayMs?: number;
+	// A solo round against Dero that Dero won (2026-10 item 276, audit P3). Dero is no member, so
+	// no winnerId can name him; this only words the result card, and nobody is paid or rated for it.
+	houseWon?: boolean;
+	now?: Date;
+}
+
+// End a match: stamp the row, lock the channel, post the result card.
+//
+// Returns TRUE when this call is the one that ended the match and FALSE when the room was
+// already finished. Every caller may ignore it; the one that must not is a caller which pays
+// something of its own AFTER this returns (runVersusMove's awardTwoPlayerResult), because that
+// work is outside the claim below and would otherwise run once per press.
+export async function finish(client: Client, room: IGameRoom, input: FinishRoomInput = {}): Promise<boolean> {
+	const now = input.now ?? new Date();
+	const winnerId = input.winnerId ?? null;
+	const archiveDelayMs = input.archiveDelayMs ?? BOT_CONSTANTS.GAME_ROOM_ARCHIVE_DELAY_MS;
+
+	// ① PERSIST FIRST, LOCK SECOND, and the order is load bearing in one direction only.
+	// If the process dies between the two, this order leaves a row that is "finished"
+	// with a real archiveAt and a channel that is still writable: untidy for a few
+	// hours, and the sweep still cleans it up on schedule. The opposite order would
+	// leave a LOCKED channel attached to a row still marked "playing", which the sweep
+	// (finished-only, by design) would never touch and no recovery path would find,
+	// so the room would sit locked and silent forever.
+	//
+	// ①ᵃ AND THE PERSIST IS ALSO THE CLAIM. gameRoomStore.finish only matches a room in a
+	// non-terminal status, so a null return means somebody else already finished this one and
+	// everything below (the payout, the lock, the result card) has already happened for it.
+	// Returning here is what makes `finish` safe to call twice, which four paths can do: the
+	// Forfeit button stays clickable on a finished room, ChannelDeleteWatcher still matches a
+	// finished row for the whole archive window, versus has no claim of its own, and the hold em
+	// clock sweeps on a timer. Re-running would pay everyone a second time (payRoomRateTopUp has
+	// no idempotency key), and the forfeit replay would let the WINNER set winnerId to the loser.
+	const claimed = await gameRoomStore.finish(room.guildId, room.roomId, {
+		winnerId,
+		endedAt: now,
+		archiveAt: new Date(now.getTime() + archiveDelayMs),
+	});
+	if (!claimed) return false;
+
+	// ①ᵇ The room-rate top up, paid here rather than after the channel resolves below.
+	// XP is a database fact and the channel is a Discord fact: a match whose channel an
+	// admin deleted in the final seconds still happened, and the early return under
+	// `if (!channel)` would otherwise silently unpay everyone who played it.
+	payRoomRateTopUp(client, room, winnerId, input.abandoned ?? false);
+
+	// ①ᶜ A chip table's stacks go back to the wallets (2026-10 item 250 Phase 5), paid from
+	// the CLAIMED row, which holds the table as it was last persisted, so every path that
+	// ends a table pays it exactly once, whoever ended it. Awaited before the lock so its
+	// line lands above the result card; it catches its own failures.
+	await settleTableChips(client, claimed);
+	// A Hold'em table's buy ins the start claim held for a table never saved (2026-10 item 278, G2):
+	// a crash, or this finish landing while the room was built. Each entry is pulled before it is
+	// paid, so a refund the open made itself pays nothing twice.
+	await refundHeldBuyIns(claimed);
+	// ①ᵈ A Hold'em table whose room ended from outside it (the idle sweep, the leave watcher, a
+	// deleted channel, boot recovery) is marked finished in its row too, AFTER the settle paid
+	// its stacks (2026-10 item 276, audit P1-1). Every table control refuses a finished table,
+	// so Leave can never pay a settled stack a second time and nobody deals a new hand in a
+	// finished room. A table that ended itself is already finished and the write matches nothing.
+	if (claimed.game === "holdem") {
+		try {
+			await gameRoomStore.closeHoldemTable(room.guildId, room.roomId);
+		} catch (error) {
+			console.error("[game-rooms] the finished room's Hold'em table could not be marked finished", { roomId: room.roomId, error });
+		}
+	}
+	// A Blackjack chip table's stacks the same way (2026-10 item 267, risk R5), from the ledger
+	// the last settle wrote, so a restart, the idle sweep or a deleted channel pays them too.
+	await settleBlackjackStacks(client, claimed);
+	// A late seat's buy in a crash left between its charge and its stacks entry (2026-10 item 276).
+	await refundStrandedLateCharges(claimed);
+	// ①ᵉ A challenge that ended before it started (the idle sweep, the leave watcher, a deleted
+	// channel) still holds the buy ins its joiners paid on the card (2026-10 item 276, audit
+	// P1-3), and once the row is finished Call it off can no longer reach them. Refunded from the
+	// CLAIMED row, claim first and pay second: each refund claims its own ledger entry
+	// (refundJoiners), so nothing pays twice. A room that started has an empty ledger, because
+	// the start claim emptied it, but a joiner's charge a press held and never recorded stays on
+	// any row (2026-10 item 278, gap G3), and its wallet receipt decides whether it is paid back.
+	if ((claimed.buyInPaidBy ?? []).length > 0 || (claimed.buyInCharges ?? []).length > 0) await refundAllJoiners(claimed);
+	// ①ᶠ A ranked Monopoly or Battleship match's pot (2026-10 item 276, owner decisions D3, D4 and
+	// D10), paid from the CLAIMED row the same way, so it pays once whatever ended the match: the
+	// winner takes it all, and a match with no winner shares it among the payers still in. A
+	// leaver's buy in is part of it, which is the forfeit. It catches its own failures.
+	const pot = await settleChipPot(client, claimed, winnerId, input.abandoned ?? false);
+	const prizeLine = pot ? gameRoomsCopy.chipPot.prizeLine(pot.total, pot.payouts.length === 1 && pot.payouts[0].userId === winnerId) : null;
+
+	// A network table names its winner rather than mentioning them (satelliteRooms).
+	const resultEmbed = await labelEmbedForRoom(client, room, roomResultEmbed(winnerId, input.abandoned ?? false, input.art?.ref, archiveDelayMs, prizeLine, input.houseWon ?? false));
+
+	const channel = await resolveRoomChannel(client, room.channelId);
+	// An already-deleted channel is the ordinary abandonment case, not an error. The
+	// row is stamped, so the sweep will close it out on its next pass. TRUE either way:
+	// this call DID end the match, and the return value reports the claim rather than
+	// whether Discord still had a channel to decorate.
+	if (channel) {
+		// ② Lock it.
+		await applyRoomPhase(client, channel, room, "finished");
+
+		// ②ᵇ The room's invite dies with the match (2026-10 item 254, Arcade 10), AFTER the
+		// persist and the lock and never awaited: it writes no row and no clock, so it can
+		// neither become a third archiveAt writer nor hold a finish up, and a failed delete
+		// is logged inside. Only here, where the channel still exists: a deleted channel
+		// took its invites with it. Read off the claimed row, which holds the code seedRoom
+		// stored.
+		void revokeRoomInvite(client, claimed);
+
+		// ③ The result card, carrying Archive now. Posted after the lock so the last message
+		// in the channel is the outcome rather than a move, and it lands at all only because
+		// the bot keeps its own SendMessages allow in the locked overwrite set.
+		// The attachment and the embed's reference to it MUST ride the same message, or
+		// the image slot renders empty.
+		await channel
+			.send({
+				embeds: [resultEmbed],
+				components: [roomArchiveRow(room.roomId, { rematch: offersRematch(room.game) })],
+				...(input.art ? { files: [input.art.attachment] } : {}),
+			})
+			.catch((error) => console.error("[game-rooms] failed to post result card", { roomId: room.roomId, error }));
+	}
+
+	// ④ Every satellite of a network table (2026-10 item 244 Phase 5a), AFTER the host
+	// room, and even when the host channel is gone, since a satellite in another server is
+	// still open to its players. Read off the CLAIMED row rather than the caller's: a
+	// satellite opened after the caller read the room is on the row the claim returned.
+	// Queued on the room's relay chain behind the last table and move, never awaited, so
+	// no satellite can hold up the caller or the ratings it records next.
+	const satellites = claimed.satellites ?? [];
+	if (satellites.length > 0) {
+		void lockSatellites(client, { roomId: room.roomId, satellites }, { embed: resultEmbed, files: input.art ? [input.art.attachment] : [] });
+	}
+	// ⑤ A finished network table leaves the network board (2026-10 item 244 Phase 5b).
+	// Debounced and fire and forget there, so the board never holds up a finish.
+	if (claimed.network) scheduleNetworkBoardRefresh();
+
+	// ⑥ The challenge card in ⚔️challenges closes with who won and how (post-launch plan
+	// item 21). After everything above and never awaited: it is cosmetic, it may need a
+	// picture drawn, and a room that never had a card skips it inside.
+	const resultLine = challengeResultLine({
+		game: room.game,
+		winnerId,
+		abandoned: input.abandoned ?? false,
+		bucket: input.outcome?.bucket,
+		roomWon: input.outcome?.roomWon,
+		houseWon: input.houseWon,
+	});
+	// The closed card says the prize under the result (D4); Dero reads only the result aloud.
+	void closeChallengeCard(client, room, prizeLine ? `${resultLine}\n${prizeLine}` : resultLine);
+	announceMatchResult(client, room, resultLine);
+
+	return true;
+}
+
+/**
+ * Replace a room channel's whole permission overwrite set with the matrix for one
+ * phase: "finished" is finish's lock, "playing" is the unlock a rematch in the same
+ * channel needs, because the finished room left its @everyone SendMessages deny behind.
+ *
+ * `set` REPLACES the whole overwrite array rather than merging, which is what
+ * guarantees no stale entry survives from the previous phase; a per-entry edit would
+ * leave whichever entries this code forgot to mention. Logs and resolves on failure:
+ * both callers run after their row write, and a failed overwrite must not undo it.
+ */
+export async function applyRoomPhase(
+	client: Client,
+	channel: TextChannel,
+	room: Pick<IGameRoom, "roomId" | "guildId" | "hostId" | "playerIds" | "spectatorIds" | "visibility"> & Partial<Pick<IGameRoom, "spectatorMode">>,
+	phase: RoomPhase
+): Promise<void> {
+	const config = await guildConfigStore.findByGuildId(room.guildId).catch(() => null);
+	await channel.permissionOverwrites
+		.set(
+			buildRoomOverwrites({
+				everyoneRoleId: channel.guild.roles.everyone.id,
+				botId: client.user!.id,
+				hostId: room.hostId,
+				playerIds: room.playerIds,
+				spectatorIds: room.spectatorIds,
+				visibility: room.visibility,
+				// The host's spectator setting, so the lock and a rematch's unlock keep who
+				// watches exactly as the room opened with it.
+				spectatorMode: room.spectatorMode ?? null,
+				phase,
+				adminRoleId: (config as { adminRoleId?: string | null } | null)?.adminRoleId ?? null,
+			})
+		)
+		.catch((error) => console.error(`[game-rooms] failed to set the ${phase} overwrites`, { roomId: room.roomId, error }));
+}
+
+// ── the channel handover (a rematch in the same channel) ─────────────
+// What:  a FINISHED room stops pointing at its channel and its archive clock is
+//        cleared, so the rematch row that now owns the channel is the only row the
+//        archive sweep, ChannelDeleteWatcher and the in-room handlers can find there.
+//        The finished row keeps its transcript; only the channel moves on.
+// Who:   challengeBoard.rematchFromRoom, AFTER it has created the rematch row already
+//        pointing at the same channel.
+// When:  once per finished room, at most: the store's filter is the claim.
+// Where: ⚠️ THE ONLY WRITER OF archiveAt BESIDES finish, AND IT ONLY EVER WRITES NULL.
+//        Clearing a clock can never put a live match in the sweep's reach, which is
+//        why this second writer keeps the single-writer property's guarantee intact.
+// How:   one conditional write on status "finished" and the expected channel id.
+//        Returns false when the claim was lost (another rematch took the channel, or the
+//        sweep archived the room first); the caller then undoes its own new row.
+export async function releaseChannel(room: Pick<IGameRoom, "guildId" | "roomId" | "channelId">): Promise<boolean> {
+	if (!room.channelId) return false;
+	const released = await gameRoomStore.releaseChannel(room.guildId, room.roomId, room.channelId);
+	return released !== null;
+}
+
+// ── the room-rate top up ──────────────────────────────────────────────
+// What:  pays the DIFFERENCE between the room rate and the ordinary channel rate, so a
+//        match played in its own room lands on GAME_ROOM_PLAY_XP / GAME_ROOM_WIN_XP in
+//        total rather than on top of them.
+// Who:   everyone in `room.playerIds`. Spectators earn nothing: watching is not playing,
+//        which is the same line the dashboard's userId filter draws.
+// When:  once per room, from `finish`, after the row is stamped.
+// Where: the fifth and last of the leveling award hooks (duel, rps, hangman and fortune
+//        shipped in leveling Phase 2; this one waited on `finish` existing at all).
+// How:   a top up, NOT an additive bonus, and that is the whole subtlety. Every room game
+//        already pays its own award through `gameXp` before it calls `finish`, so a flat
+//        40/120 here would total 65/195 and make the constants' face values describe
+//        nothing observable. Subtracting means an operator who retunes GAME_ROOM_* gets
+//        the number they typed. Floored at zero so raising GAME_PLAY_XP above the room
+//        rate degrades to "no bonus" rather than to a negative award.
+//
+// ⚠️ IT MUST NOT PASS `game`. awardXp increments `games.<slug>.played` for ANY call that
+// names one, and the game's own hook has already recorded this match. Naming it here
+// would make /account read "played 2" for every room match ever played. Same rule that
+// governs battleship's per-sink bonus and hold em's per-hand payout.
+//
+// ⚠️ HOLD EM IS EXCLUDED. Its placement prize is already calibrated to include the room
+// win (see HOLDEM_PLACEMENT_XP's note: a tournament is worth "roughly a room win plus the
+// hands it took to get there"), so topping it up pays that win twice.
+//
+// ⚠️ SO IS A SOLO LUCK ROUND AGAINST DERO (2026-10 item 254, Arcade 1). Its room exists
+// only so nothing is played in ⚔️challenges, and the round already paid its own 3 or 1
+// inside the daily cap (soloLuck). A room rate on top would pay a single coin flip like a
+// whole match, outside that cap, as often as a member cared to press Play Dero instead.
+//
+// A SOLO HANGMAN ROUND IS THE SAME CASE (2026-10 item 280, owner ruling): it pays the capped
+// solo award (roomHangman), so a room rate on top would let a memorised 300 word bank farm XP
+// outside the cap.
+//
+// ABANDONED PAYS NOTHING, and it is the reason this function takes the flag at all.
+// `finish` is also called with abandoned:true by the boot recovery sweep and by the R14
+// path in ChannelDeleteWatcher, neither of which involves a match anyone played. Paying
+// there would be farmable for as long as anyone cared to do it: open a room, delete the
+// channel, repeat. The cost of this choice is real and accepted, a genuine disconnect or
+// an admin tidying channels pays its players nothing.
+function payRoomRateTopUp(client: Client, room: IGameRoom, winnerId: string | null, abandoned: boolean): void {
+	if (abandoned) return;
+	if (room.game === "holdem" || room.game === "solo-hangman" || isSoloLuckGame(room.game)) return;
+	if (!room.guildId || room.playerIds.length === 0) return;
+
+	const { GAME_PLAY_XP, GAME_WIN_XP, GAME_ROOM_PLAY_XP, GAME_ROOM_WIN_XP } = BOT_CONSTANTS.LEVELING;
+	const playTopUp = Math.max(0, GAME_ROOM_PLAY_XP - GAME_PLAY_XP);
+	const winTopUp = Math.max(0, GAME_ROOM_WIN_XP - GAME_WIN_XP);
+	if (playTopUp === 0 && winTopUp === 0) return;
+
+	// Fire and forget after a successful primary write (house rule 7). awardXp never throws
+	// by contract, and `finish` must not be held up by, or fail on, bookkeeping.
+	void (async () => {
+		const guild = await client.guilds.fetch(room.guildId).catch(() => null);
+		if (!guild) return;
+
+		// One bulk fetch to populate the cache. The RESULT is deliberately ignored and every
+		// read below goes through the cache instead, because discord.js returns a bare
+		// GuildMember for a single-id fetch and a Collection for a multi-id one, and branching
+		// on that shape is a bug waiting for the first one-player room.
+		await guild.members.fetch({ user: room.playerIds }).catch(() => null);
+
+		// The member who set a hangman word was never playing the round, so the room's play top
+		// up skips them like the round's own award does (2026-10 item 276, audit P3).
+		const wordAuthorId = room.game === "hangman" ? ((room.secret as { authoredBy?: string | null } | null)?.authoredBy ?? null) : null;
+		for (const userId of room.playerIds) {
+			if (userId === wordAuthorId) continue;
+			const member = guild.members.cache.get(userId);
+			// ⚠️ SKIP rather than fall back to the raw id. memberLevelStore does
+			// `$set: { username }` on EVERY award, so handing it a snowflake would overwrite a
+			// real display name on /account and /account view:levels with a string of digits. Losing one
+			// top up for a member who left mid-match is far cheaper than corrupting the name
+			// on both leaderboards, and their own game hook already paid them.
+			if (!member) continue;
+
+			void awardXp({
+				client,
+				guildId: room.guildId,
+				userId,
+				username: member.displayName,
+				amount: playTopUp + (userId === winnerId ? winTopUp : 0),
+				source: "gameRoom",
+				// No `game` and therefore no `outcome`: awardXp only reads outcome when a game
+				// is named, so passing one would be dead weight that reads as a recorded result.
+				channelId: room.channelId,
+			});
+		}
+	})().catch((error) => console.error("[game-rooms] room-rate top up failed", { roomId: room.roomId, error }));
+}
+
+// ── the one delete path ───────────────────────────────────────────────
+// Shared by the Archive now button and the cron sweep on purpose: two delete paths
+// would be two places to forget the botLog, two places to get the 404 handling wrong,
+// and two definitions of what "archived" means.
+//
+// What archiving one room came to: done, left alone because the channel is no longer this row's
+// (a rematch took it over since the row was read), or left finished for the sweep's next tick
+// because Discord refused the delete.
+export type ArchiveOutcome = "archived" | "kept" | "retry";
+
+export async function archiveRoom(
+	client: Client,
+	room: Pick<IGameRoom, "guildId" | "roomId" | "channelId"> & Partial<Pick<IGameRoom, "satellites">>
+): Promise<ArchiveOutcome> {
+	// ⚠️ RE-CHECKED BEFORE ANY DELETE (2026-10 item 276, audit P3). The sweep read this row up to a
+	// tick ago, and a rematch takes a finished room's channel by creating its own row on it FIRST and
+	// releasing this one second, so in between both rows point at the channel and this row still
+	// reads finished. Deleting then would take a live match's channel from under it.
+	if (room.channelId && (await channelNoLongerThisRows(room.guildId, room.roomId, room.channelId))) return "kept";
+
+	// A network table's satellites go with it, and BEFORE the row closes: the sweep only
+	// ever finds a "finished" row, so a row archived first would leave its satellites in
+	// other servers with nothing that would ever delete them. Each satellite is isolated
+	// inside deleteSatellites, so none can stop the host room's own delete below.
+	if (room.satellites?.length) await deleteSatellites(client, { roomId: room.roomId, satellites: room.satellites });
+
+	const channel = await resolveRoomChannel(client, room.channelId);
+
+	// A channel an admin already deleted reaches this exactly the way a swept one does.
+	// It is a SUCCESS: the desired end state (no channel, row archived) is already half
+	// true, and treating it as an error would leave the row un-archived forever and the
+	// sweep retrying it every five minutes until the end of time.
+	//
+	// ⚠️ A DELETE DISCORD REFUSED IS NOT ONE (2026-10 item 276, audit P3). Archiving the row anyway
+	// cleared its channelId and status, so no sweep ever looked at that channel again and it stayed
+	// in the arcade for good. The row stays finished with its clock, and the next tick tries again.
+	if (channel && !(await deleteRoomChannel(channel, room.roomId))) return "retry";
+
+	await gameRoomStore.markArchived(room.guildId, room.roomId);
+
+	botLogStore
+		.log(room.guildId, gameRoomArchivedEvent(room.roomId), { channelId: room.channelId })
+		.catch((error) => console.error("[game-rooms] botLog for room archive failed", error));
+	return "archived";
+}
+
+// Whether the channel stopped being this row's since it was read: the row was released or closed,
+// or another row (a rematch being born on it) points at the channel too.
+async function channelNoLongerThisRows(guildId: string, roomId: string, channelId: string): Promise<boolean> {
+	const current = await gameRoomStore.findByRoomId(guildId, roomId);
+	if (!current || current.status !== "finished" || current.channelId !== channelId) return true;
+	return (await gameRoomStore.findOtherRoomOnChannel(guildId, channelId, roomId)) !== null;
+}
+
+// Delete a room's channel. True once it is gone, including Discord saying it was already gone.
+async function deleteRoomChannel(channel: TextChannel, roomId: string): Promise<boolean> {
+	try {
+		await channel.delete("game room archived");
+		return true;
+	} catch (error) {
+		if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return true;
+		console.error("[game-rooms] room channel delete failed, the room stays finished for the next sweep", { roomId, error });
+		return false;
+	}
+}
+
+export type ArchiveNowResult = { ok: true } | { ok: false; reason: "notYours" };
+
+// The Archive now button's behavior, gate included.
+//
+// The gate lives HERE rather than only in the handler because this is the function
+// that performs the destructive act, and a second caller added later (a slash command,
+// an API route) would otherwise have to remember to re-implement it.
+export async function archiveNow(
+	client: Client,
+	room: IGameRoom,
+	actorId: string,
+	isAdmin: boolean
+): Promise<ArchiveNowResult> {
+	// An admin override is deliberate: clearing someone else's abandoned room is
+	// moderation, and an admin is not one of the room's players.
+	if (actorId !== room.hostId && !isAdmin) return { ok: false, reason: "notYours" };
+
+	// A refused delete leaves the room finished, so the sweep deletes it on a later tick.
+	await archiveRoom(client, room);
+	return { ok: true };
+}
+
+export const roomLifecycle = { finish, applyRoomPhase, releaseChannel, archiveNow, archiveRoom };

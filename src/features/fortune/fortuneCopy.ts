@@ -1,7 +1,7 @@
-// ── /fortune user-facing copy ─────────────────────────────────────────────
+// ── fortune user-facing copy ─────────────────────────────────────────────
 // Feature-local copy module. Centralizes every string the command shows so none
 // is hardcoded in the handler, WITHOUT threading through the pluginId copy packs
-// (the fortune command is not a platform plugin — master plan v3). If it ever
+// (the fortune reading is not a platform plugin, master plan v3). If it ever
 // graduates into a real plugin, this content moves into the pack + copyOverrides
 // system so it becomes per-guild voiceable and admin-editable.
 
@@ -13,7 +13,7 @@ export const fortuneCopy = {
 	title: "🔮 Dero reads your fortune",
 	ultraTitle: "✨ An Ultra Reading ✨",
 
-	// Always shown on both tiers — the "for fun only" guardrail that keeps any
+	// Always shown on both tiers, the "for fun only" guardrail that keeps any
 	// answer from reading as real advice.
 	disclaimerFooter: "Company Uno • for fun only, not actual advice",
 
@@ -21,8 +21,21 @@ export const fortuneCopy = {
 	// rendered inside an embed with mention parsing disabled, so it cannot ping.
 	questionLabel: (question: string): string => `*You asked:* ${question}`,
 
-	cooldownMessage: (seconds: number): string =>
-		`Dero needs a moment to recharge his crystal ball. Try again in ${seconds}s.`,
+	// The title of the fortune's notices (2026-10 item 263 R3-12), the area title a cooldown
+	// wears instead of the pack's error title.
+	noticeTitle: "🔮 Fortune",
+
+	// One reading a day per member per server (2026-10 item 254). The ready time is a
+	// Discord relative timestamp, so it counts down in the member's own client.
+	cooldownMessage: (readyAt: Date): string =>
+		`The crystal ball gives each member one reading a day. Your next reading is ready <t:${Math.floor(readyAt.getTime() / 1000)}:R>.`,
+
+	// Words drawn into the fortune scene card (2026-10 item 243 Phase 4). The
+	// verdict itself comes from fortunes.ts, so only the frame is here.
+	scene: {
+		askedBy: "A reading for",
+		ultraBadge: "ULTRA",
+	},
 };
 
 // ── /secret-code user-facing copy ──────────────────────────────────────────

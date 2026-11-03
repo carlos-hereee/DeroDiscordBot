@@ -17,13 +17,13 @@ const reminderLogSchema = new Schema(
 	{ timestamps: true }
 );
 
-// compound index — prevents duplicate reminders firing for the same event+occurrence+offset
+// compound index, prevents duplicate reminders firing for the same event+occurrence+offset
 reminderLogSchema.index({ eventId: 1, eventOccurrence: 1, offsetMinutes: 1 }, { unique: true });
 
 // ── TTL on firedAt ────────────────────────────────────────────────────
 // ReminderLog is pure dedup state: a row exists only to stop the scheduler
 // re-firing an occurrence it already fired. Once an occurrence is far enough
-// in the past it can never re-fire — the scheduler skips anything outside the
+// in the past it can never re-fire, the scheduler skips anything outside the
 // 60s REMINDER_FIRE_WINDOW_MS (diff < 0 → continue) regardless of whether a
 // dedup row exists. So aging out old rows is safe and stops the collection
 // growing without bound (one row per fire, per season-end, per test fire,

@@ -1,0 +1,399 @@
+// ── hangman word bank ──────────────────────────────────────────────────────
+// THE ONE BANK every hangman form draws from: the casual channel round, the solo
+// room, and a room host who lets Dero pick a word from a category. 300 words in 10
+// categories of exactly 30, each with a hint (the 1.7.0 test fixes, item 12).
+// Deliberately NOT split into a kingdom themed and a streamer themed pair: this
+// feature does not route through the voice copy packs (see the top of gamesCopy.ts).
+// The category LABELS members read live in gameRoomsCopy, keyed by these ids.
+//
+// Selection rules, so a future addition matches (hangmanWords.test.ts enforces them):
+//   • 4 to 9 letters, a to z only. Shorter is guessable by luck, longer turns a 6
+//     miss budget into a coin flip, and any other character would show through the
+//     mask and leak the word's shape for free.
+//   • Single plain words. No proper nouns, nothing a non native speaker would need
+//     trivia to reach, and no word appears twice anywhere in the bank.
+//   • Nothing that reads as an insult or a slur when partially revealed.
+//   • Every word must also pass validateHangmanAuthoring, the bar a host is held to.
+//   • The hint is one short TRUE clue that never contains the word itself.
+//
+// hangmanState lowercases on the way in, so casing here is cosmetic; kept lower so a
+// stray capital cannot look meaningful.
+
+import { secureRandom } from "@utils/secureRng.js";
+
+export const HANGMAN_CATEGORIES = [
+	"animals",
+	"food",
+	"places",
+	"objects",
+	"nature",
+	"jobs",
+	"sports",
+	"music",
+	"space",
+	"realm",
+] as const;
+export type HangmanCategory = (typeof HANGMAN_CATEGORIES)[number];
+
+export interface HangmanWordEntry {
+	word: string;
+	hint: string;
+}
+
+/** A bank entry together with the shelf it came from. */
+export interface PickedHangmanWord extends HangmanWordEntry {
+	category: HangmanCategory;
+}
+
+export const HANGMAN_WORD_BANK: Readonly<Record<HangmanCategory, readonly HangmanWordEntry[]>> = {
+	animals: [
+		{ word: "tiger", hint: "Big striped cat of Asian forests" },
+		{ word: "zebra", hint: "Striped horse of the African plains" },
+		{ word: "giraffe", hint: "The tallest animal alive, with a very long neck" },
+		{ word: "penguin", hint: "Flightless seabird that waddles across the ice" },
+		{ word: "dolphin", hint: "Clever sea mammal that clicks and whistles" },
+		{ word: "elephant", hint: "The largest land animal, with a trunk" },
+		{ word: "kangaroo", hint: "Hops on strong legs and carries its young in a pouch" },
+		{ word: "octopus", hint: "Sea creature with eight arms" },
+		{ word: "squirrel", hint: "Bushy tailed tree climber that buries nuts" },
+		{ word: "hedgehog", hint: "Small spiny mammal that rolls into a ball" },
+		{ word: "beaver", hint: "Builds dams from sticks with its teeth" },
+		{ word: "rabbit", hint: "Long eared hopper with a fluffy tail" },
+		{ word: "turtle", hint: "Slow reptile that carries its shell" },
+		{ word: "parrot", hint: "Colorful bird that can copy speech" },
+		{ word: "panda", hint: "Black and white bear that eats bamboo" },
+		{ word: "camel", hint: "Desert animal with one or two humps" },
+		{ word: "donkey", hint: "Long eared cousin of the horse" },
+		{ word: "lobster", hint: "Clawed sea creature that turns red when cooked" },
+		{ word: "falcon", hint: "Bird of prey famed for its fast dive" },
+		{ word: "walrus", hint: "Tusked sea mammal of the Arctic" },
+		{ word: "otter", hint: "Playful swimmer that floats on its back" },
+		{ word: "badger", hint: "Striped face digger that lives in a burrow" },
+		{ word: "moose", hint: "The largest deer, with broad flat antlers" },
+		{ word: "koala", hint: "Sleepy tree dweller that eats eucalyptus leaves" },
+		{ word: "flamingo", hint: "Pink wading bird that often stands on one leg" },
+		{ word: "gorilla", hint: "The largest of the great apes" },
+		{ word: "cheetah", hint: "The fastest animal on land" },
+		{ word: "raccoon", hint: "Masked night visitor that raids bins" },
+		{ word: "pelican", hint: "Bird with a big pouch under its beak" },
+		{ word: "jaguar", hint: "Spotted big cat of the Americas" },
+	],
+	food: [
+		{ word: "pizza", hint: "Round flatbread with cheese and toppings" },
+		{ word: "pasta", hint: "Italian noodles in many shapes" },
+		{ word: "bread", hint: "Baked loaf made from flour and yeast" },
+		{ word: "cheese", hint: "Made from milk, often aged in wheels" },
+		{ word: "butter", hint: "Spread churned from cream" },
+		{ word: "pancake", hint: "Flat breakfast stack, often served with syrup" },
+		{ word: "waffle", hint: "Grid patterned breakfast treat" },
+		{ word: "noodle", hint: "Long thin strip you slurp from a soup" },
+		{ word: "cookie", hint: "Small sweet bake, great dunked in milk" },
+		{ word: "muffin", hint: "Small domed bake, often with blueberries" },
+		{ word: "banana", hint: "Long yellow fruit you peel" },
+		{ word: "cherry", hint: "Small red fruit with a pit, often on a stem" },
+		{ word: "lemon", hint: "Sour yellow citrus fruit" },
+		{ word: "mango", hint: "Sweet tropical fruit with a big flat seed" },
+		{ word: "carrot", hint: "Orange root vegetable" },
+		{ word: "potato", hint: "Starchy tuber for fries and mash" },
+		{ word: "tomato", hint: "Red fruit at the heart of most pasta sauces" },
+		{ word: "onion", hint: "Layered bulb that can make you cry" },
+		{ word: "garlic", hint: "Strong smelling bulb made of cloves" },
+		{ word: "pepper", hint: "A black spice, or a crunchy bell shaped vegetable" },
+		{ word: "honey", hint: "Sweet golden syrup made by bees" },
+		{ word: "yogurt", hint: "Tangy cultured milk eaten with a spoon" },
+		{ word: "omelet", hint: "Beaten eggs folded over a filling" },
+		{ word: "sandwich", hint: "A filling between two slices of bread" },
+		{ word: "burrito", hint: "Filled flour tortilla rolled into a wrap" },
+		{ word: "pretzel", hint: "Twisted salty baked knot" },
+		{ word: "popcorn", hint: "Kernels that burst when heated" },
+		{ word: "avocado", hint: "Green fruit mashed for guacamole" },
+		{ word: "biscuit", hint: "A small baked bread, or a cookie in Britain" },
+		{ word: "walnut", hint: "Wrinkled nut in a hard shell" },
+	],
+	places: [
+		{ word: "library", hint: "Building full of books to borrow" },
+		{ word: "museum", hint: "Building that displays art and history" },
+		{ word: "airport", hint: "Where planes take off and land" },
+		{ word: "harbor", hint: "Sheltered water where ships dock" },
+		{ word: "bakery", hint: "Shop that sells fresh bread" },
+		{ word: "school", hint: "Where students go to learn" },
+		{ word: "hospital", hint: "Where doctors and nurses treat patients" },
+		{ word: "stadium", hint: "Huge arena for games and concerts" },
+		{ word: "theater", hint: "Where plays are performed on a stage" },
+		{ word: "garden", hint: "Plot where flowers and vegetables grow" },
+		{ word: "village", hint: "Small settlement in the countryside" },
+		{ word: "market", hint: "Where sellers set up their stalls" },
+		{ word: "island", hint: "Land surrounded by water" },
+		{ word: "desert", hint: "Dry land that sees very little rain" },
+		{ word: "canyon", hint: "Deep gorge, often carved by a river" },
+		{ word: "cottage", hint: "Small cozy house in the country" },
+		{ word: "station", hint: "Where trains stop to pick up riders" },
+		{ word: "office", hint: "Where many people work at desks" },
+		{ word: "kitchen", hint: "The room where meals are cooked" },
+		{ word: "bedroom", hint: "The room where you sleep" },
+		{ word: "attic", hint: "The room right under the roof" },
+		{ word: "cellar", hint: "Underground room for storage" },
+		{ word: "park", hint: "Green public space with paths and benches" },
+		{ word: "beach", hint: "Sandy shore beside the sea" },
+		{ word: "jungle", hint: "Thick, steamy tropical forest" },
+		{ word: "city", hint: "A large and busy town" },
+		{ word: "bridge", hint: "Built to carry a road over a river" },
+		{ word: "aquarium", hint: "Where you watch fish behind glass" },
+		{ word: "farm", hint: "Where crops grow and animals are raised" },
+		{ word: "mall", hint: "Big indoor building of many shops" },
+	],
+	objects: [
+		{ word: "umbrella", hint: "Keeps you dry in the rain" },
+		{ word: "lantern", hint: "Portable light with a handle" },
+		{ word: "scissors", hint: "Two blades for cutting paper" },
+		{ word: "pencil", hint: "Writing stick with graphite and an eraser" },
+		{ word: "backpack", hint: "Bag worn on both shoulders" },
+		{ word: "blanket", hint: "Warm cover for a bed" },
+		{ word: "bucket", hint: "Pail with a handle for carrying water" },
+		{ word: "candle", hint: "Wax stick with a wick" },
+		{ word: "mirror", hint: "Glass that shows your reflection" },
+		{ word: "pillow", hint: "Soft cushion for your head" },
+		{ word: "teapot", hint: "Spouted pot for brewing a hot drink" },
+		{ word: "camera", hint: "Takes photographs" },
+		{ word: "clock", hint: "Tells you the time" },
+		{ word: "hammer", hint: "Tool for driving nails" },
+		{ word: "ladder", hint: "Climb its rungs to reach high places" },
+		{ word: "wallet", hint: "Holds your cards and cash" },
+		{ word: "bottle", hint: "Container with a narrow neck" },
+		{ word: "basket", hint: "Woven container for carrying things" },
+		{ word: "kettle", hint: "Boils water on the stove" },
+		{ word: "compass", hint: "Its needle points north" },
+		{ word: "magnet", hint: "Pulls iron toward it" },
+		{ word: "sponge", hint: "Soaks up water for cleaning" },
+		{ word: "button", hint: "Small disc that fastens a shirt" },
+		{ word: "zipper", hint: "Rows of teeth that close a jacket" },
+		{ word: "balloon", hint: "Rubber bag you fill with air" },
+		{ word: "stapler", hint: "Joins sheets of paper with a bent wire" },
+		{ word: "keyboard", hint: "Rows of keys for typing" },
+		{ word: "toaster", hint: "Browns slices of bread" },
+		{ word: "spoon", hint: "Utensil for eating soup" },
+		{ word: "puzzle", hint: "Pieces that fit together into a picture" },
+	],
+	nature: [
+		{ word: "river", hint: "Fresh water flowing toward the sea" },
+		{ word: "forest", hint: "Large area thick with trees" },
+		{ word: "meadow", hint: "Open grassy field full of wildflowers" },
+		{ word: "volcano", hint: "Mountain that can erupt with lava" },
+		{ word: "glacier", hint: "A slow moving river of ice" },
+		{ word: "thunder", hint: "The rumble that follows a flash in a storm" },
+		{ word: "rainbow", hint: "Arc of colors after the rain" },
+		{ word: "waterfall", hint: "Where a river drops over a cliff" },
+		{ word: "pebble", hint: "Small smooth stone" },
+		{ word: "blossom", hint: "Flower on a fruit tree in spring" },
+		{ word: "acorn", hint: "The seed of an oak tree" },
+		{ word: "breeze", hint: "A gentle wind" },
+		{ word: "cloud", hint: "White puff floating in the sky" },
+		{ word: "storm", hint: "Wild weather with wind and rain" },
+		{ word: "puddle", hint: "Small pool left after the rain" },
+		{ word: "mountain", hint: "Very high landform with a peak" },
+		{ word: "valley", hint: "Low land between hills" },
+		{ word: "pond", hint: "Small still body of water" },
+		{ word: "ocean", hint: "Vast body of salt water" },
+		{ word: "sunflower", hint: "Tall yellow bloom that turns to face the sun" },
+		{ word: "mushroom", hint: "Fungus with a cap and a stem" },
+		{ word: "fern", hint: "Feathery green plant that never flowers" },
+		{ word: "moss", hint: "Soft green carpet on damp rocks" },
+		{ word: "lightning", hint: "Bright flash of electricity in a storm" },
+		{ word: "tornado", hint: "Spinning funnel of wind" },
+		{ word: "coral", hint: "Colorful reef built by tiny sea animals" },
+		{ word: "pinecone", hint: "Woody seed holder from an evergreen tree" },
+		{ word: "frost", hint: "Icy crystals on a cold morning" },
+		{ word: "boulder", hint: "A very large rock" },
+		{ word: "willow", hint: "Tree with long drooping branches, often by water" },
+	],
+	jobs: [
+		{ word: "doctor", hint: "Treats the sick" },
+		{ word: "nurse", hint: "Cares for patients in a hospital" },
+		{ word: "teacher", hint: "Leads a class of students" },
+		{ word: "farmer", hint: "Grows crops and raises animals" },
+		{ word: "baker", hint: "Makes bread and pastries before dawn" },
+		{ word: "chef", hint: "Cooks in a restaurant kitchen" },
+		{ word: "pilot", hint: "Flies an aircraft" },
+		{ word: "dentist", hint: "Looks after your teeth" },
+		{ word: "plumber", hint: "Fixes pipes and leaks" },
+		{ word: "painter", hint: "Works with brushes and color" },
+		{ word: "author", hint: "Writes books" },
+		{ word: "lawyer", hint: "Argues cases in court" },
+		{ word: "sailor", hint: "Works aboard a ship" },
+		{ word: "tailor", hint: "Makes and alters clothes" },
+		{ word: "barber", hint: "Cuts hair and trims beards" },
+		{ word: "chemist", hint: "Works with elements in a lab" },
+		{ word: "judge", hint: "Decides cases in a courtroom" },
+		{ word: "waiter", hint: "Brings food to your table" },
+		{ word: "cashier", hint: "Rings up your purchases" },
+		{ word: "florist", hint: "Arranges and sells flowers" },
+		{ word: "mechanic", hint: "Repairs cars and engines" },
+		{ word: "engineer", hint: "Designs machines and structures" },
+		{ word: "architect", hint: "Designs buildings" },
+		{ word: "librarian", hint: "Helps you find a book to borrow" },
+		{ word: "ranger", hint: "Protects a park or a forest" },
+		{ word: "jeweler", hint: "Sets gems into rings" },
+		{ word: "poet", hint: "Writes verses, often in rhyme" },
+		{ word: "butcher", hint: "Cuts and sells meat" },
+		{ word: "scientist", hint: "Runs experiments to learn how things work" },
+		{ word: "carpenter", hint: "Builds things from wood" },
+	],
+	sports: [
+		{ word: "soccer", hint: "Kick the ball into the net, no hands allowed" },
+		{ word: "tennis", hint: "Racket sport played over a net" },
+		{ word: "hockey", hint: "Played with sticks and a puck" },
+		{ word: "golf", hint: "Sink the ball in the fewest strokes" },
+		{ word: "rugby", hint: "Oval ball, tackles and tries" },
+		{ word: "boxing", hint: "Fought with gloves in a ring" },
+		{ word: "karate", hint: "Martial art of strikes and kicks" },
+		{ word: "skiing", hint: "Sliding down snowy slopes on two boards" },
+		{ word: "surfing", hint: "Riding ocean waves on a board" },
+		{ word: "archery", hint: "Shooting arrows at a target" },
+		{ word: "cycling", hint: "Racing on two wheels" },
+		{ word: "rowing", hint: "Pulling oars to move a boat" },
+		{ word: "bowling", hint: "Roll a ball to knock down ten pins" },
+		{ word: "cricket", hint: "Bat and ball game with wickets" },
+		{ word: "baseball", hint: "Bases, a bat and nine innings" },
+		{ word: "football", hint: "Touchdowns and field goals" },
+		{ word: "swimming", hint: "Racing through the pool" },
+		{ word: "fencing", hint: "Sword sport with masks and foils" },
+		{ word: "diving", hint: "Leaping into the pool from a board" },
+		{ word: "sailing", hint: "Racing boats powered by the wind" },
+		{ word: "judo", hint: "Martial art of throws and holds" },
+		{ word: "marathon", hint: "A run of about 26 miles" },
+		{ word: "sprint", hint: "A short, all out dash" },
+		{ word: "hurdles", hint: "A race over a row of barriers" },
+		{ word: "javelin", hint: "Spear thrown for distance" },
+		{ word: "skating", hint: "Gliding on blades or wheels" },
+		{ word: "climbing", hint: "Scaling walls and rock faces" },
+		{ word: "wrestling", hint: "Grappling to pin your opponent" },
+		{ word: "lacrosse", hint: "Netted sticks and a small rubber ball" },
+		{ word: "polo", hint: "Played on horseback with mallets" },
+	],
+	music: [
+		{ word: "guitar", hint: "Six strings, strummed or picked" },
+		{ word: "piano", hint: "Eighty eight black and white keys" },
+		{ word: "violin", hint: "Played with a bow under the chin" },
+		{ word: "drums", hint: "Struck with sticks to keep the beat" },
+		{ word: "trumpet", hint: "Brass horn with three valves" },
+		{ word: "flute", hint: "Woodwind held out to the side" },
+		{ word: "cello", hint: "Large string instrument played seated" },
+		{ word: "banjo", hint: "Twangy string instrument with a round body" },
+		{ word: "harp", hint: "Plucked strings in a tall frame" },
+		{ word: "melody", hint: "The tune you hum" },
+		{ word: "rhythm", hint: "The pattern of the beats" },
+		{ word: "chorus", hint: "The part of a song everyone sings along to" },
+		{ word: "tempo", hint: "How fast the music goes" },
+		{ word: "lyrics", hint: "The words of a song" },
+		{ word: "concert", hint: "A live music performance" },
+		{ word: "orchestra", hint: "Large group of musicians led by a conductor" },
+		{ word: "saxophone", hint: "Curved brass woodwind heard in jazz" },
+		{ word: "clarinet", hint: "Woodwind played with a single reed" },
+		{ word: "trombone", hint: "Brass horn with a slide" },
+		{ word: "ukulele", hint: "Small four string guitar from Hawaii" },
+		{ word: "harmonica", hint: "Pocket instrument you blow and draw" },
+		{ word: "opera", hint: "A drama told entirely in song" },
+		{ word: "ballad", hint: "Slow song that tells a story" },
+		{ word: "anthem", hint: "Song of a nation or a team" },
+		{ word: "accordion", hint: "Squeezebox with keys and bellows" },
+		{ word: "cymbal", hint: "Brass disc that crashes" },
+		{ word: "xylophone", hint: "Wooden bars struck with mallets" },
+		{ word: "choir", hint: "A group of singers" },
+		{ word: "tuba", hint: "The biggest and lowest brass horn" },
+		{ word: "encore", hint: "One more song, because the crowd asked" },
+	],
+	space: [
+		{ word: "planet", hint: "World that orbits a star" },
+		{ word: "comet", hint: "Icy body with a glowing tail" },
+		{ word: "meteor", hint: "A shooting star burning in the sky" },
+		{ word: "galaxy", hint: "Billions of stars held together by gravity" },
+		{ word: "nebula", hint: "Cloud of gas and dust where stars are born" },
+		{ word: "rocket", hint: "Climbs to orbit on a column of fire" },
+		{ word: "orbit", hint: "The path around a planet or a star" },
+		{ word: "asteroid", hint: "Rocky body, many circling between Mars and Jupiter" },
+		{ word: "eclipse", hint: "When one body blocks another's light" },
+		{ word: "crater", hint: "Bowl left by an impact" },
+		{ word: "gravity", hint: "The force that keeps your feet on the ground" },
+		{ word: "cosmos", hint: "The whole universe" },
+		{ word: "stardust", hint: "Tiny grains scattered by old suns" },
+		{ word: "telescope", hint: "Tube that makes far things look near" },
+		{ word: "astronaut", hint: "Trained to travel beyond Earth" },
+		{ word: "satellite", hint: "Orbits a planet, natural or built" },
+		{ word: "lunar", hint: "Having to do with the Moon" },
+		{ word: "solar", hint: "Having to do with the Sun" },
+		{ word: "quasar", hint: "Blazing core of a very distant galaxy" },
+		{ word: "pulsar", hint: "Spinning dead star that sweeps out beams" },
+		{ word: "capsule", hint: "Small craft that carries a crew" },
+		{ word: "module", hint: "Detachable section of a spacecraft" },
+		{ word: "shuttle", hint: "Winged craft that flew crews to orbit and back" },
+		{ word: "vacuum", hint: "Empty space with no air at all" },
+		{ word: "zenith", hint: "The point straight overhead" },
+		{ word: "horizon", hint: "Where the sky meets the land" },
+		{ word: "aurora", hint: "Dancing lights near the poles" },
+		{ word: "rover", hint: "Wheeled robot that explores another world" },
+		{ word: "alien", hint: "A visitor from another world" },
+		{ word: "launch", hint: "The moment of liftoff" },
+	],
+	realm: [
+		{ word: "castle", hint: "Stone fortress where the king lives" },
+		{ word: "kingdom", hint: "Land ruled by a monarch" },
+		{ word: "throne", hint: "The royal seat" },
+		{ word: "crown", hint: "Golden ring worn by a ruler" },
+		{ word: "knight", hint: "Armored warrior sworn to a lord" },
+		{ word: "dragon", hint: "Fire breathing winged beast" },
+		{ word: "moat", hint: "Water filled ditch around the walls" },
+		{ word: "tower", hint: "Tall narrow lookout above the walls" },
+		{ word: "banner", hint: "Flag that bears a house's crest" },
+		{ word: "shield", hint: "Carried to block a blow" },
+		{ word: "sword", hint: "The bladed weapon of a knight" },
+		{ word: "armor", hint: "Metal suit worn into battle" },
+		{ word: "squire", hint: "Young helper training to be a knight" },
+		{ word: "jester", hint: "Court fool who makes the king laugh" },
+		{ word: "scroll", hint: "Rolled parchment carrying a message" },
+		{ word: "dungeon", hint: "Prison cell deep beneath the castle" },
+		{ word: "rampart", hint: "Defensive wall walked by guards" },
+		{ word: "herald", hint: "Messenger who announces royal news" },
+		{ word: "queen", hint: "Royal ruler who wears a crown" },
+		{ word: "prince", hint: "Son of a king or a queen" },
+		{ word: "wizard", hint: "Spellcaster with a staff" },
+		{ word: "chalice", hint: "Ornate cup raised for a royal toast" },
+		{ word: "dagger", hint: "Short pointed blade" },
+		{ word: "catapult", hint: "Hurls stones at castle walls" },
+		{ word: "gate", hint: "The way in through the castle wall" },
+		{ word: "treasure", hint: "Gold and jewels hidden in a chest" },
+		{ word: "battle", hint: "Clash of two armies" },
+		{ word: "royal", hint: "Belonging to a king or a queen" },
+		{ word: "tavern", hint: "Inn where travelers drink and rest" },
+		{ word: "feast", hint: "Grand meal in the great hall" },
+	],
+};
+
+// Every entry with its shelf, flattened once at load in category order. pickWord
+// draws over this, so every word in the bank is equally likely whatever its shelf.
+export const HANGMAN_ENTRIES: readonly PickedHangmanWord[] = HANGMAN_CATEGORIES.flatMap((category) =>
+	HANGMAN_WORD_BANK[category].map((entry) => ({ ...entry, category }))
+);
+
+// The bare words, derived from the bank rather than kept as a second list.
+export const HANGMAN_WORDS: readonly string[] = HANGMAN_ENTRIES.map((entry) => entry.word);
+
+/** True when `value` names one of the bank's categories, for input that arrives as a string. */
+export function isHangmanCategory(value: string): value is HangmanCategory {
+	return (HANGMAN_CATEGORIES as readonly string[]).includes(value);
+}
+
+/**
+ * Pull a word and its hint at random from the whole bank. rng is injectable so a
+ * test can pin the choice, matching versusResolve. The default is the secure source
+ * (2026-10 item 280): a solved round pays XP and coins, and Math.random's state can
+ * be recovered from its output, the reason blackjack and the solo rounds use it too.
+ */
+export function pickWord(rng: () => number = secureRandom): PickedHangmanWord {
+	return HANGMAN_ENTRIES[Math.floor(rng() * HANGMAN_ENTRIES.length)];
+}
+
+/** Pull a word and its hint at random from one category. */
+export function pickWordFromCategory(category: HangmanCategory, rng: () => number = secureRandom): PickedHangmanWord {
+	const shelf = HANGMAN_WORD_BANK[category];
+	return { ...shelf[Math.floor(rng() * shelf.length)], category };
+}

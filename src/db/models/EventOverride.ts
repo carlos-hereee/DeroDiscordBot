@@ -7,7 +7,7 @@ const Schema = mongoose.Schema;
 // ── EventOverride model ─────────────────────────────────────────────
 // What:  per-occurrence override of an Event's title, description, or fire
 //        time. Anchored on (eventId, originalOccurrence) so the underlying
-//        event document is never mutated for an "edit once" action — the
+//        event document is never mutated for an "edit once" action, the
 //        override is read at fire time and merged on top of the event
 //        payload. "Edit permanently" mutates the event directly and does
 //        not write an EventOverride row.
@@ -34,7 +34,7 @@ const eventOverrideSchema = new Schema(
 		guildId: { type: String, required: true, index: true },
 		// The unmodified occurrence Date the override applies to. The
 		// scheduler computes the next occurrence per cron tick and queries
-		// EventOverride with this exact Date as the anchor — any override
+		// EventOverride with this exact Date as the anchor, any override
 		// that targets a different occurrence of the same event leaves
 		// this fire untouched.
 		originalOccurrence: { type: Date, required: true },
@@ -54,7 +54,7 @@ const eventOverrideSchema = new Schema(
 // even a race between two admins editing the same decree at the same time
 // resolves to a single winner. The store's apply path catches the duplicate
 // key error and returns a typed result the caller surfaces as "an override
-// already exists for this occurrence — apply via /edit-decree to override
+// already exists for this occurrence, apply via /edit-decree to override
 // the override".
 eventOverrideSchema.index({ eventId: 1, originalOccurrence: 1 }, { unique: true });
 

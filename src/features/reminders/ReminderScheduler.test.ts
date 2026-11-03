@@ -1,10 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TextChannel } from "discord.js";
 import type { Client } from "discord.js";
 
 // Mocks must precede the announceSeasonEnd import. ReminderScheduler.js
 // pulls in a wide import graph (eventStore, eventOverrideStore, ReminderJob
-// which itself imports NextUpBoard, etc) — all of those would otherwise
+// which itself imports NextUpBoard, etc), all of those would otherwise
 // register mongoose models on an unconnected connection and hang the test
 // process waiting for a DB handshake. Mock every store/feature on the
 // import chain so the mongoose model files never load.
@@ -56,15 +56,31 @@ vi.mock("@features/schedule/NextUpBoard.js", () => ({
 	_resetNextUpDedupForTest: vi.fn(),
 }));
 
-import { announceSeasonEnd } from "./ReminderScheduler.js";
+import { announceSeasonEnd, isReminderDue, recurringFireCandidates, runEventsForTick } from "./ReminderScheduler.js";
+import { eventStore } from "@db/stores/eventStore.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { eventOverrideStore } from "@db/stores/eventOverrideStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { reminderStore } from "@db/stores/reminderStore.js";
 import type { IGameEvent } from "@features/events/event.types.js";
 
-const guildConfigMock = guildConfigStore as unknown as {
+// ── parked scaffolding, mostly unused today ────────────────────────────────
+// makeEvent is used by the recurringFireCandidates cases at the bottom. The other
+// helpers below were written for the deeper integration tests
+// described in the describe block at the bottom of this file, which were
+// attempted and blocked. They are kept rather than deleted so whoever unblocks
+// that work does not rebuild them from scratch.
+//
+// The leading underscore is the sanctioned "intentionally unused" marker: it is
+// what `@typescript-eslint/no-unused-vars`' argsIgnorePattern / varsIgnorePattern
+// in eslint.config.js matches on. Before 2026-08-08 this file was invisible to
+// eslint entirely (it sat outside the linted TS project), so these read as clean;
+// they are marked now that test files actually get linted. Drop the underscore
+// when a test starts using one.
+const _guildConfigMock = guildConfigStore as unknown as {
 	findByGuildId: ReturnType<typeof vi.fn>;
 };
-const reminderStoreMock = reminderStore as unknown as {
+const _reminderStoreMock = reminderStore as unknown as {
 	exists: ReturnType<typeof vi.fn>;
 	create: ReturnType<typeof vi.fn>;
 };
@@ -72,8 +88,8 @@ const reminderStoreMock = reminderStore as unknown as {
 function makeEvent(overrides: Partial<IGameEvent> = {}): IGameEvent {
 	// firstOccurrence and seasonEnd are deliberately in the far future so
 	// the test never depends on the machine clock. announceSeasonEnd does
-	// not consult Date.now() — the cron tick gates on now > seasonEnd
-	// before calling — so any seasonEnd Date works for the dedup contract.
+	// not consult Date.now(), the cron tick gates on now > seasonEnd
+	// before calling, so any seasonEnd Date works for the dedup contract.
 	return {
 		eventId: "evt-1",
 		name: "Ancient Ruins",
@@ -94,7 +110,7 @@ function makeEvent(overrides: Partial<IGameEvent> = {}): IGameEvent {
 // `channel instanceof TextChannel` check in announceSeasonEnd without
 // constructing a full discord.js Guild + Client chain. Same trick used in
 // TestReminderJob.test.ts.
-function makeTextChannel(): TextChannel & { send: ReturnType<typeof vi.fn> } {
+function _makeTextChannel(): TextChannel & { send: ReturnType<typeof vi.fn> } {
 	const ch = Object.create(TextChannel.prototype) as TextChannel & { send: ReturnType<typeof vi.fn> };
 	Object.assign(ch, {
 		id: "ch-announcements",
@@ -103,7 +119,7 @@ function makeTextChannel(): TextChannel & { send: ReturnType<typeof vi.fn> } {
 	return ch;
 }
 
-function makeClient(channel: TextChannel | null): Client {
+function _makeClient(channel: TextChannel | null): Client {
 	return {
 		channels: {
 			fetch: vi.fn().mockResolvedValue(channel),
@@ -124,10 +140,10 @@ describe("announceSeasonEnd guild-scoped dedup", () => {
 	//
 	//   1. discord.js v14.26 changed class internals so
 	//      Object.create(TextChannel.prototype) no longer satisfies
-	//      `instanceof TextChannel` — flagged in CLAUDE.md tech debt as
+	//      `instanceof TextChannel`, flagged in CLAUDE.md tech debt as
 	//      a pending swap to `vi.mock("discord.js", ...)`.
 	//   2. The await-based test paths timed out at 5s and 30s for
-	//      reasons that did not surface a useful stack — likely the
+	//      reasons that did not surface a useful stack, likely the
 	//      same import-graph issue as the failing existing test
 	//      suites (TestReminderJob.test.ts, GuildSetupManager.test.ts,
 	//      ChannelDeleteWatcher.test.ts, events.routes.test.ts) which
@@ -138,12 +154,120 @@ describe("announceSeasonEnd guild-scoped dedup", () => {
 	//
 	// The dedup CONTRACT is enforced at the DB layer by the compound
 	// unique index `{eventId, eventOccurrence, offsetMinutes}` on
-	// ReminderLog — the synthetic key format `season-end:<guildId>` +
+	// ReminderLog, the synthetic key format `season-end:<guildId>` +
 	// `offsetMinutes: -1` cannot regress without an explicit code change
 	// to either the index or the announceSeasonEnd helper. The Phase 8
 	// manual smoke (one announcement embed per season-end) verifies the
 	// production behavior end-to-end against a real Discord channel.
 	it("smoke: announceSeasonEnd is defined and exported", () => {
 		expect(typeof announceSeasonEnd).toBe("function");
+	});
+});
+
+// ── an "apply once" override that moves an occurrence later (2026-10 item 280) ──
+// Once the original start passes, the next computed occurrence is the following one, so
+// looking up overrides only for that one lost every reminder of the moved occurrence.
+describe("recurringFireCandidates", () => {
+	const ANCHOR = new Date("2030-01-01T12:00:00Z");
+	const MOVED_TO = new Date("2030-01-01T20:00:00Z");
+	const NOW = new Date("2030-01-01T19:40:00Z"); // original start passed, the moved one still ahead
+	const NEXT = new Date("2030-01-03T04:00:00Z"); // anchor plus 40 hours
+	const overrideMock = eventOverrideStore as unknown as { findOne: ReturnType<typeof vi.fn> };
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(NOW);
+		overrideMock.findOne.mockReset().mockResolvedValue(null);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("keeps the previous occurrence while its override still lies ahead, keyed on its ORIGINAL start", async () => {
+		overrideMock.findOne.mockImplementation(async ({ originalOccurrence }: { originalOccurrence: Date }) =>
+			originalOccurrence.getTime() === ANCHOR.getTime() ? { overrideTime: MOVED_TO, overrideTitle: null, overrideDescription: null } : null
+		);
+
+		const candidates = await recurringFireCandidates(makeEvent({ firstOccurrence: ANCHOR }), NOW);
+
+		expect(candidates.map((candidate) => [candidate.originalOccurrence.toISOString(), candidate.fireMoment.toISOString()])).toEqual([
+			[ANCHOR.toISOString(), MOVED_TO.toISOString()],
+			[NEXT.toISOString(), NEXT.toISOString()],
+		]);
+	});
+
+	it("drops the previous occurrence when it has no override, so only the next one is checked", async () => {
+		const candidates = await recurringFireCandidates(makeEvent({ firstOccurrence: ANCHOR }), NOW);
+
+		expect(candidates.map((candidate) => candidate.originalOccurrence.toISOString())).toEqual([NEXT.toISOString()]);
+	});
+});
+
+// ── a late tick still fires, once (bot audit 2026-10-30) ──────────────────
+// Each reminder used to qualify on exactly one tick, the minute before it was due, so a
+// skipped or slow tick, or a redeploy in that minute, dropped it for good.
+describe("isReminderDue", () => {
+	const DUE = new Date("2030-01-01T12:00:00Z");
+	const at = (offsetMs: number) => new Date(DUE.getTime() + offsetMs);
+
+	it("fires from one window before the reminder until the grace runs out after it", () => {
+		expect(isReminderDue(DUE, at(-BOT_CONSTANTS.REMINDER_FIRE_WINDOW_MS))).toBe(true);
+		expect(isReminderDue(DUE, at(0))).toBe(true);
+		expect(isReminderDue(DUE, at(2 * 60_000))).toBe(true);
+		expect(isReminderDue(DUE, at(BOT_CONSTANTS.REMINDER_LATE_GRACE_MS))).toBe(true);
+	});
+
+	it("does not fire too early or once the grace has passed", () => {
+		expect(isReminderDue(DUE, at(-BOT_CONSTANTS.REMINDER_FIRE_WINDOW_MS - 1))).toBe(false);
+		expect(isReminderDue(DUE, at(BOT_CONSTANTS.REMINDER_LATE_GRACE_MS + 1))).toBe(false);
+	});
+});
+
+describe("recurringFireCandidates inside the late grace", () => {
+	const ANCHOR = new Date("2030-01-01T12:00:00Z");
+	const overrideMock = eventOverrideStore as unknown as { findOne: ReturnType<typeof vi.fn> };
+
+	beforeEach(() => {
+		overrideMock.findOne.mockReset().mockResolvedValue(null);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("keeps an occurrence that started moments ago, so its on time reminder can still fire late", async () => {
+		const now = new Date(ANCHOR.getTime() + 2 * 60_000);
+		vi.useFakeTimers();
+		vi.setSystemTime(now);
+
+		const candidates = await recurringFireCandidates(makeEvent({ firstOccurrence: ANCHOR }), now);
+
+		expect(candidates[0]?.originalOccurrence.toISOString()).toBe(ANCHOR.toISOString());
+	});
+});
+
+// ── one event's failure no longer costs every other event its tick ──────
+describe("runEventsForTick", () => {
+	const eventStoreMock = eventStore as unknown as { deleteInGuild: ReturnType<typeof vi.fn> };
+
+	afterEach(() => {
+		eventStoreMock.deleteInGuild.mockReset().mockResolvedValue(null);
+		vi.restoreAllMocks();
+	});
+
+	it("carries on to the next event when one throws", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		// Both seasons have ended, so each event's first write is its soft delete; the first one fails.
+		const ended = { seasonEnd: new Date("2020-01-01T00:00:00Z") };
+		eventStoreMock.deleteInGuild.mockRejectedValueOnce(new Error("Mongo blip")).mockResolvedValue(null);
+		const client = { channels: { fetch: vi.fn().mockResolvedValue(null) } } as unknown as Client;
+
+		await expect(
+			runEventsForTick(client, [makeEvent({ eventId: "evt-broken", ...ended }), makeEvent({ eventId: "evt-next", guildId: "guild-2", ...ended })])
+		).resolves.toBeUndefined();
+
+		expect(eventStoreMock.deleteInGuild).toHaveBeenCalledWith("evt-broken", "guild-1");
+		expect(eventStoreMock.deleteInGuild).toHaveBeenCalledWith("evt-next", "guild-2");
 	});
 });

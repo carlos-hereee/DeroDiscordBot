@@ -6,7 +6,7 @@
 		"moduleDetection": "force",
 		"moduleResolution": "bundler",
 
-		/* Modules — baseUrl was deprecated in TS 6.0. paths are declared
+		/* Modules, baseUrl was deprecated in TS 6.0. paths are declared
 		   relative to this tsconfig file, which works in TS 5.0+ and is the
 		   forward compatible way to keep the same @-prefixed aliases. */
 		"paths": {
@@ -21,7 +21,7 @@
 		"resolveJsonModule": true,
 		"allowArbitraryExtensions": true,
 
-		/* Emit — rootDir is declared explicitly because TS 6.0 no longer infers it
+		/* Emit, rootDir is declared explicitly because TS 6.0 no longer infers it
 		   silently. without this, tsc prints the "common source directory" warning
 		   your screenshot captured. with it, dist/ mirrors the src/ layout exactly. */
 		"rootDir": "./src",
@@ -34,7 +34,7 @@
 		"esModuleInterop": true,
 		"forceConsistentCasingInFileNames": true,
 
-		/* Type checking — `strict` already implies noImplicitAny + strictNullChecks */
+		/* Type checking, `strict` already implies noImplicitAny + strictNullChecks */
 		"strict": true,
 
 		/* Completeness */

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { TextChannel, DiscordAPIError } from "discord.js";
-import type { Client, Guild } from "discord.js";
+import { TextChannel, VoiceChannel, DiscordAPIError, ChannelType, PermissionFlagsBits } from "discord.js";
+import type { CategoryChannel, Client, Guild } from "discord.js";
 
 // mock the guild config store before importing the unit under test. the
 // mongoose model chain tries to open a real DB connection at import time
@@ -15,10 +15,23 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({
 	},
 }));
 
-import { GuildSetupManager } from "./GuildSetupManager.js";
+// Dero's own voice rooms on his voice allow list (2026-10 item 257 Phase 2b): spied
+// here so no setup test reaches the DeroVoiceConfig model.
+vi.mock("@features/voice/deroVoiceRooms.js", () => ({
+	allowDeroVoiceRooms: vi.fn().mockResolvedValue(undefined),
+	replaceDeroVoiceRoom: vi.fn().mockResolvedValue(undefined),
+	revokeDeroVoiceRooms: vi.fn().mockResolvedValue(undefined),
+	DERO_VOICE_ROOM_FIELDS: ["meetingVoiceChannelId", "arcadeVoiceChannelId"],
+}));
+
+import { GuildSetupManager, isHeadquartersOnly, waitsForSetup } from "./GuildSetupManager.js";
+import { allowDeroVoiceRooms, replaceDeroVoiceRoom } from "@features/voice/deroVoiceRooms.js";
+import { CHALLENGE_GAMES } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { ChannelContent } from "./ChannelContent.js";
+import { DERO_ART_FILES } from "@features/renderer/deroArt.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
+import { communityOverwritesFor, overwriteKindOf } from "./communityOverwrites.js";
 
 const guildConfigMock = guildConfigStore as unknown as {
 	findByGuildId: ReturnType<typeof vi.fn>;
@@ -28,6 +41,19 @@ const guildConfigMock = guildConfigStore as unknown as {
 };
 
 // ── fixtures ──────────────────────────────────────────────────────────
+
+// A fresh install builds only 🏰 DERO HEADQUARTERS (2026-11 item 285 Phase 2), so the
+// full three category build is reached the way it still runs: a forced rebuild of a
+// legacy row whose 🪧 NOTICE BOARD category was deleted (Discord answers its stored id
+// as gone). A self destructed row no longer qualifies: self destruct clears every
+// stored id, so its /setup builds fresh (2026-11 item 285 debug pass). It persists
+// through update (path B), so fullBuildPayloads reads it from there.
+const FULL_BUILD_ROW = { guildId: "guild-1", categoryId: "deleted-notice-board", setupComplete: true };
+
+// The build's own persist write, told apart from any other update by its intro anchors.
+function fullBuildPayloads(): Array<Record<string, unknown>> {
+	return guildConfigMock.update.mock.calls.map((call) => call[1] as Record<string, unknown>).filter((payload) => "introMessageIds" in payload);
+}
 
 function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 	return {
@@ -43,7 +69,43 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 		// null/undefined stored id as "also missing, rebuild too", so these must
 		// be present or every repair sweep rebuilds them alongside the real target.
 		nextDecreeChannelId: "ch-nextdecree",
-		adminCommandsChannelId: "ch-admincommands",
+		adminLogChannelId: "ch-adminlog",
+		// 👋welcome and 📘rules (2026-10 item 247 Phase 2), present for the same reason.
+		welcomeChannelId: "ch-welcome",
+		rulesChannelId: "ch-rules",
+		// The 9th/10th channels, under 🎮 ARCADE GAMES. Present for exactly the
+		// reason the two above are: a null id reads as "missing, rebuild too", so
+		// leaving them out would have every unrelated repair test also provisioning
+		// the arcade. The migration case (all three null) gets its OWN test rather
+		// than being smuggled into every other one.
+		gamesCategoryId: "games-cat-1",
+		arcadeRulesChannelId: "ch-arcaderules",
+		arcadeChallengesChannelId: "ch-arcadechallenges",
+		// 🕹️games (2026-10 item 245 Phase 4a), present for the same reason; the boot
+		// test in GuildSetupManager.gamesChannel.test.ts nulls it.
+		arcadeGamesChannelId: "ch-arcadegames",
+		// 🎉party-games (post-launch plan item 3), present for the same reason.
+		partyGamesChannelId: "ch-partygames",
+		// 🏆rated-challenges (2026-10 item 254, Arcade 5), present for the same reason; its
+		// boot test in GuildSetupManager.gamesChannel.test.ts nulls it.
+		arcadeRatedChallengesChannelId: "ch-ratedchallenges",
+		// 🏪dero-market (2026-10 item 267 Session 2a), present for the same reason; its boot
+		// test in GuildSetupManager.gamesChannel.test.ts nulls it.
+		deroMarketChannelId: "ch-deromarket",
+		// The two voice rooms (2026-10 item 235), present for the same reason:
+		// a null id reads as "missing, rebuild too". Their own tests null them.
+		meetingVoiceChannelId: "ch-meetingvoice",
+		arcadeVoiceChannelId: "ch-arcadevoice",
+		// 🏰 DERO HEADQUARTERS, its three config channels and 💬dero-commands (2026-10
+		// item 257 Phase 2a), present for the same reason. GuildSetupManager.headquarters
+		// .test.ts nulls them for the migration.
+		headquartersCategoryId: "hq-cat-1",
+		deroConfigChannelId: "ch-deroconfig",
+		onboardingConfigChannelId: "ch-onboardingconfig",
+		arcadeControlChannelId: "ch-arcadecontrol",
+		// 🛠️server-config (2026-10 item 263 Phase 4a), which took 🎛️admin-controls' place.
+		serverConfigChannelId: "ch-serverconfig",
+		commandOutputChannelId: "ch-commandoutput",
 		scheduleMessageId: "msg-schedule",
 		adminRoleId: null,
 		memberRoleId: null,
@@ -52,7 +114,7 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 	};
 }
 
-// Object.create(TextChannel.prototype) — leanest object that still passes
+// Object.create(TextChannel.prototype), leanest object that still passes
 // `channel instanceof TextChannel` inside ensureHomebase without pulling in
 // the full discord.js Guild + Client construction chain.
 function makeScheduleChannel(fetchImpl: (messageId: string) => Promise<unknown>): TextChannel {
@@ -116,12 +178,41 @@ function makeGuild(options: {
 	// rebuild too" branch for them. A test can still override either id.
 	const map: Record<string, unknown> = {
 		"ch-nextdecree": { id: "ch-nextdecree" },
-		"ch-admincommands": { id: "ch-admincommands" },
+		"ch-serverconfig": { id: "ch-serverconfig" },
+		"ch-adminlog": { id: "ch-adminlog" },
+		// 👋welcome and 📘rules (2026-10 item 247 Phase 2), present by default too.
+		"ch-welcome": { id: "ch-welcome" },
+		"ch-rules": { id: "ch-rules" },
+		// The arcade category and its two channels, present by default for the
+		// same reason. A test exercising the MIGRATION overrides these to null.
+		"games-cat-1": { id: "games-cat-1", type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } },
+		"ch-arcaderules": { id: "ch-arcaderules" },
+		"ch-arcadechallenges": { id: "ch-arcadechallenges" },
+		"ch-arcadegames": { id: "ch-arcadegames" },
+		"ch-partygames": { id: "ch-partygames" },
+		"ch-ratedchallenges": { id: "ch-ratedchallenges" },
+		"ch-deromarket": { id: "ch-deromarket" },
+		"ch-meetingvoice": { id: "ch-meetingvoice" },
+		"ch-arcadevoice": { id: "ch-arcadevoice" },
+		// 🏰 DERO HEADQUARTERS and its channels, and 💬dero-commands, present by default too.
+		"hq-cat-1": { id: "hq-cat-1", type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } },
+		"ch-deroconfig": { id: "ch-deroconfig" },
+		"ch-onboardingconfig": { id: "ch-onboardingconfig" },
+		"ch-arcadecontrol": { id: "ch-arcadecontrol" },
+		"ch-commandoutput": { id: "ch-commandoutput" },
 		...(options.channelFetchMap ?? {}),
 	};
 	const create =
 		options.createHandler ??
-		vi.fn(async (opts: { name: string }) => {
+		vi.fn(async (opts: { name: string; type?: number }) => {
+			// A created CATEGORY needs a children cache, because repairOneChannel's
+			// adopt-before-build guard scans parent.children.cache and a category
+			// fixture without one throws inside the repair rather than failing an
+			// assertion. Mirrors the augmentation the stored-category fixture above
+			// already does.
+			if (opts.type === ChannelType.GuildCategory) {
+				return { id: `new-${opts.name}`, type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } };
+			}
 			// fabricate a TextChannel shape with a unique id per creation so
 			// the updated config stores something distinguishable.
 			const created = Object.create(TextChannel.prototype) as TextChannel & { send: ReturnType<typeof vi.fn> };
@@ -245,12 +336,13 @@ describe("GuildSetupManager.ensureHomebase", () => {
 
 		expect(result).toEqual({ action: "rebuilt", repairedChannels: [] });
 		// rebuild path must not delete the foreign row on a shared Mongo
-		// cluster. autoSetup with force:true is the correct invocation.
+		// cluster. autoSetup with force:true is the correct invocation, and
+		// foreignHomebase so none of the other bot's channels is kept (2026-10 item 273, D1).
 		expect(guildConfigMock.deleteByGuildId).not.toHaveBeenCalled();
-		expect(autoSetupSpy).toHaveBeenCalledWith(guild, { guildId: "guild-1", ownerId: "owner-1" }, { force: true });
+		expect(autoSetupSpy).toHaveBeenCalledWith(guild, { guildId: "guild-1", ownerId: "owner-1" }, { force: true, foreignHomebase: true });
 	});
 
-	it("does NOT rebuild when the stored schedule message is missing (10008) — repairs in place", async () => {
+	it("does NOT rebuild when the stored schedule message is missing (10008), repairs in place", async () => {
 		// Regression (auto-heal duplicate-homebase bug): a deleted/unfetchable
 		// schedule message is NOT proof the homebase is foreign. The ownership
 		// probe returns "unknown", so ensureHomebase keeps the category and
@@ -318,6 +410,134 @@ describe("GuildSetupManager.ensureHomebase", () => {
 		expect(autoSetupSpy).not.toHaveBeenCalled();
 		expect(guildConfigMock.deleteByGuildId).not.toHaveBeenCalled();
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
+	});
+
+	// ⚠️ THE MIGRATION PATH, AND THE R2 REGRESSION GUARD AT RUNTIME.
+	// A row written before 🎮 ARCADE GAMES existed carries three null ids, which
+	// the sweep reads as "missing, build it". Both channels must land under the
+	// ARCADE category, and the compiler cannot help here because both parents are
+	// the same type. Building them under cat-1 is invisible in production until
+	// somebody notices arcade-rules sitting in the notice board, and by then the
+	// adopt-before-build scan is looking in the wrong parent and making duplicates.
+	it("gives a legacy guild the arcade category and files both channels under it", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(
+			makeStoredConfig({ gamesCategoryId: null, arcadeRulesChannelId: null, arcadeChallengesChannelId: null })
+		);
+
+		const createCalls: Array<{ name: string; type?: number; parent?: string }> = [];
+		const intact = { id: "intact" };
+		const guild = makeGuild({
+			categoryId: { id: "cat-1" },
+			channelFetchMap: {
+				"ch-intro": intact,
+				"ch-commands": intact,
+				"ch-leaderboard": intact,
+				"ch-schedule": intact,
+				"ch-announcements": intact,
+				"ch-admin": intact,
+			},
+			createHandler: async (opts) => {
+				const options = opts as { name: string; type?: number; parent?: string };
+				createCalls.push(options);
+				if (options.type === ChannelType.GuildCategory) {
+					return { id: "new-arcade", type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } };
+				}
+				const created = Object.create(TextChannel.prototype) as TextChannel & { send: ReturnType<typeof vi.fn> };
+				Object.assign(created, { id: `new-${options.name}`, send: vi.fn().mockResolvedValue({ id: "intro-msg" }) });
+				return created;
+			},
+		});
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async () => null });
+
+		await GuildSetupManager.ensureHomebase(client, guild);
+
+		// The category was created once, and its id persisted so the SECOND arcade
+		// spec in the same sweep reuses it rather than creating a rival.
+		const categoryCreates = createCalls.filter((c) => c.type === ChannelType.GuildCategory);
+		expect(categoryCreates).toHaveLength(1);
+		expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", { gamesCategoryId: "new-arcade" });
+
+		// Both arcade channels went under the NEW category, never under cat-1.
+		const arcadeChannels = createCalls.filter((c) => c.type !== ChannelType.GuildCategory);
+		expect(arcadeChannels).toHaveLength(2);
+		for (const call of arcadeChannels) {
+			expect(call.parent).toBe("new-arcade");
+			expect(call.parent).not.toBe("cat-1");
+		}
+	});
+
+	// ⚠️ THE ARCADE DUPLICATE (post-launch plan item 1). A boot that cannot confirm the
+	// stored 🎮 ARCADE GAMES (a timeout, a rate limit) used to read that as "gone" and
+	// build a second one beside the live one. Only Discord's Unknown Channel answer may
+	// lead to a create; anything else skips the arcade for this pass.
+	it("creates no arcade category when the stored one cannot be confirmed", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ arcadeRulesChannelId: null }));
+
+		const createCalls: Array<{ type?: number }> = [];
+		const intact = { id: "intact" };
+		const guild = makeGuild({
+			categoryId: { id: "cat-1" },
+			channelFetchMap: {
+				"ch-intro": intact,
+				"ch-commands": intact,
+				"ch-leaderboard": intact,
+				"ch-schedule": intact,
+				"ch-announcements": intact,
+				"ch-admin": intact,
+				"games-cat-1": new Error("socket hang up"),
+			},
+			createHandler: async (opts) => {
+				createCalls.push(opts as { type?: number });
+				return { id: "should-not-exist" };
+			},
+		});
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async () => null });
+
+		await GuildSetupManager.ensureHomebase(client, guild);
+
+		expect(createCalls).toHaveLength(0);
+		expect(guildConfigMock.update).not.toHaveBeenCalledWith("guild-1", expect.objectContaining({ gamesCategoryId: expect.anything() }));
+	});
+
+	it("adopts an arcade category already in the guild instead of building a second one", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ gamesCategoryId: null, arcadeRulesChannelId: null }));
+
+		const createCalls: Array<{ name: string; type?: number; parent?: string }> = [];
+		const intact = { id: "intact" };
+		const liveArcade = {
+			id: "live-arcade",
+			name: rokCommanderCopy.setup.gamesCategoryName,
+			type: ChannelType.GuildCategory,
+			children: { cache: { find: () => undefined, size: 4 } },
+		};
+		const guild = makeGuild({
+			categoryId: { id: "cat-1" },
+			channelFetchMap: {
+				"ch-intro": intact,
+				"ch-commands": intact,
+				"ch-leaderboard": intact,
+				"ch-schedule": intact,
+				"ch-announcements": intact,
+				"ch-admin": intact,
+			},
+			createHandler: async (opts) => {
+				const options = opts as { name: string; type?: number; parent?: string };
+				createCalls.push(options);
+				const created = Object.create(TextChannel.prototype) as TextChannel & { send: ReturnType<typeof vi.fn> };
+				Object.assign(created, { id: `new-${options.name}`, send: vi.fn().mockResolvedValue({ id: "intro-msg" }) });
+				return created;
+			},
+		});
+		Object.assign(guild.channels, { cache: new Map([[liveArcade.id, liveArcade]]) });
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async () => null });
+
+		await GuildSetupManager.ensureHomebase(client, guild);
+
+		expect(createCalls.filter((call) => call.type === ChannelType.GuildCategory)).toHaveLength(0);
+		expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", { gamesCategoryId: "live-arcade" });
+		const rebuilt = createCalls.filter((call) => call.type !== ChannelType.GuildCategory);
+		expect(rebuilt).toHaveLength(1);
+		expect(rebuilt[0]!.parent).toBe("live-arcade");
 	});
 
 	it("repairs a single missing public channel and posts a notice in the inner sanctum", async () => {
@@ -508,7 +728,7 @@ describe("GuildSetupManager.ensureHomebase", () => {
 
 		expect(result.action).toBe("repaired");
 		expect(result.repairedChannels).toEqual([rokCommanderCopy.setup.channels.intro, rokCommanderCopy.setup.channels.leaderboard]);
-		// ONE summary notice covers all repaired channels — postRepairNotices
+		// ONE summary notice covers all repaired channels, postRepairNotices
 		// sends a single channelsRestoredSummary embed whose description lists
 		// every rebuilt channel, not one message per channel.
 		expect(adminChannel.send).toHaveBeenCalledOnce();
@@ -518,7 +738,7 @@ describe("GuildSetupManager.ensureHomebase", () => {
 		expect(summary.embeds[0].data.description).toContain(rokCommanderCopy.setup.channels.leaderboard);
 	});
 
-	it("does NOT rebuild when the stored scheduleMessageId is null — repairs in place", async () => {
+	it("does NOT rebuild when the stored scheduleMessageId is null, repairs in place", async () => {
 		// Regression (auto-heal duplicate-homebase bug): a legacy/blank
 		// scheduleMessageId is not proof of a foreign homebase either. The probe
 		// returns "unknown" (no anchor to check), so we keep the category and
@@ -544,6 +764,103 @@ describe("GuildSetupManager.ensureHomebase", () => {
 		expect(result).toEqual({ action: "skipped", repairedChannels: [] });
 		expect(autoSetupSpy).not.toHaveBeenCalled();
 		expect(guildConfigMock.deleteByGuildId).not.toHaveBeenCalled();
+	});
+});
+
+// ── the repair path with a HYDRATED row (2026-10 item 274) ────────────────
+// The store returns a hydrated Mongoose document, whose fields live on getters and
+// whose spread keeps none of them. repairOneChannel used to return a spread of its
+// input, and the boot sweep chained that return, so after one repair every later slot
+// read as missing; every plain object fixture above hides it. This stand in puts the
+// fields on the prototype with a non enumerable toObject, like Mongoose. Twins: the
+// same helper in ChannelDeleteWatcher.test.ts and GuildSetupManager.reusedCategories.test.ts.
+function asHydrated(row: Record<string, unknown>): Record<string, unknown> {
+	const document = Object.create(row) as Record<string, unknown>;
+	Object.defineProperty(document, "toObject", { value: () => ({ ...row }), enumerable: false });
+	return document;
+}
+
+describe("GuildSetupManager repair path with a hydrated config row (2026-10 item 274)", () => {
+	const STORED_ANCHORS = Object.fromEntries(GuildSetupManager.CHANNEL_FIELDS.map((field) => [field, `anchor-${field}`]));
+	const RENAMED_LEADERBOARD = "🏆stream-rankings";
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("repairs only the gone slots in one boot sweep, keeps every other anchor, and posts the notice in the stored inner sanctum", async () => {
+		const row = makeStoredConfig({
+			introMessageIds: { ...STORED_ANCHORS },
+			// A live slot renamed with /server channels rename, BETWEEN the two gone ones:
+			// read off a spread row it would have looked missing under its default name.
+			channelNames: new Map([["leaderboardChannelId", RENAMED_LEADERBOARD]]),
+		});
+		guildConfigMock.findByGuildId.mockResolvedValue(asHydrated(row));
+		const writes: Array<Record<string, unknown>> = [];
+		guildConfigMock.update.mockImplementation(async (_guildId: string, data: Record<string, unknown>) => {
+			writes.push(data);
+			return undefined;
+		});
+
+		const intact = { id: "intact" };
+		const guild = makeGuild({
+			categoryId: { id: "cat-1" },
+			channelFetchMap: {
+				// 📜introductions is the FIRST spec and 🔜upcoming-events the seventh, so every
+				// spec between and after them is walked after a repair.
+				"ch-intro": null,
+				"ch-commands": intact,
+				"ch-leaderboard": intact,
+				"ch-schedule": intact,
+				"ch-announcements": intact,
+				"ch-admin": intact,
+				"ch-nextdecree": null,
+			},
+		});
+		const adminChannel = makeAdminChannel("ch-admin");
+		const client = makeClient({
+			selfId: "bot-1",
+			fetchChannel: async (id) => {
+				if (id === "ch-schedule") return makeScheduleChannel(async () => ({ id: "msg-schedule", author: { id: "bot-1" } }));
+				if (id === "ch-admin") return adminChannel;
+				return null;
+			},
+		});
+
+		const result = await GuildSetupManager.ensureHomebase(client, guild);
+
+		const created = (guild.channels.create as unknown as ReturnType<typeof vi.fn>).mock.calls.map(([opts]) => (opts as { name: string }).name);
+		expect(created).toEqual([rokCommanderCopy.setup.channels.intro, rokCommanderCopy.setup.channels.nextDecree]);
+		expect(result.repairedChannels).toEqual([rokCommanderCopy.setup.channels.intro, rokCommanderCopy.setup.channels.nextDecree]);
+		// Exactly one write per repair, each carrying the whole anchor map with every
+		// untouched slot's anchor intact.
+		expect(writes).toHaveLength(2);
+		const finalAnchors = writes[1]!.introMessageIds as Record<string, string | null>;
+		for (const field of GuildSetupManager.CHANNEL_FIELDS) {
+			if (field === "introChannelId" || field === "nextDecreeChannelId") continue;
+			expect(finalAnchors[field], field).toBe(`anchor-${field}`);
+		}
+		expect(finalAnchors.introChannelId).toBe(`intro-${rokCommanderCopy.setup.channels.intro}`);
+		// The one notice reaches the stored 🔒inner-sanctum, which was never walked, so it
+		// got no second admin card either: the summary is the only thing sent there.
+		expect(adminChannel.send).toHaveBeenCalledOnce();
+		const summary = adminChannel.send.mock.calls[0][0] as { embeds: Array<{ data: { title: string; description: string } }> };
+		expect(summary.embeds[0].data.title).toBe(rokCommanderCopy.channelContent.channelRepairNotice.summaryTitle);
+	});
+
+	it("returns a row from repairOneChannel that carries every stored field plus the update", async () => {
+		const row = makeStoredConfig({ introMessageIds: { ...STORED_ANCHORS } });
+		guildConfigMock.update.mockResolvedValue(undefined);
+		const guild = makeGuild({});
+		const category = { id: "cat-1", children: { cache: { find: () => undefined } } } as unknown as CategoryChannel;
+		const spec = GuildSetupManager.CHANNEL_SPECS.find((entry) => entry.configField === "announcementsChannelId")!;
+
+		const result = await GuildSetupManager.repairOneChannel(guild, category, spec, asHydrated(row) as Record<string, unknown> & { adminRoleId?: string | null });
+
+		expect(result.stored.adminChannelId).toBe("ch-admin");
+		expect(result.stored.gamesCategoryId).toBe("games-cat-1");
+		expect(result.stored.announcementsChannelId).toBe(`new-${rokCommanderCopy.setup.channels.announcements}`);
+		expect((result.stored.introMessageIds as Record<string, string>).leaderboardChannelId).toBe("anchor-leaderboardChannelId");
 	});
 });
 
@@ -586,10 +903,24 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 			client: { user: { id: "bot-1" } },
 			channels: {
 				create: vi.fn(async (opts: { name: string; type: number }) => {
-					// categories come back with just an id — populateChannels
+					// categories come back with just an id, populateChannels
 					// never touches a category object directly.
 					if (opts.type === 4) return { id: "new-cat-1" };
 					return makeCh(opts.name);
+				}),
+				// Reached only on the force:true rebuild, where runAutoSetup now hands the
+				// STORED arcade category id to findExistingManagedCategory instead of null.
+				// Resolving it is what proves the reuse branch is live on this path; before the
+				// fix it was dead here and every forced rebuild built a second 🎮 ARCADE GAMES
+				// beside the live one, orphaning its channels and every room parented under it.
+				// 🏰 DERO HEADQUARTERS (2026-10 item 257 Phase 2a) takes the same path. Every
+				// stored channel under the two answers live, of its own kind, so the rebuild
+				// keeps them (2026-10 item 273); GuildSetupManager.reusedCategories.test.ts
+				// covers the gone, removed and unconfirmable ones.
+				fetch: vi.fn(async (id: string) => {
+					if (id === "games-cat-1" || id === "hq-cat-1") return { id, type: 4, children: { cache: new Map() } };
+					const live = Object.create((id === "ch-arcadevoice" ? VoiceChannel : TextChannel).prototype) as { id: string };
+					return Object.assign(live, { id });
 				}),
 			},
 		} as unknown as Guild;
@@ -607,7 +938,7 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" }, { force: true });
 
 		// update was called, create was not. this is the whole point of
-		// the update branch — do not try to insert when a row already
+		// the update branch, do not try to insert when a row already
 		// exists in the DB, because on a shared cluster that row might be
 		// foreign.
 		expect(guildConfigMock.update).toHaveBeenCalledOnce();
@@ -619,6 +950,24 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 		expect(payload.categoryId).toBe("new-cat-1");
 		expect(payload).not.toHaveProperty("adminRoleId");
 		expect(payload).not.toHaveProperty("setupComplete");
+		// ⚠️ AND THE ARCADE CATEGORY IS REUSED, NOT REBUILT. force:true is reached by
+		// rebuildFromStaleConfig and ScheduleBoard.rebuildHomebase, both of which fire when only
+		// the HOMEBASE category is missing. Creating a second arcade category here would repoint
+		// gamesCategoryId at it and permanently orphan the original, its channels, and every
+		// in-progress room channel parented under it (selfDestruct reads the stored id, so
+		// /self-destruct could not reach them either).
+		expect(payload.gamesCategoryId).toBe("games-cat-1");
+		// So is 🏰 DERO HEADQUARTERS, for the same reason.
+		expect(payload.headquartersCategoryId).toBe("hq-cat-1");
+		const createCalls = (guild.channels.create as unknown as ReturnType<typeof vi.fn>).mock.calls.map(([opts]) => opts as { type: number; parent?: string });
+		expect(createCalls.filter((opts) => opts.type === 4)).toHaveLength(1);
+		// ⚠️ AND SO ARE THEIR LIVE CHANNELS (2026-10 item 273). Building them again put a second
+		// set of every arcade and Headquarters channel beside the live one and repointed the
+		// row at the copies, so not one channel may be created under a reused category, and
+		// the payload must leave their slots as stored.
+		expect(createCalls.filter((opts) => opts.parent === "games-cat-1" || opts.parent === "hq-cat-1")).toEqual([]);
+		expect(payload).not.toHaveProperty("arcadeChallengesChannelId");
+		expect(payload).not.toHaveProperty("adminChannelId");
 	});
 
 	it("logs loudly and rethrows when create hits the 11000 duplicate key error", async () => {
@@ -631,7 +980,7 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 		const dupKey = Object.assign(new Error("E11000 duplicate key error collection"), { code: 11000 });
 		guildConfigMock.create.mockRejectedValue(dupKey);
 
-		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 		const guild = makePersistGuild();
 
 		await expect(
@@ -642,12 +991,346 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 		// string includes "duplicate key" so the operator can grep for it.
 		const loggedMessages = errorSpy.mock.calls.map((call) => String(call[0]));
 		expect(loggedMessages.some((msg) => msg.includes("duplicate key"))).toBe(true);
-		// critically, no update or delete was attempted — we never silently
+		// critically, no update or delete was attempted, we never silently
 		// overwrite the foreign row.
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
 		expect(guildConfigMock.deleteByGuildId).not.toHaveBeenCalled();
 
 		errorSpy.mockRestore();
+	});
+});
+
+// ── createChannels, the fresh install create path ───────────────────────
+// What:  pins what a fresh install actually BUILDS: two categories, ten
+//        channels, each under the right parent and carrying the overwrite
+//        array its privacy posture requires.
+// Who:   runAutoSetup on guildCreate, and ensureHomebase's force rebuild.
+// Why it exists: the persistence block above does reach createChannels for
+//        real, but every assertion it makes is about the PERSIST branch
+//        (update vs insert, duplicate key). Nothing asserted the SHAPE of
+//        what was created, so the 8 to 10 channel change landed with its
+//        whole surface uncovered. A wrong parent or a swapped overwrite
+//        array throws nothing, fails no type check, and stays invisible
+//        until a member opens Discord and finds 📋arcade-rules filed under
+//        🪧 NOTICE BOARD or an admin channel readable by everyone.
+// Where: this is the create-path twin of the R2 guard ChannelDeleteWatcher
+//        .test.ts already keeps over the REPAIR path. Both paths build
+//        channels; both can put one under the wrong category; only the
+//        repair half was watched.
+describe("GuildSetupManager.autoSetup channel creation", () => {
+	const packChannels = rokCommanderCopy.setup.channels;
+	const EVERYONE_ID = "everyone";
+	const OWNER_ID = "owner-1";
+	const BOT_ID = "bot-1";
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	// Distinct id per created category, keyed off the name, because telling the
+	// two parents apart is the entire point of this block. The persistence
+	// fixture above hands back a single "new-cat-1" for every category, which
+	// cannot express the R2 bug: under it, a channel built under the wrong
+	// parent is indistinguishable from one built under the right parent.
+	function makeCreateGuild(): Guild {
+		const create = vi.fn(async (opts: { name: string; type: number }) => {
+			if (opts.type === ChannelType.GuildCategory) return { id: `cat-${opts.name}` };
+			const ch = Object.create(TextChannel.prototype) as TextChannel & {
+				send: ReturnType<typeof vi.fn>;
+				pin: ReturnType<typeof vi.fn>;
+			};
+			Object.assign(ch, {
+				id: `new-${opts.name}`,
+				guildId: "guild-1",
+				send: vi.fn().mockResolvedValue({ id: `msg-${opts.name}`, pin: vi.fn().mockResolvedValue(undefined) }),
+				pin: vi.fn().mockResolvedValue(undefined),
+			});
+			return ch;
+		});
+		return {
+			id: "guild-1",
+			ownerId: OWNER_ID,
+			roles: { everyone: { id: EVERYONE_ID } },
+			// createChannels reads guild.client.user.id via botSelfOverwrite.
+			client: { user: { id: BOT_ID } },
+			channels: { create },
+		} as unknown as Guild;
+	}
+
+	interface ICreateCall {
+		name: string;
+		type: number;
+		parent?: string;
+		permissionOverwrites?: Array<{ id: string; allow?: bigint[]; deny?: bigint[] }>;
+	}
+
+	// The full build end to end: every category and every channel, then one persist
+	// write. FULL_BUILD_ROW says why it is a self destructed row and not a fresh one.
+	async function runFullBuild(): Promise<{ categories: ICreateCall[]; textChannels: ICreateCall[] }> {
+		guildConfigMock.findByGuildId.mockResolvedValue(FULL_BUILD_ROW);
+
+		const guild = makeCreateGuild();
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID }, { force: true });
+
+		const createMock = guild.channels.create as unknown as ReturnType<typeof vi.fn>;
+		const calls = createMock.mock.calls.map((call) => call[0] as ICreateCall);
+		return {
+			categories: calls.filter((call) => call.type === ChannelType.GuildCategory),
+			textChannels: calls.filter((call) => call.type === ChannelType.GuildText),
+		};
+	}
+
+	it("builds exactly three categories and twenty one channels, each once", async () => {
+		const { categories, textChannels } = await runFullBuild();
+
+		// All three categories, in build order, with NO dev suffix: vitest runs under
+		// NODE_ENV=test, and resolveCategoryName only suffixes on "development".
+		// Worth pinning, because a suffixed category name in production is a
+		// visible brand mark on every server the bot joins.
+		expect(categories.map((category) => category.name)).toEqual([
+			rokCommanderCopy.setup.categoryName,
+			rokCommanderCopy.setup.gamesCategoryName,
+			rokCommanderCopy.setup.headquartersCategoryName,
+		]);
+
+		expect(textChannels).toHaveLength(21);
+		expect(textChannels.map((channel) => channel.name).sort()).toEqual(
+			[
+				packChannels.intro,
+				packChannels.commands,
+				packChannels.leaderboard,
+				packChannels.schedule,
+				packChannels.announcements,
+				packChannels.admin,
+				packChannels.nextDecree,
+				packChannels.adminLog,
+				packChannels.welcome,
+				packChannels.rules,
+				packChannels.arcadeRules,
+				packChannels.arcadeChallenges,
+				packChannels.arcadeGames,
+				packChannels.partyGames,
+				packChannels.arcadeRatedChallenges,
+				packChannels.deroMarket,
+				packChannels.deroConfig,
+				packChannels.onboardingConfig,
+				packChannels.arcadeControl,
+				packChannels.serverConfig,
+				packChannels.commandOutput,
+			].sort()
+		);
+	});
+
+	// ⚠️ THE R2 GUARD, create-path half. Both parents are CategoryChannel, so
+	// the compiler cannot tell them apart and a swapped parent.id is a silent
+	// misfile. CHANNEL_SPECS.categoryField protects every OTHER consumer;
+	// createChannels passes the parent literally, so only a test protects it.
+	it("files the nine homebase channels, the six arcade channels and the six Headquarters channels under their own categories", async () => {
+		const { textChannels } = await runFullBuild();
+
+		const homebaseParent = `cat-${rokCommanderCopy.setup.categoryName}`;
+		const arcadeParent = `cat-${rokCommanderCopy.setup.gamesCategoryName}`;
+		const headquartersParent = `cat-${rokCommanderCopy.setup.headquartersCategoryName}`;
+		const parentOf = (name: string) => textChannels.find((channel) => channel.name === name)?.parent;
+
+		for (const name of [
+			packChannels.intro,
+			packChannels.commands,
+			packChannels.leaderboard,
+			packChannels.schedule,
+			packChannels.announcements,
+			packChannels.nextDecree,
+			packChannels.welcome,
+			packChannels.rules,
+			packChannels.commandOutput,
+		]) {
+			expect(parentOf(name), `${name} belongs under the homebase category`).toBe(homebaseParent);
+		}
+
+		// 🏰 DERO HEADQUARTERS: every admin channel, the two that used to sit under the
+		// notice board and the four config channels; a fresh server never gets
+		// 🎛️admin-controls (2026-10 item 263 Phase 4a).
+		for (const name of [
+			packChannels.admin,
+			packChannels.adminLog,
+			packChannels.deroConfig,
+			packChannels.onboardingConfig,
+			packChannels.arcadeControl,
+			packChannels.serverConfig,
+		]) {
+			expect(parentOf(name), `${name} belongs under 🏰 DERO HEADQUARTERS`).toBe(headquartersParent);
+		}
+
+		for (const name of [packChannels.arcadeRules, packChannels.arcadeChallenges, packChannels.arcadeGames, packChannels.partyGames, packChannels.arcadeRatedChallenges, packChannels.deroMarket]) {
+			expect(parentOf(name), `${name} belongs under the arcade category`).toBe(arcadeParent);
+		}
+
+		// No channel may land unparented or under a third parent, which a typo
+		// in a parent id would otherwise produce without failing either loop.
+		expect(textChannels.filter((channel) => channel.parent === homebaseParent)).toHaveLength(9);
+		expect(textChannels.filter((channel) => channel.parent === arcadeParent)).toHaveLength(6);
+		expect(textChannels.filter((channel) => channel.parent === headquartersParent)).toHaveLength(6);
+	});
+
+	// The three postures createChannels mints, expressed as what @everyone and
+	// the guild owner get. The bot's own entry is asserted separately: it is
+	// byte identical on all ten, so folding it in here would make one legitimate
+	// change to botSelfOverwrite fail ten assertions instead of one.
+	const POSTURES = {
+		// Members read, only the bot writes.
+		public: {
+			everyone: { id: EVERYONE_ID, allow: [PermissionFlagsBits.ViewChannel], deny: [PermissionFlagsBits.SendMessages] },
+			owner: { id: OWNER_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+		},
+		// 📜introductions, the one member-writable channel: public MINUS the
+		// SendMessages deny. A member who cannot post here cannot answer the
+		// greeter's icebreaker and cannot clear Discord's Onboarding gate, so
+		// silently tightening this to `public` breaks onboarding, not just chat.
+		intro: {
+			everyone: { id: EVERYONE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+			owner: { id: OWNER_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+		},
+		// Hidden from members outright.
+		admin: {
+			everyone: { id: EVERYONE_ID, deny: [PermissionFlagsBits.ViewChannel] },
+			owner: {
+				id: OWNER_ID,
+				allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+			},
+		},
+		// 🗒️admin-log: hidden from members, readable by the owner, and written by the
+		// bot alone, so the owner's write is an explicit deny (post-launch plan item 11).
+		adminLog: {
+			everyone: { id: EVERYONE_ID, deny: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+			owner: {
+				id: OWNER_ID,
+				allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+				deny: [PermissionFlagsBits.SendMessages],
+			},
+		},
+	} as const;
+
+	const EXPECTED_POSTURES: Array<[string, keyof typeof POSTURES]> = [
+		[packChannels.intro, "intro"],
+		[packChannels.commands, "public"],
+		[packChannels.leaderboard, "public"],
+		[packChannels.schedule, "public"],
+		[packChannels.announcements, "public"],
+		[packChannels.admin, "admin"],
+		[packChannels.nextDecree, "public"],
+		[packChannels.adminLog, "adminLog"],
+		// 👋welcome and 📘rules: members read Dero's log and the rules, and type nothing.
+		[packChannels.welcome, "public"],
+		[packChannels.rules, "public"],
+		// Both arcade channels are member facing and bot written: the rules card
+		// is a pinned reference and the board is a wall of bot posted cards, so
+		// member SendMessages would only bury them. Challenges are issued by
+		// command, never by typing here, so the lockdown costs nothing.
+		[packChannels.arcadeRules, "public"],
+		[packChannels.arcadeChallenges, "public"],
+		// 🕹️games: members press its buttons and read its posts, and type nothing.
+		[packChannels.arcadeGames, "public"],
+		// 🎉party-games: members play through buttons; admins and Dero post.
+		[packChannels.partyGames, "public"],
+		// 🏆rated-challenges: the rated half of ⚔️challenges, the same wall of bot cards.
+		[packChannels.arcadeRatedChallenges, "public"],
+		// 🏪dero-market: members press Buy and Sell and read the trades Dero posts.
+		[packChannels.deroMarket, "public"],
+		// 🏰 DERO HEADQUARTERS' four config channels: admin only, like 🔒inner-sanctum.
+		[packChannels.deroConfig, "admin"],
+		[packChannels.onboardingConfig, "admin"],
+		[packChannels.arcadeControl, "admin"],
+		[packChannels.serverConfig, "admin"],
+		// 💬dero-commands: members run commands here, so they read AND send, the
+		// introductions posture on an ungated guild.
+		[packChannels.commandOutput, "intro"],
+	];
+
+	it("gives every channel the overwrite array its privacy posture requires", async () => {
+		const { textChannels } = await runFullBuild();
+
+		for (const [name, posture] of EXPECTED_POSTURES) {
+			const created = textChannels.find((channel) => channel.name === name);
+			expect(created, `${name} was never created`).toBeDefined();
+
+			const overwrites = created!.permissionOverwrites ?? [];
+			expect(overwrites.find((entry) => entry.id === EVERYONE_ID), `${name} @everyone overwrite`).toEqual(POSTURES[posture].everyone);
+			expect(overwrites.find((entry) => entry.id === OWNER_ID), `${name} owner overwrite`).toEqual(POSTURES[posture].owner);
+		}
+	});
+
+	it("carries the bot self overwrite on all twenty one channels", async () => {
+		// Not decoration. Without it the @everyone SendMessages deny suppresses
+		// the bot's OWN posts on a public channel, and the @everyone ViewChannel
+		// deny hides an admin channel from the bot entirely. Both fail at post
+		// time, long after setup reported success, so the failure surfaces as a
+		// missing intro embed rather than as a setup error.
+		const { textChannels } = await runFullBuild();
+		expect(textChannels).toHaveLength(21);
+
+		for (const created of textChannels) {
+			const botEntry = (created.permissionOverwrites ?? []).find((entry) => entry.id === BOT_ID);
+			expect(botEntry, `${created.name} is missing the bot self overwrite`).toBeDefined();
+			expect(botEntry!.allow, `${created.name} bot ViewChannel`).toContain(PermissionFlagsBits.ViewChannel);
+			expect(botEntry!.allow, `${created.name} bot SendMessages`).toContain(PermissionFlagsBits.SendMessages);
+		}
+	});
+
+	it("persists every id it just created, both categories included, in ONE payload", async () => {
+		// ⚠️ THE POINT OF THIS TEST IS THE ABSENCE OF AN EXCEPTION. The payload
+		// used to skip nextDecreeChannelId and lean on the next boot's repair
+		// sweep to adopt the orphan, which left NextUpBoard reading null and
+		// posting nothing for the whole window between /setup and that reboot.
+		// Closed 2026-08-12. Asserting the full set, rather than only the ids a
+		// given change happened to add, is what stops a twelfth channel from
+		// quietly reintroducing the same gap.
+		await runFullBuild();
+
+		expect(fullBuildPayloads()).toHaveLength(1);
+		const [payload] = fullBuildPayloads();
+
+		expect(payload.categoryId).toBe(`cat-${rokCommanderCopy.setup.categoryName}`);
+		expect(payload.gamesCategoryId).toBe(`cat-${rokCommanderCopy.setup.gamesCategoryName}`);
+		expect(payload.arcadeRulesChannelId).toBe(`new-${packChannels.arcadeRules}`);
+		expect(payload.arcadeChallengesChannelId).toBe(`new-${packChannels.arcadeChallenges}`);
+		expect(payload.arcadeGamesChannelId).toBe(`new-${packChannels.arcadeGames}`);
+		expect(payload.serverConfigChannelId).toBe(`new-${packChannels.serverConfig}`);
+		expect(payload).not.toHaveProperty("adminCommandsChannelId");
+		expect(payload.nextDecreeChannelId).toBe(`new-${packChannels.nextDecree}`);
+		expect(payload.introChannelId).toBe(`new-${packChannels.intro}`);
+		expect(payload.commandsChannelId).toBe(`new-${packChannels.commands}`);
+		expect(payload.leaderboardChannelId).toBe(`new-${packChannels.leaderboard}`);
+		expect(payload.scheduleChannelId).toBe(`new-${packChannels.schedule}`);
+		expect(payload.announcementsChannelId).toBe(`new-${packChannels.announcements}`);
+		expect(payload.adminChannelId).toBe(`new-${packChannels.admin}`);
+
+		// Structural backstop for the same failure: every channel createChannels
+		// built has to appear in the payload under its own configField. A new
+		// spec that lands without a persist line fails HERE even if nobody thinks
+		// to add an assertion for it above, which is exactly how the last one got
+		// through. CHANNEL_FIELDS is the derived list, so it grows on its own.
+		for (const field of GuildSetupManager.CHANNEL_FIELDS) {
+			expect(payload[field], `${field} was created but never persisted`).toBeDefined();
+		}
+	});
+
+	it("posts 🕹️games' intro, then its Challenge Board beneath it, and anchors both", async () => {
+		// Two sends in one channel, in order: the board has to sit BELOW the intro, so
+		// populateChannels chains them rather than racing them in its Promise.all.
+		guildConfigMock.findByGuildId.mockResolvedValue(FULL_BUILD_ROW);
+		const guild = makeCreateGuild();
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID }, { force: true });
+
+		const createMock = guild.channels.create as unknown as ReturnType<typeof vi.fn>;
+		const index = createMock.mock.calls.findIndex((call) => (call[0] as ICreateCall).name === packChannels.arcadeGames);
+		const gamesChannel = (await createMock.mock.results[index].value) as { send: ReturnType<typeof vi.fn> };
+		const titles = gamesChannel.send.mock.calls.map((call) => (call[0] as { embeds: Array<{ data: { title?: string } }> }).embeds[0].data.title);
+		expect(titles).toEqual([rokCommanderCopy.channelContent.arcadeGames.title, rokCommanderCopy.channelContent.arcadeGames.boardTitle]);
+
+		const [payload] = fullBuildPayloads();
+		const introIds = payload.introMessageIds as Record<string, unknown>;
+		expect(introIds.arcadeGamesChannelId).toBe(`msg-${packChannels.arcadeGames}`);
+		expect(introIds.arcadeGamesBoardId).toBe(`msg-${packChannels.arcadeGames}`);
 	});
 });
 
@@ -678,7 +1361,7 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 		inviteCardComponents(): { toJSON(): unknown }[];
 	};
 
-	// minimal guild — refreshIntroEmbeds reads guild.id, guild.ownerId, and
+	// minimal guild, refreshIntroEmbeds reads guild.id, guild.ownerId, and
 	// guild.client.user.id (the repost + invite-card adopt scans).
 	function makeGuildFixture(): Guild {
 		return {
@@ -748,7 +1431,7 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 	it("edits every stored intro in place when anchors resolve and only the button layout drifted", async () => {
 		// Every stored anchor resolves and the embed copy is current, but the
 		// stored component rows are stale (button relocations). refreshIntroEmbeds
-		// must edit each intro IN PLACE — no reposts, no config write. The
+		// must edit each intro IN PLACE, no reposts, no config write. The
 		// schedule anchor always edits in place regardless of drift.
 		const storedIntroIds = {
 			introChannelId: "msg-intro",
@@ -791,8 +1474,61 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 		// invite card is current so it is a no-op, and nothing reposts.
 		expect(summary).toEqual({ edited: 6, reposted: 0 });
 		for (const edit of Object.values(edits)) expect(edit).toHaveBeenCalledOnce();
+		// The welcome's edit re-sends Dero's welcome pose and replaces the copy it
+		// held (2026-10 item 245 Phase 3b); an intro without a file keeps its
+		// attachments untouched.
+		expect(edits.introChannelId.mock.calls[0][0]).toMatchObject({ files: [expect.objectContaining({ name: DERO_ART_FILES.welcome })], attachments: [] });
+		expect(edits.commandsChannelId.mock.calls[0][0]).not.toHaveProperty("attachments");
 		// no persist needed when every anchor resolves and only components moved.
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
+	});
+
+	// ⚠️ REGRESSION GUARD for the repost-forever bug.
+	// The sweep resolves each anchor out of the nextIntroIds object, NOT out of
+	// the stored row directly. A channel missing from that initializer therefore
+	// reads as "nothing posted yet" on EVERY boot: it reposts its intro, persists
+	// a fresh id, and then never reads that id back. Nothing errors, the write
+	// succeeds, and the guild quietly accumulates a duplicate card per boot.
+	// Both ARCADE GAMES cards did exactly this from the moment their specs joined
+	// CHANNEL_SPECS until the initializer was derived from CHANNEL_FIELDS. If
+	// anyone hand lists those keys again, this test goes red.
+	it("reads back the ARCADE GAMES anchors instead of reposting them on every boot", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(
+			makeStoredConfig({
+				introMessageIds: {
+					arcadeRulesChannelId: "msg-arcaderules",
+					arcadeChallengesChannelId: "msg-arcadechallenges",
+				},
+			})
+		);
+
+		const sends = {
+			rules: vi.fn().mockResolvedValue({ id: "reposted-rules", pin: vi.fn().mockResolvedValue(undefined) }),
+			challenges: vi.fn().mockResolvedValue({ id: "reposted-challenges", pin: vi.fn().mockResolvedValue(undefined) }),
+		};
+
+		const channels: Record<string, TextChannel> = {
+			"ch-arcaderules": makeChannel(
+				"ch-arcaderules",
+				{ "msg-arcaderules": currentIntroMessage("arcadeRulesChannelId", "msg-arcaderules") },
+				sends.rules
+			),
+			"ch-arcadechallenges": makeChannel(
+				"ch-arcadechallenges",
+				{ "msg-arcadechallenges": currentIntroMessage("arcadeChallengesChannelId", "msg-arcadechallenges") },
+				sends.challenges
+			),
+		};
+
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => channels[id] ?? null });
+
+		const summary = await GuildSetupManager.refreshIntroEmbeds(client, makeGuildFixture());
+
+		// The anchors resolved, so neither card was reposted and neither channel
+		// was sent to at all.
+		expect(summary.reposted).toBe(0);
+		expect(sends.rules).not.toHaveBeenCalled();
+		expect(sends.challenges).not.toHaveBeenCalled();
 	});
 
 	it("reposts a fresh intro when the stored anchor is missing (10008)", async () => {
@@ -840,7 +1576,7 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 
 	it("reposts the intro channels but NOT schedule when introMessageIds is absent (legacy row)", async () => {
 		// legacy row: introMessageIds never set. Every channel with a stored id
-		// and no anchor reposts a fresh intro — EXCEPT the schedule channel, which
+		// and no anchor reposts a fresh intro, EXCEPT the schedule channel, which
 		// defers to ScheduleBoard's own recovery and never reposts here. The
 		// standalone invite card also posts fresh (first time on this guild).
 		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ introMessageIds: null }));
@@ -881,7 +1617,7 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 	});
 
 	it("skips the edit on 50005 (author mismatch) without reposting", async () => {
-		// 50005 means our stored id points at a message authored by someone else —
+		// 50005 means our stored id points at a message authored by someone else,
 		// corruption scenario. The edit is attempted (copy current, components
 		// drifted) but Discord rejects it; we must NOT repost (that would
 		// duplicate content) and must NOT persist. Bail so ensureHomebase can
@@ -902,7 +1638,7 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 			Object.assign(err, { code: 50005, message: "Cannot edit a message authored by another user" });
 			throw err;
 		});
-		// announcements send must never fire — a repost would duplicate content.
+		// announcements send must never fire, a repost would duplicate content.
 		const announcementsSend = vi.fn();
 
 		const channels: Record<string, TextChannel> = {
@@ -938,5 +1674,1029 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 
 		expect(summary).toEqual({ edited: 0, reposted: 0 });
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
+	});
+});
+
+// ── applyAdminRole ─────────────────────────────────────────────────────────
+// ⚠️ THIS BLOCK EXISTS BECAUSE THE FUNCTION HAD NO TESTS AT ALL, and that is
+// how it shipped a real gap: it fetched a HAND WRITTEN list of seven channels
+// which never included nextDecreeChannelId, so the admin role was never granted
+// on 🔜upcoming-events. Nothing errored, because every grant is optional
+// chained; the channel simply stayed ungranted forever.
+//
+// So the assertion is a COMPLETENESS check against the spec list rather than a
+// behavioural spot check of one grant. A spot check passes happily while the
+// list is one short, which is the only failure mode this function actually has.
+describe("GuildSetupManager.applyAdminRole", () => {
+	function grantHarness() {
+		const created: Record<string, Record<string, boolean>> = {};
+		const channelFor = (id: string) => ({
+			id,
+			permissionOverwrites: {
+				create: vi.fn(async (_roleId: string, perms: Record<string, boolean>) => {
+					created[id] = perms;
+				}),
+			},
+			isTextBased: () => false,
+		});
+		const guild = {
+			id: "guild-1",
+			channels: { fetch: vi.fn(async (id: string) => channelFor(id)) },
+		} as unknown as Guild;
+		return { guild, created };
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig());
+		guildConfigMock.update.mockResolvedValue(undefined);
+	});
+
+	it("grants the admin role on EVERY managed channel, not a hand picked subset", async () => {
+		const { guild, created } = grantHarness();
+		await GuildSetupManager.applyAdminRole(guild, {
+			guildId: "guild-1",
+			adminRoleId: "role-admin",
+			memberRoleId: "role-member",
+			ownerId: "owner-1",
+		} as never);
+
+		const stored = makeStoredConfig() as unknown as Record<string, string>;
+		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
+			const id = stored[spec.configField];
+			expect(created[id], `${spec.configField} was never granted`).toBeDefined();
+			expect(created[id].ViewChannel).toBe(true);
+			// The audit trail is the one channel admins read and never write.
+			expect(created[id].SendMessages).toBe(spec.kind !== "adminLog");
+		}
+	});
+
+	it("grants on EVERY managed category", async () => {
+		const { guild, created } = grantHarness();
+		await GuildSetupManager.applyAdminRole(guild, {
+			guildId: "guild-1",
+			adminRoleId: "role-admin",
+			memberRoleId: "role-member",
+			ownerId: "owner-1",
+		} as never);
+
+		// The arcade category is as much the bot's surface as the homebase one, and
+		// an admin who cannot see it cannot manage the games inside it.
+		expect(created["cat-1"]).toBeDefined();
+		expect(created["games-cat-1"]).toBeDefined();
+		// 🏰 DERO HEADQUARTERS (2026-10 item 257 Phase 2a) hides from members, so without
+		// this grant an admin who is not the owner could not see it at all.
+		expect(created["hq-cat-1"]).toBeDefined();
+	});
+
+	it("gives admin channels ReadMessageHistory and public ones not", async () => {
+		// The difference is what makes an admin-only channel readable rather than
+		// merely visible, so it is shaped by the spec's kind rather than by a
+		// second hand written list of which channels are private.
+		const { guild, created } = grantHarness();
+		await GuildSetupManager.applyAdminRole(guild, {
+			guildId: "guild-1",
+			adminRoleId: "role-admin",
+			memberRoleId: "role-member",
+			ownerId: "owner-1",
+		} as never);
+
+		expect(created["ch-admin"].ReadMessageHistory).toBe(true);
+		expect(created["ch-arcaderules"].ReadMessageHistory).toBeUndefined();
+	});
+
+	// 2026-11 item 285 debug pass: the welcome posts once the role is known, so it carries
+	// Self destruct alone and never the Set up Dero button the pending card had.
+	it("posts the welcome in the inner sanctum with Self destruct and no Set up Dero", async () => {
+		const send = vi.fn(async () => undefined);
+		const { guild } = grantHarness();
+		const fetchChannel = (guild.channels as unknown as { fetch: ReturnType<typeof vi.fn> }).fetch;
+		fetchChannel.mockImplementation(async (id: string) => ({
+			id,
+			permissionOverwrites: { create: vi.fn(async () => undefined) },
+			isTextBased: () => id === "ch-admin",
+			send,
+		}));
+		await GuildSetupManager.applyAdminRole(guild, {
+			guildId: "guild-1",
+			adminRoleId: "role-admin",
+			memberRoleId: "role-member",
+			ownerId: "owner-1",
+		} as never);
+
+		const [sent] = send.mock.calls[0] as unknown as [{ components: Array<{ toJSON(): { components: Array<{ custom_id?: string }> } }> }];
+		expect(sent.components.flatMap((row) => row.toJSON().components.map((component) => component.custom_id))).toEqual(["self_destruct:prompt"]);
+	});
+});
+
+// ── where the host buttons live (2026-10 item 245 Phase 4a) ────────────────────
+// Every host button is in 🕹️games: the host row, the solo luck row and the hangman
+// category start on its intro, and the Challenge Board's start buttons on its second
+// message. ⚔️challenges carries none and 📋arcade-rules carries only the ballot button.
+// The board used to ride the challenges intro; before it did, battleship, hold em and
+// the co-op hangman room were built and unreachable, so its coverage is pinned here.
+describe("resolveIntroComponents: every host button lives in 🕹️games", () => {
+	type Row = { toJSON(): { components: Array<{ custom_id?: string }> } };
+	const internals = GuildSetupManager as unknown as {
+		resolveIntroComponents(field: string, config?: unknown): Row[] | null;
+		gamesBoardContent(config?: unknown): { components: Row[] };
+	};
+	const customIdsOf = (rows: Row[]): Array<string | undefined> =>
+		rows.flatMap((row) => {
+			const { components } = row.toJSON();
+			// Discord rejects a whole send with a row wider than five.
+			expect(components.length).toBeLessThanOrEqual(5);
+			return components.map((component) => component.custom_id);
+		});
+
+	it("puts the host row, the solo luck row, the hangman category start and the daily row on the games intro", () => {
+		const rows = internals.resolveIntroComponents("arcadeGamesChannelId") ?? [];
+		expect(customIdsOf(rows)).toEqual([
+			"arcade_host:hangman",
+			"arcade_host:blackjack",
+			"arcade_host:blackjack-table",
+			"solo_luck:coinflip",
+			"solo_luck:diceroll",
+			// One button per game against Dero, each opening its solo room (2026-10 item 263 R3-7).
+			"solo_luck:rps",
+			"arcade_host:hcategory",
+			// The daily row (2026-10 item 254): Fortune keeps its old customId, so a Fortune
+			// button left on an old message still reads, and Claim daily rewards beside it.
+			"powerup:member:fortune",
+			"powerup:member:claim",
+		]);
+	});
+
+	it("labels the daily row from the pack", () => {
+		const rows = internals.resolveIntroComponents("arcadeGamesChannelId") ?? [];
+		const daily = (rows.at(-1)!.toJSON() as unknown as { components: Array<{ label?: string }> }).components.map((component) => component.label);
+		expect(daily).toEqual([rokCommanderCopy.channelContent.arcadeGames.dailyLabels.fortune, rokCommanderCopy.channelContent.arcadeGames.dailyLabels.claim]);
+	});
+
+	it("puts every Challenge Board start button on the games channel's second message, in order", () => {
+		const customIds = customIdsOf(internals.gamesBoardContent().components);
+		expect(customIds).toEqual(CHALLENGE_GAMES.map((game) => `gameroom:new:${game}`));
+		expect(customIds).toContain("gameroom:new:battleship");
+		expect(customIds).toContain("gameroom:new:holdem");
+	});
+
+	it("needs both messages, because the six rows do not fit Discord's five per message", () => {
+		const introRows = internals.resolveIntroComponents("arcadeGamesChannelId") ?? [];
+		const boardRows = internals.gamesBoardContent().components;
+		expect(introRows.length).toBeLessThanOrEqual(5);
+		expect(boardRows.length).toBeLessThanOrEqual(5);
+		expect(introRows.length + boardRows.length).toBeGreaterThan(5);
+	});
+
+	it("leaves ⚔️challenges with no buttons at all", () => {
+		expect(internals.resolveIntroComponents("arcadeChallengesChannelId")).toBeNull();
+	});
+
+	it("gives 📋arcade-rules the ballot button and nothing else", () => {
+		const rows = internals.resolveIntroComponents("arcadeRulesChannelId") ?? [];
+		expect(customIdsOf(rows)).toEqual(["game_request:open"]);
+	});
+});
+
+// ── the two voice rooms (2026-10 item 235) ──────────────────────────────────
+// What:  pins the "voice" spec kind end to end: what a fresh install builds, how
+//        a forced rebuild and the boot repair sweep rebuild a room, adoption by
+//        name, the drift rename, the /setup grant, and the intro sweep leaving
+//        the rooms alone.
+// Why:   every path here used to assume a managed channel is a TextChannel. A
+//        voice room that slipped through one of them would either be built as a
+//        text channel, be adopted as the wrong kind, collect a bot intro, or log
+//        a wrong type warning on every boot, and none of that throws.
+// Owner decision D3 (member role only) is the posture asserted throughout:
+// @everyone sees a room but cannot connect or speak; the owner, the member role
+// and the admin role can; the bot can too, so a room an admin later allowlists
+// is joinable. Nothing here listens, and no room reaches the voice allowlist.
+describe("GuildSetupManager voice rooms", () => {
+	const packChannels = rokCommanderCopy.setup.channels;
+	const EVERYONE_ID = "everyone";
+	const OWNER_ID = "owner-1";
+	const BOT_ID = "bot-1";
+	const JOIN_AND_SPEAK = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak];
+
+	interface IOverwrite {
+		id: string;
+		allow?: bigint[];
+		deny?: bigint[];
+	}
+	interface ICreateCall {
+		name: string;
+		type: number;
+		parent?: string;
+		permissionOverwrites?: IOverwrite[];
+	}
+
+	// A created channel of the REAL kind for its type, so every instanceof check in
+	// the unit under test sees a voice room as a VoiceChannel. The send spy is what
+	// shows exactly what was posted into a room: its /dero card and nothing else.
+	function makeCreatedChannel(opts: { name: string; type: number }): unknown {
+		if (opts.type === ChannelType.GuildCategory) {
+			return { id: `cat-${opts.name}`, type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } };
+		}
+		const prototype = opts.type === ChannelType.GuildVoice ? VoiceChannel.prototype : TextChannel.prototype;
+		const created = Object.create(prototype) as { send: ReturnType<typeof vi.fn> };
+		Object.assign(created, {
+			id: `new-${opts.name}`,
+			name: opts.name,
+			guildId: "guild-1",
+			send: vi.fn().mockResolvedValue({ id: `msg-${opts.name}`, pin: vi.fn().mockResolvedValue(undefined) }),
+		});
+		return created;
+	}
+
+	function makeVoiceRoom(id: string, name: string): VoiceChannel & { setName: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> } {
+		const room = Object.create(VoiceChannel.prototype) as VoiceChannel & { setName: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> };
+		Object.assign(room, { id, name, setName: vi.fn().mockResolvedValue(undefined), send: vi.fn() });
+		return room;
+	}
+
+	function overwriteFor(call: ICreateCall | undefined, id: string): IOverwrite | undefined {
+		return (call?.permissionOverwrites ?? []).find((entry) => entry.id === id);
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		guildConfigMock.create.mockResolvedValue(undefined);
+		guildConfigMock.update.mockResolvedValue(undefined);
+	});
+
+	// ── create path ──────────────────────────────────────────────────────
+
+	async function runAutoSetup(stored: Record<string, unknown> | null, options: { force?: boolean } = {}) {
+		guildConfigMock.findByGuildId.mockResolvedValue(stored);
+		const created: Array<{ send: ReturnType<typeof vi.fn>; id: string }> = [];
+		const create = vi.fn(async (opts: { name: string; type: number }) => {
+			const channel = makeCreatedChannel(opts) as { send: ReturnType<typeof vi.fn>; id: string };
+			created.push(channel);
+			return channel;
+		});
+		const guild = {
+			id: "guild-1",
+			ownerId: OWNER_ID,
+			roles: { everyone: { id: EVERYONE_ID } },
+			client: { user: { id: BOT_ID } },
+			channels: { create, fetch: vi.fn().mockResolvedValue(null) },
+		} as unknown as Guild;
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID }, options);
+		const calls = create.mock.calls.map((call) => call[0] as ICreateCall);
+		const voiceCalls = calls.filter((call) => call.type === ChannelType.GuildVoice);
+		const voiceCreated = created.filter((channel) => channel instanceof VoiceChannel);
+		return { guild, calls, voiceCalls, voiceCreated, created };
+	}
+
+	it("builds both rooms on a full build, as voice channels under their own categories", async () => {
+		const { voiceCalls } = await runAutoSetup(FULL_BUILD_ROW, { force: true });
+
+		expect(voiceCalls.map((call) => call.name).sort()).toEqual([packChannels.arcadeVoice, packChannels.meetingVoice].sort());
+		const parentOf = (name: string) => voiceCalls.find((call) => call.name === name)?.parent;
+		// The R2 guard for the voice rooms: both parents are CategoryChannel, so
+		// only this catches a room filed under the other category.
+		expect(parentOf(packChannels.meetingVoice)).toBe(`cat-${rokCommanderCopy.setup.categoryName}`);
+		expect(parentOf(packChannels.arcadeVoice)).toBe(`cat-${rokCommanderCopy.setup.gamesCategoryName}`);
+	});
+
+	it("gives a room built before /setup the member-role-only posture with no role grants yet", async () => {
+		const { voiceCalls } = await runAutoSetup(FULL_BUILD_ROW, { force: true });
+
+		for (const call of voiceCalls) {
+			expect(overwriteFor(call, EVERYONE_ID), `${call.name} @everyone`).toEqual({
+				id: EVERYONE_ID,
+				allow: [PermissionFlagsBits.ViewChannel],
+				deny: [PermissionFlagsBits.Connect, PermissionFlagsBits.Speak],
+			});
+			expect(overwriteFor(call, OWNER_ID), `${call.name} owner`).toEqual({ id: OWNER_ID, allow: JOIN_AND_SPEAK });
+			// The bot keeps its shared self overwrite AND can connect and speak, or the
+			// @everyone Connect deny would lock it out of a room an admin allowlists later.
+			const bot = overwriteFor(call, BOT_ID);
+			expect(bot?.allow).toContain(PermissionFlagsBits.ViewChannel);
+			expect(bot?.allow).toContain(PermissionFlagsBits.Connect);
+			expect(bot?.allow).toContain(PermissionFlagsBits.Speak);
+			// A fresh install knows no member or admin role yet: exactly three entries.
+			expect(call.permissionOverwrites, `${call.name} entry count`).toHaveLength(3);
+		}
+	});
+
+	// Each room's text chat carries one card, /dero's Join, Leave and Status (2026-10
+	// item 245 Phase 4b), anchored like every other intro so the boot sweep keeps it.
+	it("persists both room ids, posts each room its /dero card once, and anchors it", async () => {
+		const { voiceCreated } = await runAutoSetup(FULL_BUILD_ROW, { force: true });
+
+		const [payload] = fullBuildPayloads();
+		expect(payload.meetingVoiceChannelId).toBe(`new-${packChannels.meetingVoice}`);
+		expect(payload.arcadeVoiceChannelId).toBe(`new-${packChannels.arcadeVoice}`);
+
+		expect(voiceCreated).toHaveLength(2);
+		for (const room of voiceCreated) {
+			expect(room.send, `${room.id} posts`).toHaveBeenCalledTimes(1);
+			const [sent] = room.send.mock.calls[0] as [{ embeds: Array<{ data: { title?: string } }>; components: Array<{ toJSON(): { components: Array<{ custom_id?: string }> } }> }];
+			expect(sent.embeds[0]?.data.title).toBe(rokCommanderCopy.channelContent.voiceRoom.title);
+			expect(sent.components.flatMap((row) => row.toJSON().components.map((button) => button.custom_id))).toEqual([
+				"dero_call:join",
+				"dero_call:leave",
+				"dero_call:status",
+			]);
+		}
+
+		const introIds = payload.introMessageIds as Record<string, unknown>;
+		expect(introIds.meetingVoiceChannelId).toBe(`msg-${packChannels.meetingVoice}`);
+		expect(introIds.arcadeVoiceChannelId).toBe(`msg-${packChannels.arcadeVoice}`);
+	});
+
+	it("grants the stored member and admin roles when a forced rebuild rebuilds the rooms", async () => {
+		// A forced rebuild of a guild that already ran /setup must not lock its
+		// members out of the rebuilt rooms until /setup runs again.
+		const { voiceCalls } = await runAutoSetup(makeStoredConfig({ memberRoleId: "role-member", adminRoleId: "role-admin" }), { force: true });
+
+		expect(voiceCalls).toHaveLength(2);
+		for (const call of voiceCalls) {
+			expect(overwriteFor(call, "role-member"), `${call.name} member role`).toEqual({ id: "role-member", allow: JOIN_AND_SPEAK });
+			expect(overwriteFor(call, "role-admin"), `${call.name} admin role`).toEqual({
+				id: "role-admin",
+				allow: [...JOIN_AND_SPEAK, PermissionFlagsBits.SendMessages],
+			});
+		}
+	});
+
+	it("opens the room when the member role IS @everyone, without a second @everyone entry", async () => {
+		// The /setup role picker accepts @everyone as the member role. Two overwrites
+		// with one id would leave the Connect deny and the allow fighting each other.
+		const { voiceCalls } = await runAutoSetup(makeStoredConfig({ memberRoleId: EVERYONE_ID }), { force: true });
+
+		for (const call of voiceCalls) {
+			const everyoneEntries = (call.permissionOverwrites ?? []).filter((entry) => entry.id === EVERYONE_ID);
+			expect(everyoneEntries).toEqual([{ id: EVERYONE_ID, allow: JOIN_AND_SPEAK }]);
+		}
+	});
+
+	// ── forced rebuild, the text channels (2026-10 item 272) ─────────────
+	// A forced rebuild of a server that already ran /setup must give the rebuilt text
+	// channels the posture the repair path's buildSingleChannel gives them, stored
+	// admin role included, or every admin who is not the owner loses Headquarters.
+
+	const TEXT_SPECS = GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.kind !== "voice");
+	const ADMIN_TEXT_KINDS = new Set(["admin", "adminLog"]);
+
+	function textCallsBySpec(calls: ICreateCall[]) {
+		return TEXT_SPECS.map((spec) => ({ spec, call: calls.find((call) => call.type === ChannelType.GuildText && call.name === spec.displayName) }));
+	}
+
+	function adminCardDescription(created: Array<{ id: string; send: ReturnType<typeof vi.fn> }>): string | undefined {
+		const adminChannel = created.find((channel) => channel.id === `new-${packChannels.admin}`);
+		const [sent] = adminChannel?.send.mock.calls[0] as [{ embeds: Array<{ data: { description?: string } }> }];
+		return sent.embeds[0]?.data.description;
+	}
+
+	// The inner sanctum card's button ids, which follow its embed (2026-11 item 285 debug pass).
+	function adminCardButtonIds(created: Array<{ id: string; send: ReturnType<typeof vi.fn> }>): Array<string | undefined> {
+		const adminChannel = created.find((channel) => channel.id === `new-${packChannels.admin}`);
+		const [sent] = adminChannel?.send.mock.calls[0] as [{ components: Array<{ toJSON(): { components: Array<{ custom_id?: string }> } }> }];
+		return sent.components.flatMap((row) => row.toJSON().components.map((component) => component.custom_id));
+	}
+
+	it("gives every rebuilt text channel buildSingleChannel's posture with the stored roles", async () => {
+		const roles = { memberRoleId: "role-member", adminRoleId: "role-admin" };
+		const { guild, calls } = await runAutoSetup(makeStoredConfig({ ...roles, setupComplete: true }), { force: true });
+
+		for (const { spec, call } of textCallsBySpec(calls)) {
+			expect(call, `${spec.displayName} built`).toBeDefined();
+			// Compared against the shared shape, never a hand written list, so the create
+			// path and the repair path cannot drift (plan risk R1).
+			expect(call?.permissionOverwrites, `${spec.displayName} posture`).toEqual(communityOverwritesFor(overwriteKindOf(spec), guild, { ownerId: OWNER_ID }, roles));
+			if (ADMIN_TEXT_KINDS.has(spec.kind)) expect(overwriteFor(call, "role-admin"), `${spec.displayName} admin role`).toBeDefined();
+		}
+	});
+
+	it("posts the populated admin welcome in the rebuilt inner sanctum", async () => {
+		const { created } = await runAutoSetup(makeStoredConfig({ adminRoleId: "role-admin", setupComplete: true }), { force: true });
+
+		expect(adminCardDescription(created)).toBe(ChannelContent.adminWelcome(OWNER_ID, "role-admin").data.description);
+		expect(adminCardButtonIds(created)).toEqual(["self_destruct:prompt"]);
+	});
+
+	it("still posts the pending card and grants no admin role on a fresh install", async () => {
+		const { guild, calls, created } = await runAutoSetup(null);
+
+		// A fresh install builds 🔒inner-sanctum alone (2026-11 item 285 debug pass), so only
+		// it exists to carry a posture.
+		const headquartersCalls = textCallsBySpec(calls).filter(({ spec }) => spec.categoryField === "headquartersCategoryId");
+		expect(headquartersCalls).toHaveLength(6);
+		for (const { spec, call } of headquartersCalls) {
+			if (spec.configField !== "adminChannelId") {
+				expect(call, `${spec.displayName} waits for setup`).toBeUndefined();
+				continue;
+			}
+			expect(call, `${spec.displayName} built`).toBeDefined();
+			expect(call?.permissionOverwrites, `${spec.displayName} posture`).toEqual(
+				communityOverwritesFor(overwriteKindOf(spec), guild, { ownerId: OWNER_ID }, { memberRoleId: null, adminRoleId: null })
+			);
+		}
+		expect(adminCardDescription(created)).toBe(ChannelContent.adminPending().data.description);
+		expect(adminCardButtonIds(created)).toEqual(["admincmd:setup", "self_destruct:prompt"]);
+	});
+
+	it("trusts no stored admin role on a self destructed row, so /setup grants the new one", async () => {
+		// selfDestruct keeps adminRoleId and clears setupComplete; the /setup that rebuilds
+		// it grants the role it was just given (owner decision D2).
+		const { calls, created } = await runAutoSetup(makeStoredConfig({ adminRoleId: "role-admin", setupComplete: false }), { force: true });
+
+		for (const { spec, call } of textCallsBySpec(calls)) {
+			expect(overwriteFor(call, "role-admin"), `${spec.displayName} admin role`).toBeUndefined();
+		}
+		expect(adminCardDescription(created)).toBe(ChannelContent.adminPending().data.description);
+	});
+
+	// ── boot repair sweep ───────────────────────────────────────────────
+
+	// Every text channel intact, so the only thing the sweep can repair is the room
+	// a test leaves missing. The schedule anchor resolves as ours (ownership probe)
+	// and the admin channel takes the repair notice.
+	const INTACT_TEXT = {
+		"ch-intro": { id: "ch-intro" },
+		"ch-commands": { id: "ch-commands" },
+		"ch-leaderboard": { id: "ch-leaderboard" },
+		"ch-schedule": { id: "ch-schedule" },
+		"ch-announcements": { id: "ch-announcements" },
+		"ch-admin": { id: "ch-admin" },
+	};
+
+	function makeSweepClient(): { client: Client; adminChannel: ReturnType<typeof makeAdminChannel> } {
+		const scheduleChannel = makeScheduleChannel(async () => ({ id: "msg-schedule", author: { id: BOT_ID } }));
+		const adminChannel = makeAdminChannel("ch-admin");
+		const client = makeClient({
+			selfId: BOT_ID,
+			fetchChannel: async (id) => {
+				if (id === "ch-schedule") return scheduleChannel;
+				if (id === "ch-admin") return adminChannel;
+				return null;
+			},
+		});
+		return { client, adminChannel };
+	}
+
+	async function runSweep(options: {
+		stored: Record<string, unknown>;
+		channelFetchMap?: Record<string, unknown>;
+		homebaseChildren?: unknown[];
+	}) {
+		guildConfigMock.findByGuildId.mockResolvedValue(options.stored);
+		const created: Array<{ send: ReturnType<typeof vi.fn> }> = [];
+		const createHandler = vi.fn(async (opts: unknown) => {
+			const channel = makeCreatedChannel(opts as { name: string; type: number }) as { send: ReturnType<typeof vi.fn> };
+			created.push(channel);
+			return channel;
+		});
+		const children = options.homebaseChildren ?? [];
+		const guild = makeGuild({
+			categoryId: {
+				id: "cat-1",
+				// The adopt-before-build scan runs Collection.find over the children.
+				children: { cache: { find: (predicate: (child: unknown) => boolean) => children.find((child) => predicate(child)) } },
+			},
+			channelFetchMap: { ...INTACT_TEXT, ...(options.channelFetchMap ?? {}) },
+			createHandler,
+		});
+		const { client, adminChannel } = makeSweepClient();
+		const result = await GuildSetupManager.ensureHomebase(client, guild);
+		const calls = createHandler.mock.calls.map((call) => call[0] as ICreateCall);
+		return { result, calls, created, adminChannel };
+	}
+
+	it("builds the Meeting Hall for a legacy row with a null id, as a voice room under the homebase, with its /dero card", async () => {
+		// Owner decision D1: every existing guild gets the rooms through this path.
+		const { result, calls, created } = await runSweep({
+			stored: makeStoredConfig({ meetingVoiceChannelId: null, memberRoleId: "role-member" }),
+		});
+
+		expect(result.action).toBe("repaired");
+		expect(result.repairedChannels).toEqual([packChannels.meetingVoice]);
+		expect(calls).toHaveLength(1);
+		expect(calls[0]).toMatchObject({ name: packChannels.meetingVoice, type: ChannelType.GuildVoice, parent: "cat-1" });
+		// The stored member role reaches the rebuilt room's posture.
+		expect(overwriteFor(calls[0], "role-member")).toEqual({ id: "role-member", allow: JOIN_AND_SPEAK });
+		// The rebuilt room gets its card at once, and the card's anchor persists with
+		// the room id, so the next boot's sweep keeps it rather than posting another.
+		expect(created[0].send).toHaveBeenCalledTimes(1);
+		expect(guildConfigMock.update).toHaveBeenCalledWith(
+			"guild-1",
+			expect.objectContaining({
+				meetingVoiceChannelId: `new-${packChannels.meetingVoice}`,
+				introMessageIds: expect.objectContaining({ meetingVoiceChannelId: `msg-${packChannels.meetingVoice}` }),
+			})
+		);
+	});
+
+	it("puts both rooms a full build makes on Dero's voice allow list (owner item 8)", async () => {
+		await runAutoSetup(FULL_BUILD_ROW, { force: true });
+		expect(allowDeroVoiceRooms).toHaveBeenCalledWith("guild-1", [`new-${packChannels.meetingVoice}`, `new-${packChannels.arcadeVoice}`]);
+	});
+
+	it("swaps a rebuilt room's dead id for its new one on the allow list", async () => {
+		await runSweep({ stored: makeStoredConfig(), channelFetchMap: { "ch-arcadevoice": null } });
+		expect(replaceDeroVoiceRoom).toHaveBeenCalledWith("guild-1", "ch-arcadevoice", `new-${packChannels.arcadeVoice}`);
+	});
+
+	it("rebuilds a deleted Arcade Lounge under the ARCADE category, never under the homebase", async () => {
+		const { calls } = await runSweep({
+			stored: makeStoredConfig(),
+			channelFetchMap: { "ch-arcadevoice": null },
+		});
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0]).toMatchObject({ name: packChannels.arcadeVoice, type: ChannelType.GuildVoice, parent: "games-cat-1" });
+	});
+
+	it("adopts an existing voice room with the expected name instead of building a second one", async () => {
+		const existingRoom = makeVoiceRoom("v-existing", packChannels.meetingVoice);
+		// An adopted room is scanned for its card first; this one holds none, so the
+		// card is posted into it once (Phase 4b gave every room the /dero card).
+		Object.assign(existingRoom, { messages: { fetch: vi.fn().mockResolvedValue({ find: () => undefined }) } });
+		existingRoom.send.mockResolvedValue({ id: "card-v-existing" });
+		const { calls } = await runSweep({
+			stored: makeStoredConfig({ meetingVoiceChannelId: null }),
+			homebaseChildren: [existingRoom],
+		});
+
+		expect(calls).toHaveLength(0);
+		expect(existingRoom.send).toHaveBeenCalledTimes(1);
+		expect(guildConfigMock.update).toHaveBeenCalledWith(
+			"guild-1",
+			expect.objectContaining({
+				meetingVoiceChannelId: "v-existing",
+				introMessageIds: expect.objectContaining({ meetingVoiceChannelId: "card-v-existing" }),
+			})
+		);
+	});
+
+	it("does NOT adopt a TEXT channel that merely carries the room's name", async () => {
+		// Adopting it would persist a text channel id under a voice field, and the
+		// sweep would never build the real room.
+		const impostor = Object.create(TextChannel.prototype) as TextChannel;
+		Object.assign(impostor, { id: "t-impostor", name: packChannels.meetingVoice });
+		const { calls } = await runSweep({
+			stored: makeStoredConfig({ meetingVoiceChannelId: null }),
+			homebaseChildren: [impostor],
+		});
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0].type).toBe(ChannelType.GuildVoice);
+		// The real room is built, so it is the one whose id (and card) persists.
+		expect(guildConfigMock.update).toHaveBeenCalledWith(
+			"guild-1",
+			expect.objectContaining({ meetingVoiceChannelId: `new-${packChannels.meetingVoice}` })
+		);
+	});
+
+	// ── drift rename ────────────────────────────────────────────────────
+
+	async function runRename(stored: Record<string, unknown>, rooms: Record<string, unknown>) {
+		guildConfigMock.findByGuildId.mockResolvedValue(stored);
+		const client = makeClient({ selfId: BOT_ID, fetchChannel: async (id) => rooms[id] ?? null });
+		await GuildSetupManager.renameDriftedChannels(client, { id: "guild-1" } as unknown as Guild);
+	}
+
+	it("renames a drifted voice room back to its pack default", async () => {
+		const room = makeVoiceRoom("ch-meetingvoice", "old-hall");
+		await runRename(makeStoredConfig(), { "ch-meetingvoice": room });
+		expect(room.setName).toHaveBeenCalledWith(packChannels.meetingVoice);
+	});
+
+	it("keeps a /server channels rename override on a voice room, and writes nothing in steady state", async () => {
+		const renamed = makeVoiceRoom("ch-meetingvoice", "old-hall");
+		const settled = makeVoiceRoom("ch-arcadevoice", packChannels.arcadeVoice);
+		await runRename(makeStoredConfig({ channelNames: new Map([["meetingVoiceChannelId", "War Room"]]) }), {
+			"ch-meetingvoice": renamed,
+			"ch-arcadevoice": settled,
+		});
+		expect(renamed.setName).toHaveBeenCalledWith("War Room");
+		expect(settled.setName).not.toHaveBeenCalled();
+	});
+
+	// 2026-10 item 262 Phase 4: a name is the guild's pack default, so the drift sweep is
+	// what finishes a template switch whose rename Discord refused.
+	it("names a streamer server's admin channel from its own pack, and a kingdom server's from the kingdom pack", async () => {
+		const makeAdmin = (name: string) => {
+			const channel = Object.create(TextChannel.prototype) as TextChannel & { setName: ReturnType<typeof vi.fn> };
+			Object.assign(channel, { id: "ch-admin", name, setName: vi.fn().mockResolvedValue(undefined) });
+			return channel;
+		};
+		const streamer = makeAdmin("🔒inner-sanctum");
+		await runRename(makeStoredConfig({ pluginId: "general-events" }), { "ch-admin": streamer });
+		expect(streamer.setName).toHaveBeenCalledWith("🔒admin");
+
+		const kingdom = makeAdmin("🔒inner-sanctum");
+		await runRename(makeStoredConfig(), { "ch-admin": kingdom });
+		expect(kingdom.setName).not.toHaveBeenCalled();
+	});
+
+	// ── /setup admin grant ──────────────────────────────────────────────
+
+	it("grants the member role and then the admin role on both rooms", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig());
+		const grants: Record<string, Array<[string, Record<string, boolean>]>> = {};
+		const guild = {
+			id: "guild-1",
+			channels: {
+				fetch: vi.fn(async (id: string) => ({
+					id,
+					permissionOverwrites: {
+						create: vi.fn(async (roleId: string, perms: Record<string, boolean>) => {
+							(grants[id] ??= []).push([roleId, perms]);
+						}),
+					},
+					isTextBased: () => false,
+				})),
+			},
+		} as unknown as Guild;
+
+		await GuildSetupManager.applyAdminRole(guild, {
+			guildId: "guild-1",
+			adminRoleId: "role-admin",
+			memberRoleId: "role-member",
+			ownerId: OWNER_ID,
+		});
+
+		// Order is load bearing: create REPLACES, so an admin role that doubles as
+		// the member role must land last to keep the wider grant.
+		for (const id of ["ch-meetingvoice", "ch-arcadevoice"]) {
+			expect(grants[id], id).toEqual([
+				["role-member", { ViewChannel: true, Connect: true, Speak: true }],
+				["role-admin", { ViewChannel: true, Connect: true, Speak: true, SendMessages: true }],
+			]);
+		}
+		// The text channels still get the admin role only.
+		expect(grants["ch-announcements"]).toEqual([["role-admin", { ViewChannel: true, SendMessages: true }]]);
+	});
+
+	// ── intro sweep ─────────────────────────────────────────────────────
+
+	it("posts a missing voice room card in the intro sweep, as a voice channel, with no wrong type warning", async () => {
+		// A legacy row has no anchor for either room, so the sweep posts each card
+		// once. The rooms are real VoiceChannels: the sweep accepts their text chat
+		// rather than warning that a voice room is the wrong type.
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ introMessageIds: {} }));
+		const rooms = {
+			"ch-meetingvoice": makeVoiceRoom("ch-meetingvoice", packChannels.meetingVoice),
+			"ch-arcadevoice": makeVoiceRoom("ch-arcadevoice", packChannels.arcadeVoice),
+		};
+		for (const room of Object.values(rooms)) {
+			Object.assign(room, { messages: { fetch: vi.fn().mockResolvedValue({ find: () => undefined, values: () => [][Symbol.iterator]() }) } });
+			room.send.mockResolvedValue({ id: `card-${room.id}`, pin: vi.fn() });
+		}
+		const client = makeClient({ selfId: BOT_ID, fetchChannel: async (id) => rooms[id as keyof typeof rooms] ?? null });
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+		await GuildSetupManager.refreshIntroEmbeds(client, { id: "guild-1", ownerId: OWNER_ID, client: { user: { id: BOT_ID } } } as unknown as Guild);
+
+		for (const room of Object.values(rooms)) expect(room.send, room.id).toHaveBeenCalledTimes(1);
+		const warned = warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
+		expect(warned).not.toContain(packChannels.meetingVoice);
+		expect(warned).not.toContain(packChannels.arcadeVoice);
+		const persisted = guildConfigMock.update.mock.calls.map((call) => call[1] as { introMessageIds?: Record<string, string | null> });
+		const introIds = persisted.find((update) => update.introMessageIds)?.introMessageIds;
+		expect(introIds?.meetingVoiceChannelId).toBe("card-ch-meetingvoice");
+		expect(introIds?.arcadeVoiceChannelId).toBe("card-ch-arcadevoice");
+		warnSpy.mockRestore();
+	});
+
+	it("resolves an intro for every spec, the voice rooms' being the /dero card", () => {
+		// The intro sweep, the repair path and the anchor map all read "no intro"
+		// from a null; since Phase 4b no managed channel answers one.
+		const internals = GuildSetupManager as unknown as {
+			resolveIntroEmbed(field: string, guild: Guild, adminRoleId: string | null): { data: { title?: string } } | null;
+		};
+		const guild = { ownerId: OWNER_ID } as unknown as Guild;
+		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
+			const intro = internals.resolveIntroEmbed(spec.configField, guild, null);
+			expect(intro, spec.configField).not.toBeNull();
+			if (spec.kind === "voice") expect(intro?.data.title, spec.configField).toBe(rokCommanderCopy.channelContent.voiceRoom.title);
+		}
+	});
+});
+
+// ── a fresh install builds 🏰 DERO HEADQUARTERS alone (2026-11 item 285 Phase 2) ──
+// What:  the fresh install branch in runAutoSetup, the widened "already built" early
+//        return, and ensureHomebase's sweep of a Headquarters only row.
+// Why:   the branch reads only `existing === null`, so a legacy row must never reach
+//        it, and a Headquarters only row must never read as "the notice board is gone",
+//        which would full build it on the next boot.
+describe("GuildSetupManager on a Headquarters only install", () => {
+	const packChannels = rokCommanderCopy.setup.channels;
+	const HEADQUARTERS_PARENT = `cat-${rokCommanderCopy.setup.headquartersCategoryName}`;
+	const HEADQUARTERS_SPECS = GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.categoryField === "headquartersCategoryId");
+	const NOTICE_BOARD_FIELDS = GuildSetupManager.specFieldsUnder("categoryId");
+	const ARCADE_FIELDS = GuildSetupManager.specFieldsUnder("gamesCategoryId");
+
+	interface ICreateCall {
+		name: string;
+		type: number;
+		parent?: string;
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		guildConfigMock.create.mockResolvedValue(undefined);
+		guildConfigMock.update.mockResolvedValue(undefined);
+	});
+
+	// A guild whose create hands back a category or a text channel keyed off the name,
+	// and whose cache may hold categories left from an earlier install.
+	function makeInstallGuild(cached: unknown[] = []): Guild {
+		const create = vi.fn(async (opts: { name: string; type: number }) => {
+			if (opts.type === ChannelType.GuildCategory) return { id: `cat-${opts.name}`, type: ChannelType.GuildCategory, children: { cache: new Map() } };
+			const channel = Object.create(TextChannel.prototype) as TextChannel;
+			return Object.assign(channel, { id: `new-${opts.name}`, guildId: "guild-1", send: vi.fn().mockResolvedValue({ id: `msg-${opts.name}`, pin: vi.fn() }) });
+		});
+		return {
+			id: "guild-1",
+			ownerId: "owner-1",
+			roles: { everyone: { id: "everyone" } },
+			client: { user: { id: "bot-1" } },
+			channels: { create, fetch: vi.fn().mockResolvedValue(null), cache: new Map(cached.map((channel, index) => [`cached-${index}`, channel])) },
+		} as unknown as Guild;
+	}
+
+	const createMockOf = (guild: Guild): ReturnType<typeof vi.fn> => guild.channels.create as unknown as ReturnType<typeof vi.fn>;
+	const callsOf = (guild: Guild): ICreateCall[] => createMockOf(guild).mock.calls.map((call) => call[0] as ICreateCall);
+
+	// What the fresh install branch stores, with every notice board and arcade slot null.
+	function makeHeadquartersOnlyRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+		const unbuilt = Object.fromEntries([...NOTICE_BOARD_FIELDS, ...ARCADE_FIELDS].map((field) => [field, null]));
+		return makeStoredConfig({
+			categoryId: null,
+			gamesCategoryId: null,
+			scheduleMessageId: null,
+			setupComplete: false,
+			userRemovedChannels: ARCADE_FIELDS,
+			...unbuilt,
+			...overrides,
+		});
+	}
+
+	// 🔒inner-sanctum is the tutorial's first step (2026-11 item 285 debug pass, owner
+	// ruling): Set up Dero builds the other five through applyAdminRole.
+	it("builds the Headquarters category and 🔒inner-sanctum alone, and nothing else", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(null);
+		const guild = makeInstallGuild();
+
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" });
+
+		const calls = callsOf(guild);
+		expect(calls.filter((call) => call.type === ChannelType.GuildCategory).map((call) => call.name)).toEqual([rokCommanderCopy.setup.headquartersCategoryName]);
+		const channels = calls.filter((call) => call.type !== ChannelType.GuildCategory);
+		expect(channels.map((call) => call.name)).toEqual([packChannels.admin]);
+		for (const call of channels) expect(call.parent, call.name).toBe(HEADQUARTERS_PARENT);
+		expect(HEADQUARTERS_SPECS.map((spec) => spec.configField).sort()).toEqual(
+			["adminChannelId", "adminLogChannelId", "arcadeControlChannelId", "deroConfigChannelId", "onboardingConfigChannelId", "serverConfigChannelId"].sort()
+		);
+	});
+
+	it("stores both unbuilt category ids as null, 🔒inner-sanctum's id, the five waiting slots as null, and the arcade off", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(null);
+		const guild = makeInstallGuild();
+
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" });
+
+		expect(guildConfigMock.create).toHaveBeenCalledOnce();
+		const [payload] = guildConfigMock.create.mock.calls[0] as [Record<string, unknown>];
+		expect(payload.categoryId).toBeNull();
+		expect(payload.gamesCategoryId).toBeNull();
+		expect(payload.headquartersCategoryId).toBe(HEADQUARTERS_PARENT);
+		for (const spec of HEADQUARTERS_SPECS) {
+			const expected = spec.configField === "adminChannelId" ? `new-${packChannels[spec.nameKey]}` : null;
+			expect(payload[spec.configField], spec.configField).toBe(expected);
+		}
+		for (const field of [...NOTICE_BOARD_FIELDS, ...ARCADE_FIELDS]) expect(payload[field], field).toBeUndefined();
+		// Off exactly as turnArcadeOff leaves it, so the boot sweep never builds it and
+		// /arcade on can bring it back; no arcade switch is written for an unbuilt arcade.
+		expect(payload.userRemovedChannels).toEqual(ARCADE_FIELDS);
+		expect(payload).not.toHaveProperty("chipEconomyEnabled");
+		expect(payload.setupComplete).toBe(false);
+	});
+
+	it("never adopts or builds an arcade, even when one is left from an earlier install", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(null);
+		const oldArcade = { id: "old-games-cat", type: ChannelType.GuildCategory, name: rokCommanderCopy.setup.gamesCategoryName, children: { cache: new Map() } };
+		const guild = makeInstallGuild([oldArcade]);
+
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" });
+
+		const [payload] = guildConfigMock.create.mock.calls[0] as [Record<string, unknown>];
+		expect(payload.gamesCategoryId).toBeNull();
+		expect(callsOf(guild).some((call) => call.parent === "old-games-cat")).toBe(false);
+	});
+
+	// Owner ruling in the 2026-11 item 285 debug pass: self destruct clears every stored id
+	// but keeps the row, so the /setup that follows (autoSetup with force) builds fresh.
+	it("builds Headquarters alone when /setup rebuilds a self destructed row with no managed id left", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue({ guildId: "guild-1", homebaseDestroyed: true, setupComplete: false });
+		const guild = makeInstallGuild();
+
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" }, { force: true });
+
+		const calls = callsOf(guild);
+		expect(calls.filter((call) => call.type === ChannelType.GuildCategory).map((call) => call.name)).toEqual([rokCommanderCopy.setup.headquartersCategoryName]);
+		const payload = guildConfigMock.update.mock.calls.map((call) => call[1] as Record<string, unknown>).find((write) => "headquartersCategoryId" in write)!;
+		expect(payload.categoryId).toBeNull();
+		expect(payload.gamesCategoryId).toBeNull();
+		expect(payload.userRemovedChannels).toEqual(ARCADE_FIELDS);
+	});
+
+	// A /setup retried after a self destruct, or a forced rebuild of a Headquarters only
+	// server, finds its Headquarters id stored and still no notice board: it stays fresh.
+	it("keeps a forced rebuild of a Headquarters only row Headquarters only", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeHeadquartersOnlyRow({ homebaseDestroyed: true }));
+		const guild = makeInstallGuild();
+
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" }, { force: true });
+
+		const categories = callsOf(guild).filter((call) => call.type === ChannelType.GuildCategory).map((call) => call.name);
+		expect(categories).not.toContain(rokCommanderCopy.setup.categoryName);
+		expect(categories).not.toContain(rokCommanderCopy.setup.gamesCategoryName);
+	});
+
+	it("leaves a legacy row alone without force, exactly as before", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig());
+		const guild = makeInstallGuild();
+
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" });
+
+		expect(createMockOf(guild)).not.toHaveBeenCalled();
+		expect(guildConfigMock.update).not.toHaveBeenCalled();
+	});
+
+	it("leaves a Headquarters only row alone without force, so a re-invite never builds the notice board", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeHeadquartersOnlyRow());
+		const guild = makeInstallGuild();
+
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" });
+
+		expect(createMockOf(guild)).not.toHaveBeenCalled();
+		expect(guildConfigMock.update).not.toHaveBeenCalled();
+	});
+
+	it("reads a row as Headquarters only by its ids alone", () => {
+		expect(isHeadquartersOnly(makeHeadquartersOnlyRow())).toBe(true);
+		expect(isHeadquartersOnly(makeStoredConfig())).toBe(false);
+		// A legacy row from before Headquarters existed is still legacy.
+		expect(isHeadquartersOnly(makeStoredConfig({ headquartersCategoryId: null }))).toBe(false);
+		expect(isHeadquartersOnly(null)).toBe(false);
+	});
+
+	// ── the boot sweep ─────────────────────────────────────────────────
+
+	// Every Headquarters channel answers a fetch, so the sweep can only build what a
+	// test removes; the notice board and arcade ids are null and must stay unbuilt.
+	const LIVE_HEADQUARTERS = { "ch-admin": { id: "ch-admin" } };
+
+	it("skips a Headquarters only guild with nothing missing: no fetch of a null id, no build", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeHeadquartersOnlyRow());
+		const guild = makeGuild({ channelFetchMap: LIVE_HEADQUARTERS });
+
+		const result = await GuildSetupManager.ensureHomebase(makeClient({ selfId: "bot-1" }), guild);
+
+		expect(result).toEqual({ action: "skipped", repairedChannels: [] });
+		expect(createMockOf(guild)).not.toHaveBeenCalled();
+		const fetched = (guild.channels.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0] as unknown);
+		expect(fetched.every((id) => typeof id === "string" && id.length > 0)).toBe(true);
+	});
+
+	it("repairs a deleted Headquarters channel under Headquarters, and builds no notice board or arcade", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeHeadquartersOnlyRow());
+		const guild = makeGuild({ channelFetchMap: { ...LIVE_HEADQUARTERS, "ch-deroconfig": null } });
+		const adminChannel = makeAdminChannel();
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => (id === "ch-admin" ? adminChannel : null) });
+
+		const result = await GuildSetupManager.ensureHomebase(client, guild);
+
+		expect(result.action).toBe("repaired");
+		const calls = callsOf(guild);
+		expect(calls.map((call) => call.name)).toEqual([packChannels.deroConfig]);
+		expect(calls[0]!.parent).toBe("hq-cat-1");
+	});
+
+	// ── waiting for setup (2026-11 item 285 debug pass, owner ruling) ─────────
+	// A new server and a self destructed one hold 🔒inner-sanctum alone until Set up Dero.
+	const WAITING_FIELDS = HEADQUARTERS_SPECS.map((spec) => spec.configField).filter((field) => field !== "adminChannelId");
+	const awaitingRow = (overrides: Record<string, unknown> = {}) =>
+		makeHeadquartersOnlyRow({ adminRoleId: null, setupComplete: false, ...Object.fromEntries(WAITING_FIELDS.map((field) => [field, null])), ...overrides });
+
+	it("reads a slot as waiting for setup only while setup never ran and the slot is empty", () => {
+		const serverConfig = HEADQUARTERS_SPECS.find((spec) => spec.configField === "serverConfigChannelId")!;
+		const sanctum = HEADQUARTERS_SPECS.find((spec) => spec.configField === "adminChannelId")!;
+		expect(waitsForSetup(serverConfig, awaitingRow())).toBe(true);
+		expect(waitsForSetup(serverConfig, null)).toBe(true);
+		expect(waitsForSetup(sanctum, awaitingRow({ adminChannelId: null }))).toBe(false);
+		expect(waitsForSetup(serverConfig, awaitingRow({ adminRoleId: "role-admin" }))).toBe(false);
+		expect(waitsForSetup(serverConfig, awaitingRow({ setupComplete: true }))).toBe(false);
+		expect(waitsForSetup(serverConfig, awaitingRow({ serverConfigChannelId: "ch-serverconfig" }))).toBe(false);
+		const intro = GuildSetupManager.CHANNEL_SPECS.find((spec) => spec.configField === "introChannelId")!;
+		expect(waitsForSetup(intro, awaitingRow({ introChannelId: null }))).toBe(false);
+	});
+
+	it("leaves the five waiting Headquarters slots unbuilt on a boot before setup", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(awaitingRow());
+		const guild = makeGuild({ channelFetchMap: LIVE_HEADQUARTERS });
+
+		const result = await GuildSetupManager.ensureHomebase(makeClient({ selfId: "bot-1" }), guild);
+
+		expect(result).toEqual({ action: "skipped", repairedChannels: [] });
+		expect(createMockOf(guild)).not.toHaveBeenCalled();
+	});
+
+	it("builds every waiting slot under Headquarters once setup stores the admin role", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(awaitingRow({ adminRoleId: "role-admin", setupComplete: true }));
+		const guild = makeGuild({ channelFetchMap: LIVE_HEADQUARTERS });
+
+		await GuildSetupManager.buildHeadquartersAwaitingSetup(guild);
+
+		const calls = callsOf(guild);
+		expect(calls.map((call) => call.name).sort()).toEqual(HEADQUARTERS_SPECS.filter((spec) => spec.configField !== "adminChannelId").map((spec) => packChannels[spec.nameKey]).sort());
+		for (const call of calls) expect(call.parent, call.name).toBe("hq-cat-1");
+	});
+
+	it("builds nothing after setup for a slot the admin removed, or one already standing", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(
+			awaitingRow({ adminRoleId: "role-admin", setupComplete: true, deroConfigChannelId: "ch-deroconfig", userRemovedChannels: ["arcadeControlChannelId"] })
+		);
+		const guild = makeGuild({ channelFetchMap: { ...LIVE_HEADQUARTERS, "ch-deroconfig": { id: "ch-deroconfig" } } });
+
+		await GuildSetupManager.buildHeadquartersAwaitingSetup(guild);
+
+		const names = callsOf(guild).map((call) => call.name);
+		expect(names).not.toContain(packChannels.deroConfig);
+		expect(names).not.toContain(packChannels.arcadeControl);
+		expect(names).toContain(packChannels.serverConfig);
+	});
+
+	it("still runs the legacy sweep, notice board included, on a row that holds categoryId", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig());
+		const category = { id: "cat-1", type: ChannelType.GuildCategory, name: rokCommanderCopy.setup.categoryName };
+		const guild = makeGuild({ categoryId: category, channelFetchMap: { ...LIVE_HEADQUARTERS, "ch-intro": null } });
+		const adminChannel = makeAdminChannel();
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => (id === "ch-admin" ? adminChannel : null) });
+
+		const result = await GuildSetupManager.ensureHomebase(client, guild);
+
+		expect(result.action).toBe("repaired");
+		expect(callsOf(guild).find((call) => call.name === packChannels.intro)?.parent).toBe("cat-1");
+	});
+});
+
+// ── a notice board built one channel at a time (2026-11 item 285 Phase 3) ──
+// Once onDemandChannel stores categoryId the row is a legacy row to ensureHomebase, so
+// the boot sweep runs its full notice board pass. The slots onDemandChannel listed in
+// onDemandChannels must stay unbuilt there, or the first restart undoes the tutorial.
+describe("GuildSetupManager boot sweep with notice board slots waiting for first use", () => {
+	const packChannels = rokCommanderCopy.setup.channels;
+	const NOTICE_BOARD_FIELDS = GuildSetupManager.specFieldsUnder("categoryId");
+	const WAITING = NOTICE_BOARD_FIELDS.filter((field) => field !== "introChannelId");
+	const category = { id: "cat-1", type: ChannelType.GuildCategory, name: rokCommanderCopy.setup.categoryName };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		guildConfigMock.update.mockResolvedValue(undefined);
+	});
+
+	// The tutorial built 📜introductions alone: every other notice board slot is null and waiting.
+	const rowWithIntroOnly = (overrides: Record<string, unknown> = {}) =>
+		makeStoredConfig({ ...Object.fromEntries(WAITING.map((field) => [field, null])), scheduleMessageId: null, onDemandChannels: WAITING, ...overrides });
+
+	const createCalls = (guild: Guild): Array<{ name: string }> => (guild.channels.create as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0] as { name: string });
+
+	it("builds none of the waiting slots", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(rowWithIntroOnly());
+		const guild = makeGuild({ categoryId: category, channelFetchMap: { "ch-admin": { id: "ch-admin" }, "ch-intro": { id: "ch-intro" } } });
+
+		const result = await GuildSetupManager.ensureHomebase(makeClient({ selfId: "bot-1" }), guild);
+
+		expect(result.repairedChannels).toEqual([]);
+		expect(createCalls(guild)).toEqual([]);
+	});
+
+	it("still repairs the channel the tutorial built when it is deleted", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(rowWithIntroOnly());
+		const guild = makeGuild({ categoryId: category, channelFetchMap: { "ch-admin": { id: "ch-admin" }, "ch-intro": null } });
+		const adminChannel = makeAdminChannel();
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => (id === "ch-admin" ? adminChannel : null) });
+
+		const result = await GuildSetupManager.ensureHomebase(client, guild);
+
+		expect(createCalls(guild).map((call) => call.name)).toEqual([packChannels.intro]);
+		expect(result.repairedChannels).toEqual([packChannels.intro]);
+	});
+
+	it("repairs a waiting slot that holds an id, which a forced rebuild built", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(rowWithIntroOnly({ leaderboardChannelId: "ch-leaderboard" }));
+		const guild = makeGuild({ categoryId: category, channelFetchMap: { "ch-admin": { id: "ch-admin" }, "ch-intro": { id: "ch-intro" }, "ch-leaderboard": null } });
+		const adminChannel = makeAdminChannel();
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => (id === "ch-admin" ? adminChannel : null) });
+
+		await GuildSetupManager.ensureHomebase(client, guild);
+
+		expect(createCalls(guild).map((call) => call.name)).toEqual([packChannels.leaderboard]);
 	});
 });

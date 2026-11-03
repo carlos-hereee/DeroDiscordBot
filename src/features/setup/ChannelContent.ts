@@ -1,14 +1,27 @@
-import { EmbedBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
+import { EmbedBuilder, ButtonBuilder, ButtonStyle, type AttachmentBuilder } from "discord.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { DERO_GIF_URL, COLORS, DERO_GIF_REF } from "@base/copy/brand.js";
+import { deroArtAttachment } from "@features/renderer/deroArt.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { CUT_CARD_PENETRATION } from "@features/games/blackjackState.js";
+import { rulesContent, type IRulesConfig } from "./rulesContent.js";
+import { isChipEconomyOn, type ChipEconomySetting } from "@features/economy/chipWallet.js";
+import { chips, coins } from "@features/economy/economyCopy.js";
 // botInviteLink is composed in @utils/config from the env-driven
 // clientId, so a dev process serves the dev install URL and a prod
 // process serves the prod install URL automatically. We deliberately
-// do NOT import BOT_CONSTANTS.INVITE_URL anymore — that string is
+// do NOT import BOT_CONSTANTS.INVITE_URL anymore, that string is
 // pinned to the prod client id and was the source of dev/prod mix-up
 // risk.
 import { botInviteLink } from "@utils/config.js";
+
+// The rules card states its clocks in minutes and hours; BOT_CONSTANTS keeps them
+// in milliseconds, the unit the sweeps run on.
+const MS_PER_MINUTE = 60_000;
+const MS_PER_HOUR = 60 * MS_PER_MINUTE;
+// The cut card share is a fraction in the engine and a percent on the rules card.
+const PERCENT = 100;
 
 // ── ChannelContent ───────────────────────────────────────────────────────
 // What:  builders for the pinned intro embeds + self-heal notices the bot
@@ -33,10 +46,21 @@ export const ChannelContent = {
 	introduction(guildConfig?: ICopyConfig | null): EmbedBuilder {
 		const copy = getPluginCopy(guildConfig);
 		const cc = copy.channelContent;
-		// setImage shows the large animated Dero below the welcome so new members
-		// see the mascot in action (gifs animate in the image slot, unlike the
-		// static author icon). Renders once the asset is deployed (see DERO_GIF_URL).
-		return infoEmbed(cc.introduction.title, cc.introduction.description, copy.COLORS.INTRODUCTION).setImage(DERO_GIF_URL);
+		// The large Dero below the welcome is his v2 welcome pose from the bot's own
+		// assets (2026-10 item 245 Phase 3b), so it no longer waits on companyuno.com
+		// serving the gif. GuildSetupManager.resolveIntroFiles sends the file with
+		// every post and edit of this message.
+		return infoEmbed(cc.introduction.title, cc.introduction.description, copy.COLORS.INTRODUCTION).setImage(ChannelContent.introductionImage().ref);
+	},
+
+	/**
+	 * The welcome's image and the file it needs: the v2 welcome pose, or the hosted
+	 * gif with no file while the pose is not on disk, so a missing file can never
+	 * make the welcome's send fail. The embed's ref and the file sent with it both
+	 * come from here, so the two cannot name different images.
+	 */
+	introductionImage(): { ref: string; attachment: AttachmentBuilder | null } {
+		return deroArtAttachment("welcome") ?? { ref: DERO_GIF_URL, attachment: null };
 	},
 
 	// ── invite card ──────────────────────────────────────────────────
@@ -47,21 +71,17 @@ export const ChannelContent = {
 	//        caller must also upload the gif file (buildDeroGifAttachment).
 	// Who:   populateChannels (initial post) + refreshIntroEmbeds (maintains it).
 	// How:   brand-indigo (COLORS.DERO) so it reads as a Dero card, not a channel
-	//        intro. NOTE: like buildInviteButton, the pitch is hardcoded kingdom
-	//        voice and is NOT pack-aware — a general-events guild sees ROK wording.
-	//        Same pre-existing debt as the button it pairs with; tracked separately.
-	inviteCard(): EmbedBuilder {
-		return infoEmbed(
-			"🔱 Summon Dero to Your Realm",
-			"Command a kingdom of your own? Dero answers the call. Bring him to your server and let the events, reminders, and rankings run themselves.",
-			COLORS.DERO
-		).setImage(DERO_GIF_REF);
+	//        intro. The pitch is the guild's pack (channelContent.inviteCard), so a
+	//        template switch rewrites it through refreshIntroEmbeds.
+	inviteCard(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const card = getPluginCopy(guildConfig).channelContent.inviteCard;
+		return infoEmbed(card.title, card.description, COLORS.DERO).setImage(DERO_GIF_REF);
 	},
 
 	// ── invite button ────────────────────────────────────────────────
 	// What:  the "Summon me to your server" Link button. Opens Discord's OAuth
 	//        consent screen for inviting the bot into another server. Link buttons
-	//        need no interaction handler — Discord opens the URL directly.
+	//        need no interaction handler, Discord opens the URL directly.
 	// Who:   attached to the standalone invite card (ChannelContent.inviteCard), its
 	//        own pinned message in #command-center. MOVED off the introductions
 	//        intro (2026-06) because that channel is now member-writable and the
@@ -71,17 +91,11 @@ export const ChannelContent = {
 	//        manual rebuild. Returned as a bare ButtonBuilder so it can share one
 	//        ActionRow with the other command-center buttons.
 	// How:   ButtonStyle.Link, URL from @utils/config.botInviteLink so the client
-	//        id + permissions track the running environment automatically.
-	// NOTE:  the label + emoji are hardcoded kingdom voice and are NOT pack-aware
-	//        (no pack field exists for them). A general-events guild would see this
-	//        ROK-voiced label until a pack field is added. Pre-existing limitation,
-	//        just relocated; tracked outside this pass.
-	buildInviteButton(): ButtonBuilder {
-		return new ButtonBuilder()
-			.setLabel("Summon me to your server, Mortal")
-			.setStyle(ButtonStyle.Link)
-			.setURL(botInviteLink)
-			.setEmoji("🔱");
+	//        id + permissions track the running environment automatically. The
+	//        label and emoji come from the guild's pack, beside the card's pitch.
+	buildInviteButton(guildConfig?: ICopyConfig | null): ButtonBuilder {
+		const card = getPluginCopy(guildConfig).channelContent.inviteCard;
+		return new ButtonBuilder().setLabel(card.buttonLabel).setStyle(ButtonStyle.Link).setURL(botInviteLink).setEmoji(card.buttonEmoji);
 	},
 
 	commandGuide(guildConfig?: ICopyConfig | null): EmbedBuilder {
@@ -92,20 +106,6 @@ export const ChannelContent = {
 		);
 	},
 
-	// ── admin command guide ──────────────────────────────────────
-	// The pinned intro of the dedicated admin command center (its own
-	// homebase channel as of the 2026-06-19 split; previously a second
-	// pinned message inside #inner-sanctum next to adminWelcome). Tracked on
-	// GuildConfig.introMessageIds.adminCommandsChannelId so refreshIntroEmbeds
-	// edits/reposts it in place on boot when copy or the command list evolves.
-	// ADMIN color keeps it visually consistent with the rest of the admin surface.
-	adminCommandGuide(guildConfig?: ICopyConfig | null): EmbedBuilder {
-		const copy = getPluginCopy(guildConfig);
-		const cc = copy.channelContent;
-		return infoEmbed(cc.adminCommandGuide.title, cc.adminCommandGuide.description, copy.COLORS.ADMIN).addFields(
-			...cc.adminCommandGuide.fields
-		);
-	},
 	adminPending(guildConfig?: ICopyConfig | null): EmbedBuilder {
 		const copy = getPluginCopy(guildConfig);
 		return infoEmbed(copy.channelContent.adminWelcome.title, copy.responses.adminRolePending, copy.COLORS.ADMIN);
@@ -137,6 +137,166 @@ export const ChannelContent = {
 		return infoEmbed(cc.nextDecree.title, cc.nextDecree.description, copy.COLORS.NEXT_DECREE);
 	},
 
+	// 🗒️admin-log's header (post-launch plan item 11), above the one line per admin
+	// action that features/setup/adminLog.ts posts beneath it.
+	adminLogIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.adminLog.title, cc.adminLog.description, copy.COLORS.ADMIN);
+	},
+
+	// ── 🏰 DERO HEADQUARTERS config channels (2026-10 item 257 Phase 2a) ──
+	// One header each, saying what the channel is for. The setup steps card that
+	// Phase 2b posts beneath it is a second message, not part of this intro.
+	deroConfigIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.deroConfig.title, cc.deroConfig.description, copy.COLORS.ADMIN);
+	},
+
+	onboardingConfigIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.onboardingConfig.title, cc.onboardingConfig.description, copy.COLORS.ADMIN);
+	},
+
+	arcadeControlIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.arcadeControl.title, cc.arcadeControl.description, copy.COLORS.ADMIN);
+	},
+
+	// 🛠️server-config, the fourth config channel (2026-10 item 263 Phase 4a).
+	serverConfigIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.serverConfig.title, cc.serverConfig.description, copy.COLORS.ADMIN);
+	},
+
+	// 💬dero-commands' intro, pinned because members write in the channel.
+	commandOutputIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.commandOutput.title, cc.commandOutput.description, copy.COLORS.COMMANDS);
+	},
+
+	// ── 🎮 ARCADE GAMES intros ──────────────────────────────────
+	// The rules card: rules ONLY since 2026-10 item 245 Phase 4a. The roster and the
+	// host buttons moved to 🕹️games (arcadeGamesIntro below), so this card is one
+	// field per rule, in the order a newcomer meets them, ratings last. The clocks,
+	// amounts and rating thresholds come from BOT_CONSTANTS rather than from the copy,
+	// so the card can never promise a number the sweep, awardXp or the ratings code
+	// does not run.
+	arcadeRulesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const c = copy.channelContent.arcadeRules;
+		const { LEVELING, RATINGS } = BOT_CONSTANTS;
+		return infoEmbed(c.title, c.description, copy.COLORS.ARCADE).addFields(
+			{ name: c.roomTitle, value: c.roomBody, inline: false },
+			{ name: c.slotTitle, value: c.slotBody, inline: false },
+			{
+				name: c.idleTitle,
+				value: c.idleBody(BOT_CONSTANTS.GAME_ROOM_IDLE_ABANDON_MS / MS_PER_MINUTE, BOT_CONSTANTS.GAME_ROOM_MONOPOLY_IDLE_MS / MS_PER_HOUR),
+				inline: false,
+			},
+			{ name: c.rematchTitle, value: c.rematchBody, inline: false },
+			{
+				name: c.xpTitle,
+				value: c.xpBody(LEVELING.MESSAGE_XP, LEVELING.REACTION_XP, LEVELING.SOLO_LUCK_WIN_XP, LEVELING.SOLO_LUCK_OTHER_XP, LEVELING.DAILY_XP_CAP),
+				inline: false,
+			},
+			{
+				name: c.ratingsTitle,
+				value: c.ratingsBody(RATINGS.PROVISIONAL_GAMES, RATINGS.HOLDEM_MIN_RATED_HANDS, RATINGS.LUCK_MIN_DECIDED),
+				inline: false,
+			},
+			{ name: c.chipsTitle, value: c.chipsBody(chips(BOT_CONSTANTS.ECONOMY.MONOPOLY_RANKED_BUY_IN)), inline: false },
+			{ name: c.houseRulesTitle, value: c.houseRulesBody(Math.round(CUT_CARD_PENETRATION * PERCENT)), inline: false }
+		);
+	},
+
+	// ── 🕹️games, the first of its two messages ──────────────────────
+	// Every game once, one line each, as ONE field: a field per game would spend a
+	// field per roster entry against Discord's 25, and one line reads as a list,
+	// which is what this is. The play now field explains the three control rows
+	// beneath it (resolveIntroComponents). The Challenge Board is the second message
+	// (arcadeGamesBoard), because all six rows of controls do not fit in one.
+	arcadeGamesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const c = copy.channelContent.arcadeGames;
+		return infoEmbed(c.title, c.description, copy.COLORS.ARCADE).addFields(
+			{ name: c.rosterTitle, value: c.roster.map((game) => `**${game.name}** ${game.how}`).join("\n"), inline: false },
+			{ name: c.playTitle, value: c.playBody, inline: false }
+		);
+	},
+
+	// 🕹️games' second message: the heading above the Challenge Board's start buttons.
+	// Tracked on introMessageIds.arcadeGamesBoardId and kept by GuildSetupManager.
+	arcadeGamesBoard(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const c = copy.channelContent.arcadeGames;
+		return infoEmbed(c.boardTitle, c.boardDescription, copy.COLORS.ARCADE);
+	},
+
+	// The card in each voice room's text chat, above /dero's Join, Leave and Status
+	// (2026-10 item 245 Phase 4b). Tracked on introMessageIds under the room's own field.
+	voiceRoomIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const c = getPluginCopy(guildConfig).channelContent.voiceRoom;
+		return infoEmbed(c.title, c.description, COLORS.DERO);
+	},
+
+	arcadeChallengesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.arcadeChallenges.title, cc.arcadeChallenges.description, copy.COLORS.ARCADE);
+	},
+
+	// 🏆rated-challenges' intro (2026-10 item 254, Arcade 5): one line, like
+	// ⚔️challenges', above the rated games' cards and the network board.
+	arcadeRatedChallengesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.arcadeRatedChallenges.title, cc.arcadeRatedChallenges.description, copy.COLORS.ARCADE);
+	},
+
+	// 🎉party-games' intro (post-launch plan item 3), above the admin host and
+	// schedule buttons (features/game-rooms/partyGames).
+	partyGamesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.partyGames.title, cc.partyGames.description, copy.COLORS.ARCADE);
+	},
+
+	// 🏪dero-market's intro (2026-10 item 267 Session 2a), above the Buy coins and Sell
+	// coins buttons (features/economy/coinMarketPanel). The rate and the cap are read from
+	// ECONOMY.MARKET here, so the card never states a number the trade does not charge.
+	// A server with chips off reads closed: the intro is drawn from the stored row on
+	// every refresh, so switching chips changes the card on the next boot.
+	deroMarketIntro(guildConfig?: (ICopyConfig & ChipEconomySetting) | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const market = copy.channelContent.deroMarket;
+		const rate = BOT_CONSTANTS.ECONOMY.MARKET;
+		const description = isChipEconomyOn(guildConfig)
+			? market.description({ buyPrice: chips(rate.COIN_BUY_PRICE_CHIPS), sellPrice: chips(rate.COIN_SELL_PRICE_CHIPS), dailyCap: coins(rate.DAILY_COIN_BUY_CAP) })
+			: market.closed;
+		return infoEmbed(market.title, description, copy.COLORS.ARCADE);
+	},
+
+	// ── 👋welcome and 📘rules (2026-10 item 247 Phase 2) ──────────────
+	// The join log's intro, above the join and leave lines welcomeLog posts.
+	welcomeIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const c = copy.channelContent.welcome;
+		return infoEmbed(c.title, c.description, copy.COLORS.ARRIVAL);
+	},
+
+	// The rules post's embed. Takes the stored row rather than only a pack selector,
+	// because the owner's saved rules live on it; rulesContent owns the build so the
+	// intro sweep and the Edit rules re-render cannot render the rules two ways.
+	rulesIntro(guildConfig?: IRulesConfig | null): EmbedBuilder {
+		return rulesContent.build(guildConfig).embed;
+	},
+
 	adminWelcome(ownerId: string, adminRoleId: string, guildConfig?: ICopyConfig | null): EmbedBuilder {
 		const copy = getPluginCopy(guildConfig);
 		const cc = copy.channelContent;
@@ -159,7 +319,7 @@ export const ChannelContent = {
 	// by postRepairNotices when the bot rebuilt several missing channels
 	// at once (eg after toggling leaderboard back on triggered a sweep
 	// that rebuilt every removed homebase channel). One message in
-	// inner-sanctum is enough — the admin only needs to know which
+	// inner-sanctum is enough, the admin only needs to know which
 	// channels were touched, not see N copies of the same warning
 	// paragraph. Reuses the existing repair-notice copy template via
 	// the locale's summaryTitle / summaryBody keys.

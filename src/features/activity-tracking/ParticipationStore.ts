@@ -1,7 +1,7 @@
 import { IPlayerActivity } from "./activity.types.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
-// pure function — takes an activity record, returns a score
+// pure function, takes an activity record, returns a score
 // no DB calls, easy to unit test and tweak weights
 export function computeScore(activity: Partial<IPlayerActivity>): number {
 	const w = BOT_CONSTANTS.SCORE_WEIGHTS;

@@ -1,0 +1,24 @@
+version: 2
+# Weekly, grouped, and always into staging so an update goes through the same gates as any
+# other change. Dependabot SECURITY updates ignore target-branch and use the default branch.
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    target-branch: staging
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Chicago
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: "/"
+    target-branch: staging
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Chicago

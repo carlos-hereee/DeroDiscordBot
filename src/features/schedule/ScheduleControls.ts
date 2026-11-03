@@ -1,19 +1,24 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, type ButtonInteraction } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, type ButtonInteraction } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { postGoLiveAnnouncement } from "@features/schedule/postGoLiveAnnouncement.js";
 import { pauseAllGuildEvents, resumeAllGuildEvents, IBulkScheduleResult } from "@features/schedule/scheduleBulkControls.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
+import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
+import { answerGoLiveRefusal } from "@features/schedule/goLiveSoon.js";
 
 // ── Schedule channel controls (item 36) ────────────────────────────────
 // The pinned schedule board carries ONE dynamic, phase-gated control row,
 // rebuilt by ScheduleBoard.refreshSchedule on every refresh (so it tracks the
 // live state without a second pinned message):
 //
-//   - Go Live Now — ALWAYS present. Streamers announce going live whether or
+//   - Go Live Now, ALWAYS present. Streamers announce going live whether or
 //     not a recurring schedule exists, so this never hides.
 //   - then exactly one state button:
 //       • no events configured        → "Set up your schedule" (how-to reply)
@@ -27,7 +32,7 @@ import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 // channel (those controls now live here on the board).
 //
 // All four actions are owner/admin gated via gateOwnerOrAdmin. discord.js note:
-// message.edit must pass embeds AND components or the buttons drop — ScheduleBoard
+// message.edit must pass embeds AND components or the buttons drop, ScheduleBoard
 // passes both on every send and edit.
 //
 // Note: this module imports refreshSchedule from ScheduleBoard while ScheduleBoard
@@ -64,7 +69,7 @@ export function buildScheduleControlRow(state: IScheduleControlState): ActionRow
 
 	let stateButton: ButtonBuilder;
 	if (!state.hasEvents) {
-		// No schedule yet — a pause/resume control would be meaningless, so offer
+		// No schedule yet, a pause/resume control would be meaningless, so offer
 		// the how-to instead.
 		stateButton = new ButtonBuilder()
 			.setCustomId(CONFIGURE_CUSTOM_ID)
@@ -95,7 +100,7 @@ export function buildScheduleControlRow(state: IScheduleControlState): ActionRow
 async function handleScheduleControl(interaction: ButtonInteraction): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild) {
-		await interaction.reply({ embeds: [errorEmbed("This button only works inside a server.")], flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: ["This button only works inside a server."] });
 		return;
 	}
 
@@ -104,7 +109,7 @@ async function handleScheduleControl(interaction: ButtonInteraction): Promise<vo
 	const config = await guildConfigStore.findByGuildId(guildId);
 	const allowed = await gateOwnerOrAdmin(interaction, config);
 	if (!allowed) {
-		await interaction.reply({ embeds: [errorEmbed(rokCommanderCopy.responses.noWizardPowers)], flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [rokCommanderCopy.responses.noWizardPowers] });
 		return;
 	}
 
@@ -124,49 +129,58 @@ async function handleScheduleControl(interaction: ButtonInteraction): Promise<vo
 			return;
 		default:
 			// Stale button from an older board (customId no longer recognized).
-			await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
+			await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: ["This control is no longer available."] });
 	}
 }
 
 async function runGoLiveNow(interaction: ButtonInteraction, guildId: string): Promise<void> {
-	// Fire the equivalent of /go-live-soon when:now via the shared helper. Note +
-	// role override are null — the button is the one-tap shortcut; the slash
+	// Fire the equivalent of /events stream soon when:now via the shared helper. Note +
+	// role override are null, the button is the one-tap shortcut; the slash
 	// command remains the path for richer inputs.
+	//
+	// Acknowledged BEFORE the announcement posts (bot audit 2026-10-30): the post reads the
+	// config, mentions the audience and may upload an image, which can run past Discord's three
+	// seconds. Posted first, a press that timed out showed "interaction failed" after its @here
+	// had already gone out, and the admin pressed again for a second ping. A press too late to
+	// acknowledge now throws here and posts nothing. Every answer below works on a deferred press.
+	await interaction.deferUpdate();
 	const result = await postGoLiveAnnouncement(interaction.client, guildId, "now", null, null);
 	const c = rokCommanderCopy.goLiveSoon;
 	if (result.ok) {
-		await interaction.reply({ content: c.posted, flags: MessageFlags.Ephemeral });
+		// A confirmation of work done is an answer, so it posts in 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		await answerInChannel(interaction, "admin", { content: c.posted });
 		return;
 	}
-	const errorMsg =
-		result.reason === "setup-required" ? c.setupRequired : result.reason === "invalid-lead-time" ? c.invalidLeadTime : c.postFailed;
-	await interaction.reply({ embeds: [errorEmbed(errorMsg)], flags: MessageFlags.Ephemeral });
+	await answerGoLiveRefusal(interaction, result.reason);
 }
 
 async function runConfigureHowTo(interaction: ButtonInteraction): Promise<void> {
 	// A button cannot launch a slash command, so the "set up your schedule"
 	// affordance points the admin at the commands that do.
-	await interaction.reply({
-		content: [
+	await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [[
 			"**Set up your schedule with one of these:**",
-			"• `/configure-stream-schedule` for a recurring stream or event",
-			"• `/announce-stream` for a one-off event at a specific date and time",
-			"• `/configure-kvk-season` for a full KvK season of events",
+			"• `/events stream weekly` for a recurring stream or event",
+			"• `/events stream announce` for a one-off event at a specific date and time",
+			"• `/events kvk-season` for a full KvK season of events",
 			"",
 			"Once at least one schedule exists, this button becomes a Pause/Resume toggle.",
-		].join("\n"),
-		flags: MessageFlags.Ephemeral,
-	});
+		].join("\n")] });
 }
 
 async function runBulkSchedule(interaction: ButtonInteraction, guildId: string, action: "paused" | "resumed"): Promise<void> {
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	// Acknowledged first (a write per schedule), the summary posting in 🛠️server-config
+	// (2026-10 item 257 Phase 5).
+	const answer = await beginChannelAnswer(interaction, "admin");
 	const result = action === "paused" ? await pauseAllGuildEvents(guildId) : await resumeAllGuildEvents(guildId);
+	if (result.changed > 0) {
+		const detail = action === "paused" ? setupCopy.adminLog.pausedCount(result.changed) : setupCopy.adminLog.resumedCount(result.changed);
+		adminLog.emitFor(interaction, guildId, "schedule.update", { subject: setupCopy.adminLog.allSchedules, detail });
+	}
 	// Refresh the board so the toggle flips to its opposite and paused tags
-	// update. Fire-and-forget — the DB writes are the source of truth and the
+	// update. Fire-and-forget, the DB writes are the source of truth and the
 	// next refresh tick reconciles regardless.
 	refreshSchedule(interaction.client, guildId).catch((err) => console.error(`[schedule-controls] refresh after ${action} failed`, err));
-	await interaction.editReply({ content: summarizeBulk(result, action) });
+	await answer.send({ content: summarizeBulk(result, action) });
 }
 
 function summarizeBulk(result: IBulkScheduleResult, action: "paused" | "resumed"): string {

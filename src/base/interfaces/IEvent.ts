@@ -1,4 +1,4 @@
-// Not a game event — a Discord client event listener shape
+// Not a game event, a Discord client event listener shape
 export interface IClientEvent {
 	name: string;
 	once?: boolean;

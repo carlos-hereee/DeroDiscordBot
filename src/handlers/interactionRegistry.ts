@@ -1,4 +1,4 @@
-import type { ButtonInteraction, ModalSubmitInteraction } from "discord.js";
+import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from "discord.js";
 
 // ── interactionRegistry ──────────────────────────────────────────────
 // What:  central dispatch table for persistent button + modal interactions.
@@ -21,9 +21,15 @@ import type { ButtonInteraction, ModalSubmitInteraction } from "discord.js";
 
 export type TButtonHandler = (interaction: ButtonInteraction) => Promise<void>;
 export type TModalHandler = (interaction: ModalSubmitInteraction) => Promise<void>;
+// Added for the game rooms invite picker (plan task 4.5). A StringSelect is the
+// only component type that lets the BOT build the option list, which is the
+// structural reason a bot can never appear as an opponent; a UserSelect is
+// populated by Discord and would happily return one.
+export type TSelectHandler = (interaction: StringSelectMenuInteraction) => Promise<void>;
 
 const buttonHandlers = new Map<string, TButtonHandler>();
 const modalHandlers = new Map<string, TModalHandler>();
+const selectHandlers = new Map<string, TSelectHandler>();
 
 function extractPrefix(customId: string): string {
 	const idx = customId.indexOf(":");
@@ -44,10 +50,17 @@ export function registerModal(prefix: string, handler: TModalHandler): void {
 	modalHandlers.set(prefix, handler);
 }
 
+export function registerSelectMenu(prefix: string, handler: TSelectHandler): void {
+	if (selectHandlers.has(prefix)) {
+		throw new Error(`[interactionRegistry] select handler already registered for prefix '${prefix}'`);
+	}
+	selectHandlers.set(prefix, handler);
+}
+
 /**
  * Dispatch a button interaction to the registered handler. Returns true when
- * a handler ran (regardless of whether it threw — the listener wrapper logs
- * the error). Returns false when no handler matched the customId prefix —
+ * a handler ran (regardless of whether it threw, the listener wrapper logs
+ * the error). Returns false when no handler matched the customId prefix,
  * the caller should treat that as an unhandled persistent button (possibly
  * a stale message from a previous bot version).
  */
@@ -62,6 +75,20 @@ export async function dispatchButton(interaction: ButtonInteraction): Promise<bo
 export async function dispatchModal(interaction: ModalSubmitInteraction): Promise<boolean> {
 	const prefix = extractPrefix(interaction.customId);
 	const handler = modalHandlers.get(prefix);
+	if (!handler) return false;
+	await handler(interaction);
+	return true;
+}
+
+/**
+ * Dispatch a string select submission. Same contract as the two above: false
+ * means no handler claimed the prefix, which the caller should treat as an
+ * inline collector's business (configure-rok-reminders and the decree edit flow
+ * both drive selects that way) rather than as an error.
+ */
+export async function dispatchSelectMenu(interaction: StringSelectMenuInteraction): Promise<boolean> {
+	const prefix = extractPrefix(interaction.customId);
+	const handler = selectHandlers.get(prefix);
 	if (!handler) return false;
 	await handler(interaction);
 	return true;

@@ -2,7 +2,7 @@ import cron from "node-cron";
 import { Client, TextChannel } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
-import { getUpcomingOccurrences } from "@features/events/occurrenceCalculator.js";
+import { getUpcomingOccurrences, previousOccurrence } from "@features/events/occurrenceCalculator.js";
 import { fireReminder } from "./ReminderJob.js";
 import { reminderStore } from "@db/stores/reminderStore.js";
 import { eventOverrideStore } from "@db/stores/eventOverrideStore.js";
@@ -11,12 +11,19 @@ import { IGameEvent } from "../events/event.types.js";
 import { seasonEndEmbed } from "@utils/embedBuilder.js";
 import { refreshAllSchedules, refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { refreshAllLeaderboards } from "@features/leaderboard/LeaderboardBoard.js";
+import { refreshAllLevelsBoards } from "@features/leveling/LevelsBoard.js";
+import { sweepExpiredRooms } from "@features/game-rooms/roomArchiveSweep.js";
+import { sweepBattleshipTurns, sweepMonopolyIdle, sweepIdleRooms } from "@features/game-rooms/roomTurnSweep.js";
+import { openDuePartyGames } from "@features/game-rooms/partyGamesOpen.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { getOutboundLatencyStats } from "@utils/serverApi.js";
 import { noteFailure as noteServerFailure, noteSuccess as noteServerSuccess } from "./serverHealthNotifier.js";
 import { mapWithConcurrency } from "@utils/mapWithConcurrency.js";
 import { activityStore } from "@db/stores/activityStore.js";
 import { playerActivityRetentionDays } from "@utils/config.js";
+import { sendRenderAnalyticsDigest } from "@features/renderer/renderAnalyticsDigest.js";
+import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
+import { runVaultTopUp } from "@features/economy/vaultTopUp.js";
 
 // ── resolveOverride ────────────────────────────────────────────────
 // What:  given an event + an original occurrence (the cron-computed fire
@@ -33,7 +40,7 @@ import { playerActivityRetentionDays } from "@utils/config.js";
 //        with N guilds × M events per guild this is N*M reads per minute,
 //        a load the underlying compound unique index handles trivially.
 // Where: sits between the cron tick and fireReminder. ReminderJob.fireReminder
-//        does NOT consult EventOverride — only the scheduler does, so the
+//        does NOT consult EventOverride, only the scheduler does, so the
 //        contract is "scheduler resolves overrides, fireReminder posts".
 async function resolveOverride(
 	event: IGameEvent,
@@ -55,13 +62,42 @@ async function resolveOverride(
 	return { mergedEvent, fireMoment };
 }
 
+/** One occurrence the tick checks for due reminders: its original start (the dedup key) and the override's view of it. */
+export interface RecurringFireCandidate {
+	originalOccurrence: Date;
+	mergedEvent: IGameEvent;
+	fireMoment: Date;
+}
+
+// ── recurringFireCandidates (2026-10 item 280) ──
+// The occurrences of a recurring event whose reminders may be due this tick: always the
+// next computed one, and the previous one only while an "apply once" override has moved
+// it to a moment still ahead. Without the second, an override that moves a start later
+// lost its reminders the minute the original start passed, because the next computed
+// occurrence is then the following one. Each candidate keeps its ORIGINAL start as the
+// ReminderLog key, the same key it had while it was the next occurrence, so the compound
+// unique index (eventId, eventOccurrence, offsetMinutes) still lets each reminder of one
+// occurrence fire once. Costs one extra override read per recurring event per tick.
+export async function recurringFireCandidates(event: IGameEvent, now: Date): Promise<RecurringFireCandidate[]> {
+	const [nextOccurrence] = getUpcomingOccurrences(event, 1);
+	if (!nextOccurrence) return [];
+
+	const candidates: RecurringFireCandidate[] = [];
+	const previous = previousOccurrence(event, nextOccurrence);
+	const previousResolved = await resolveOverride(event, previous);
+	if (previousResolved.fireMoment.getTime() > now.getTime() - BOT_CONSTANTS.REMINDER_LATE_GRACE_MS) candidates.push({ originalOccurrence: previous, ...previousResolved });
+
+	candidates.push({ originalOccurrence: nextOccurrence, ...(await resolveOverride(event, nextOccurrence)) });
+	return candidates;
+}
+
 // ── F5 observability: fire-rate counters ──
 // What: in-process counters tracking successful and failed reminder fires per hour.
 //   Logged on the hourly tick alongside outbound HTTP latency stats so Railway logs
 //   surface the platform's health at a glance.
 // Who: incremented by the scheduler's per-event branches (one-time + recurring).
 //   Read by logHourlyMetrics() below.
-// When: reset every hour after the log line — a rolling window means a transient
+// When: reset every hour after the log line, a rolling window means a transient
 //   spike doesn't hide behind a wall of healthy historical data.
 // Where: per-process counters; multi-instance deployments would need to ship to
 //   a central metrics store. Single Railway dyno keeps it simple.
@@ -91,10 +127,10 @@ const logHourlyMetrics = (): void => {
 	);
 	// Alert thresholds. These are warns (not errors) so a single bad hour does not
 	// page anyone, but they ARE louder than info so a log scan catches them. The
-	// roadmap (F5) calls out "alert if failure rate > 1% over a 1-hour window" —
+	// roadmap (F5) calls out "alert if failure rate > 1% over a 1-hour window",
 	// that's the threshold here.
 	if (latency.p99 > 500 && latency.samples >= 10) {
-		console.warn(`[metrics] outbound_p99 ${latency.p99}ms exceeds 500ms threshold — cron tick may overrun its 60s budget`);
+		console.warn(`[metrics] outbound_p99 ${latency.p99}ms exceeds 500ms threshold, cron tick may overrun its 60s budget`);
 	}
 	if (failureRate > 0.01 && total >= 10) {
 		console.warn(`[metrics] reminder failure rate ${(failureRate * 100).toFixed(1)}% exceeds 1% threshold over the last hour`);
@@ -111,7 +147,7 @@ const logHourlyMetrics = (): void => {
 // unindexed Event scan), and the next minute's tick would then start
 // concurrently. Two concurrent ticks both pass the reminderStore.exists()
 // dedup check before either writes its row, so both call fireReminder and the
-// alliance gets a DUPLICATE ping — the compound unique index only catches the
+// alliance gets a DUPLICATE ping, the compound unique index only catches the
 // second reminderStore.create, after the duplicate Discord post is already
 // live. This boolean serializes the per-minute tick within the process: if a
 // tick is still running when the next fires, the new one is skipped and the
@@ -154,6 +190,15 @@ export function startScheduler(client: Client): void {
 		} catch (error) {
 			console.error(LOG_MESSAGES.leaderboard.hourlyRefreshFailed, error);
 		}
+		// Levels board floor, the SECOND board in the same channel. Same reasoning
+		// as the leaderboard sweep above and, like it, deliberately separate: the
+		// two read different collections and answer different questions, so one
+		// failing must not stop the other refreshing.
+		try {
+			await refreshAllLevelsBoards(client);
+		} catch (error) {
+			console.error(LOG_MESSAGES.leveling.hourlyRefreshFailed, error);
+		}
 		// Emit hourly metrics line right after the board sweeps so a single
 		// log timestamp captures both. The metrics function never throws.
 		logHourlyMetrics();
@@ -180,6 +225,94 @@ export function startScheduler(client: Client): void {
 			})
 		);
 	}
+
+	// ── game room archive sweep (game rooms Phase 3) ──
+	// Deletes the channel of every finished room past its archiveAt. Its OWN cron and
+	// deliberately not a passenger on the per-minute tick below: that tick has a 60s
+	// budget and an overlap guard, and a guild that let a backlog of rooms expire while
+	// the bot was down would fan out enough channel deletes to blow both.
+	//
+	// Unconditional, unlike the retention sweep above: this deletes a CHANNEL whose
+	// transcript is already safe in Mongo, not the historical record itself, so there is
+	// nothing here for an owner to opt into. Pushed to scheduledTasks so stopScheduler
+	// halts it on Railway's SIGTERM; without that the sweep would keep firing while
+	// main.ts tears the client down and a delete could land against a dead connection.
+	scheduledTasks.push(
+		cron.schedule(BOT_CONSTANTS.GAME_ROOM_SWEEP_CRON, async () => {
+			try {
+				// The sweeps share ONE tick, in this order and not one cron each. A turn
+				// sweep can FINISH a match, which stamps archiveAt; running it first
+				// would then let the archive sweep consider a room that has been
+				// finished for zero seconds, and its four hour window means it is not
+				// due anyway. Running it second keeps each tick's work to one pass over
+				// each concern, and a second cron for one game's clock would cost a
+				// tick across every guild to save a casual player five minutes.
+				await sweepExpiredRooms(client);
+				await sweepBattleshipTurns(client);
+				// Monopoly's budget is a day, so a 5 minute tick is more than fine
+				// enough, and riding this one costs no extra cron.
+				await sweepMonopolyIdle(client);
+				// Last, so a match the turn sweeps just ended is already off the non
+				// terminal list this one reads, and keeps its own winner.
+				await sweepIdleRooms(client);
+				// Fifth, the scheduled party games whose time came (2026-10 item 254,
+				// Arcade 4), up to five minutes late by the owner's choice. After the idle
+				// sweep, so a host whose dead room it just closed is free to host the
+				// party. It never throws, and claims each game once (partyGamesOpen).
+				await openDuePartyGames(client);
+			} catch (err) {
+				// sweepExpiredRooms already isolates per room, so reaching this means the
+				// QUERY itself failed. Log and let the next tick retry; the rooms are
+				// still stamped and nothing is lost by waiting five minutes.
+				console.error("[game-rooms] archive sweep tick failed", err);
+			}
+		})
+	);
+
+	// ── weekly render analytics digest (2026-10 item 244) ──
+	// The owner's Monday month to date DM. The timezone option pins it to the
+	// owner's clock instead of the host's, and sendRenderAnalyticsDigest never
+	// throws, so the void here drops nothing but a promise that always resolves.
+	// Registered unconditionally: the owner id and the kill switch are checked
+	// at fire time, so each skipped Monday leaves one log line saying why.
+	scheduledTasks.push(
+		cron.schedule(
+			BOT_CONSTANTS.RENDER_ANALYTICS.DIGEST_CRON,
+			() => {
+				void sendRenderAnalyticsDigest(client);
+			},
+			{ timezone: BOT_CONSTANTS.RENDER_ANALYTICS.DIGEST_TIME_ZONE }
+		)
+	);
+
+	// ── monthly arcade post (2026-10 item 244 Phase 3b) ──
+	// Last month's arcade highlights in each opted in server's leaderboard channel,
+	// on the 1st in the owner's zone rather than the host's. runMonthlyArcadePost
+	// never throws and claims each server's month before it posts, so the void
+	// drops nothing and a second process on a deploy cannot post a month twice.
+	scheduledTasks.push(
+		cron.schedule(
+			BOT_CONSTANTS.RATINGS.MONTHLY_POST_CRON,
+			() => {
+				void runMonthlyArcadePost(client);
+			},
+			{ timezone: BOT_CONSTANTS.RATINGS.MONTHLY_POST_TIME_ZONE }
+		)
+	);
+
+	// ── monthly server vault award (2026-10 item 250 Phase 5) ──
+	// The network's top servers by rating add chips to their vaults on the 1st at 00:05
+	// UTC. runVaultTopUp never throws and each vault's lastAwardMonth is matched and set
+	// in one write, so the void drops nothing and a second process pays nobody twice.
+	scheduledTasks.push(
+		cron.schedule(
+			BOT_CONSTANTS.ECONOMY.VAULT_TOP_UP_CRON,
+			() => {
+				void runVaultTopUp(client);
+			},
+			{ timezone: BOT_CONSTANTS.ECONOMY.VAULT_TOP_UP_TIME_ZONE }
+		)
+	);
 
 	scheduledTasks.push(cron.schedule(BOT_CONSTANTS.SCHEDULER_CRON, async () => {
 		// Skip this run if the previous minute's tick has not finished. See the
@@ -210,13 +343,13 @@ export function startScheduler(client: Client): void {
 			// surfacing fresh data within one tick of any write.
 			const guildIds = Array.from(client.guilds.cache.keys());
 			// Track whether any guild succeeded so we can call noteServerSuccess
-			// at most once per tick — each individual guild call doesn't trigger
+			// at most once per tick, each individual guild call doesn't trigger
 			// the recovery DM, only "tick had at least one success" does.
 			let anySuccess = false;
 			let anyUnreachable = false;
 			// Fetch events AND guild config per guild in parallel. The config
 			// carries the schedule-level pause state (schedulePaused) which we
-			// honor BEFORE the per-event paused check below — when the
+			// honor BEFORE the per-event paused check below, when the
 			// schedule is paused, every event in this guild is skipped this
 			// tick regardless of its individual paused flag.
 			// Bounded fan-out: read at most SCHEDULER_GUILD_CONCURRENCY guilds at
@@ -239,7 +372,7 @@ export function startScheduler(client: Client): void {
 						// will eventually return; the next tick will catch up. Logging
 						// at warn (not error) because brief Heroku blips are routine.
 						console.warn(LOG_MESSAGES.api.errorFindingEvents, { guildId, err });
-						// Notify health tracker — only ServerUnreachableError counts
+						// Notify health tracker, only ServerUnreachableError counts
 						// as a platform outage; other errors (validation, auth) don't.
 						noteServerFailure(client, err);
 						anyUnreachable = true;
@@ -292,140 +425,7 @@ export function startScheduler(client: Client): void {
 			}
 			const events: IGameEvent[] = eventsByGuild.flat() as IGameEvent[];
 
-			for (const event of events) {
-				const now = new Date();
-
-				// ── auto-resume from paused ──────────────────────────────
-				// Run BEFORE the paused skip check so a pause whose timer
-				// just expired resumes on this same tick instead of waiting
-				// one more cycle (a 60s delay is fine, but it would also
-				// silently delay the very first reminder if the next
-				// occurrence is also overdue — the cleaner contract is
-				// "auto-resume always wins on the tick it fires"). Both
-				// fields are cleared so the event behaves as if pause never
-				// happened: ReminderScheduler can fire, ScheduleBoard drops
-				// the paused tag on its next refresh.
-				if (event.paused && event.pausedUntil && now.getTime() >= new Date(event.pausedUntil).getTime()) {
-					await eventStore.updateInGuild(event.eventId, event.guildId, { paused: false, pausedUntil: null });
-					event.paused = false;
-					event.pausedUntil = null;
-					// fall through into the rest of the loop
-				}
-
-				// ── paused ───────────────────────────────────────────────
-				// Streamers (and anyone else) can pause an event from the
-				// dashboard or via /pause-schedule. Paused events stay in
-				// the DB, still render on the schedule board (with a
-				// "paused" tag rendered by ScheduleBoard), still appear in
-				// /event-list — they simply skip the fire decision until
-				// /continue-schedule flips paused back to false.
-				//
-				// Why this lives BEFORE the seasonEnd check: a paused
-				// event whose seasonEnd happens to pass while it is paused
-				// should NOT auto archive. The streamer paused on purpose;
-				// archiving behind their back would silently destroy the
-				// schedule they configured. Skipping the whole loop body
-				// keeps both the season-end branch and the fire branch
-				// inert until they explicitly resume.
-				if (event.paused) continue;
-
-				// ── season ended ─────────────────────────────────────────
-				// Skip the season-end branch entirely for events without a
-				// seasonEnd (regular announcements, announcementType
-				// "regular"). Without this guard, new Date(null) becomes
-				// 1970-01-01 and every regular event would get archived
-				// and "season ended" announced on the very next tick. The
-				// happy path (legacy KvK events with a real Date) is
-				// unchanged.
-				if (event.seasonEnd && now > new Date(event.seasonEnd)) {
-					// Soft-delete, not a generic update: under remote mode the server's PATCH endpoint
-					// does not accept `active` in the field whitelist (the soft-delete is its own DELETE
-					// route). deleteInGuild routes to the right endpoint for both modes.
-					await eventStore.deleteInGuild(event.eventId, event.guildId);
-					await announceSeasonEnd(client, event);
-					continue;
-				}
-
-				if (event.type === "one-time") {
-					// ── one-time events (kau karuak difficulties) ───────────
-					// Override resolution runs ONCE per event per tick (outside
-					// the offsets loop) so we don't pay an extra Mongo round-trip
-					// per offset. The merged event flows into fireReminder; the
-					// fireMoment shifts the reminder-window math.
-					const { mergedEvent, fireMoment } = await resolveOverride(event, event.firstOccurrence);
-
-					for (const offsetMinutes of event.reminderOffsets) {
-						const reminderTime = new Date(fireMoment.getTime() - offsetMinutes * 60 * 1000);
-						const diff = reminderTime.getTime() - now.getTime();
-
-						if (diff < 0 || diff > BOT_CONSTANTS.REMINDER_FIRE_WINDOW_MS) continue;
-
-						// Dedup key remains the ORIGINAL firstOccurrence so an
-						// override applied between cron ticks cannot bypass an
-						// already-fired reminder. The compound index
-						// (eventId, eventOccurrence, offsetMinutes) anchors on
-						// the schedule's source of truth, not the override.
-						const alreadyFired = await reminderStore.exists({
-							eventId: event.eventId,
-							eventOccurrence: event.firstOccurrence,
-							offsetMinutes,
-						});
-						if (alreadyFired) continue;
-
-						// Wrap fire in success/failure metrics. fireReminder swallows its own
-						// Discord errors (channel missing, permission denied), so we only see
-						// throws on truly unexpected failures — but counting both branches
-						// gives operators a real signal in the hourly metric log.
-						try {
-							await fireReminder(client, mergedEvent, fireMoment, offsetMinutes);
-							recordFireSuccess();
-						} catch (err) {
-							recordFireFailure();
-							console.error(LOG_MESSAGES.api.errorTestReminder ?? "fireReminder failed", err);
-						}
-
-						// deactivate after the last reminder fires
-						// so it doesn't keep getting checked every tick
-						if (offsetMinutes === Math.min(...event.reminderOffsets)) {
-							// Soft-delete, not a generic update: under remote mode the server's PATCH endpoint
-							// does not accept `active` in the field whitelist (the soft-delete is its own DELETE
-							// route). deleteInGuild routes to the right endpoint for both modes.
-							await eventStore.deleteInGuild(event.eventId, event.guildId);
-						}
-					}
-				} else {
-					// ── recurring events (ruins, altar) ────────────────────
-					const [nextOccurrence] = getUpcomingOccurrences(event, 1);
-					if (!nextOccurrence) continue;
-
-					const { mergedEvent, fireMoment } = await resolveOverride(event, nextOccurrence);
-
-					for (const offsetMinutes of event.reminderOffsets) {
-						const reminderTime = new Date(fireMoment.getTime() - offsetMinutes * 60 * 1000);
-						const diff = reminderTime.getTime() - now.getTime();
-
-						if (diff < 0 || diff > BOT_CONSTANTS.REMINDER_FIRE_WINDOW_MS) continue;
-
-						// Same rationale as the one-time branch: dedup keys on
-						// the original computed occurrence, not on the override
-						// moment. See resolveOverride above.
-						const alreadyFired = await reminderStore.exists({
-							eventId: event.eventId,
-							eventOccurrence: nextOccurrence,
-							offsetMinutes,
-						});
-						if (alreadyFired) continue;
-
-						try {
-							await fireReminder(client, mergedEvent, fireMoment, offsetMinutes);
-							recordFireSuccess();
-						} catch (err) {
-							recordFireFailure();
-							console.error(LOG_MESSAGES.api.errorTestReminder ?? "fireReminder failed", err);
-						}
-					}
-				}
-			}
+			await runEventsForTick(client, events);
 		} catch (error) {
 			console.error(LOG_MESSAGES.scheduler.tickError, error);
 		} finally {
@@ -435,6 +435,164 @@ export function startScheduler(client: Client): void {
 			reminderTickInProgress = false;
 		}
 	}));
+}
+
+// ── one tick's events ────────────────────────────────────────────────
+// Every active event of every guild this tick reads, each in its own try. One event's
+// failure (a Mongo blip on its dedup read, the platform refusing its soft delete) used to
+// throw out of the whole loop, so every event after it, in every guild, missed that minute
+// and, since a reminder qualifies on so few ticks, often missed its reminder for good.
+// Exported for the scheduler's tests; the cron tick is its one production caller.
+export async function runEventsForTick(client: Client, events: IGameEvent[]): Promise<void> {
+	for (const event of events) {
+		try {
+			await processEventForTick(client, event);
+		} catch (error) {
+			console.error("[scheduler] an event failed this tick; the rest carry on", { guildId: event.guildId, eventId: event.eventId, error });
+		}
+	}
+}
+
+/**
+ * Whether a reminder due at `reminderTime` fires on a tick at `now`: from one fire window
+ * before it is due until REMINDER_LATE_GRACE_MS after, so a tick that was skipped, slow or
+ * lost to a redeploy is caught up on the next one. The ReminderLog dedup row is what keeps
+ * the several ticks this spans from firing it more than once.
+ */
+export function isReminderDue(reminderTime: Date, now: Date): boolean {
+	const diff = reminderTime.getTime() - now.getTime();
+	return diff >= -BOT_CONSTANTS.REMINDER_LATE_GRACE_MS && diff <= BOT_CONSTANTS.REMINDER_FIRE_WINDOW_MS;
+}
+
+// One event's share of a tick: auto resume, the season end, and every reminder now due.
+async function processEventForTick(client: Client, event: IGameEvent): Promise<void> {
+	const now = new Date();
+
+	// ── auto-resume from paused ──────────────────────────────
+	// Run BEFORE the paused skip check so a pause whose timer
+	// just expired resumes on this same tick instead of waiting
+	// one more cycle (a 60s delay is fine, but it would also
+	// silently delay the very first reminder if the next
+	// occurrence is also overdue, the cleaner contract is
+	// "auto-resume always wins on the tick it fires"). Both
+	// fields are cleared so the event behaves as if pause never
+	// happened: ReminderScheduler can fire, ScheduleBoard drops
+	// the paused tag on its next refresh.
+	if (event.paused && event.pausedUntil && now.getTime() >= new Date(event.pausedUntil).getTime()) {
+		await eventStore.updateInGuild(event.eventId, event.guildId, { paused: false, pausedUntil: null });
+		event.paused = false;
+		event.pausedUntil = null;
+		// fall through into the rest of the loop
+	}
+
+	// ── paused ───────────────────────────────────────────────
+	// Streamers (and anyone else) can pause an event from the
+	// dashboard or via /events pause. Paused events stay in
+	// the DB, still render on the schedule board (with a
+	// "paused" tag rendered by ScheduleBoard), still appear in
+	// /event-list, they simply skip the fire decision until
+	// /events resume flips paused back to false.
+	//
+	// Why this lives BEFORE the seasonEnd check: a paused
+	// event whose seasonEnd happens to pass while it is paused
+	// should NOT auto archive. The streamer paused on purpose;
+	// archiving behind their back would silently destroy the
+	// schedule they configured. Skipping the whole loop body
+	// keeps both the season-end branch and the fire branch
+	// inert until they explicitly resume.
+	if (event.paused) return;
+
+	// ── season ended ─────────────────────────────────────────
+	// Skip the season-end branch entirely for events without a
+	// seasonEnd (regular announcements, announcementType
+	// "regular"). Without this guard, new Date(null) becomes
+	// 1970-01-01 and every regular event would get archived
+	// and "season ended" announced on the very next tick. The
+	// happy path (legacy KvK events with a real Date) is
+	// unchanged.
+	if (event.seasonEnd && now > new Date(event.seasonEnd)) {
+		// Soft-delete, not a generic update: under remote mode the server's PATCH endpoint
+		// does not accept `active` in the field whitelist (the soft-delete is its own DELETE
+		// route). deleteInGuild routes to the right endpoint for both modes.
+		await eventStore.deleteInGuild(event.eventId, event.guildId);
+		await announceSeasonEnd(client, event);
+		return;
+	}
+
+	if (event.type === "one-time") {
+		// ── one-time events (kau karuak difficulties) ───────────
+		// Override resolution runs ONCE per event per tick (outside
+		// the offsets loop) so we don't pay an extra Mongo round-trip
+		// per offset. The merged event flows into fireReminder; the
+		// fireMoment shifts the reminder-window math.
+		const { mergedEvent, fireMoment } = await resolveOverride(event, event.firstOccurrence);
+
+		for (const offsetMinutes of event.reminderOffsets) {
+			const reminderTime = new Date(fireMoment.getTime() - offsetMinutes * 60 * 1000);
+
+			if (!isReminderDue(reminderTime, now)) continue;
+
+			// Dedup key remains the ORIGINAL firstOccurrence so an
+			// override applied between cron ticks cannot bypass an
+			// already-fired reminder. The compound index
+			// (eventId, eventOccurrence, offsetMinutes) anchors on
+			// the schedule's source of truth, not the override.
+			const alreadyFired = await reminderStore.exists({
+				eventId: event.eventId,
+				eventOccurrence: event.firstOccurrence,
+				offsetMinutes,
+			});
+			if (alreadyFired) continue;
+
+			// Wrap fire in success/failure metrics. fireReminder swallows its own
+			// Discord errors (channel missing, permission denied), so we only see
+			// throws on truly unexpected failures, but counting both branches
+			// gives operators a real signal in the hourly metric log.
+			try {
+				await fireReminder(client, mergedEvent, fireMoment, offsetMinutes, event.firstOccurrence);
+				recordFireSuccess();
+			} catch (err) {
+				recordFireFailure();
+				console.error(LOG_MESSAGES.api.errorTestReminder ?? "fireReminder failed", err);
+			}
+
+			// deactivate after the last reminder fires
+			// so it doesn't keep getting checked every tick
+			if (offsetMinutes === Math.min(...event.reminderOffsets)) {
+				// Soft-delete, not a generic update: under remote mode the server's PATCH endpoint
+				// does not accept `active` in the field whitelist (the soft-delete is its own DELETE
+				// route). deleteInGuild routes to the right endpoint for both modes.
+				await eventStore.deleteInGuild(event.eventId, event.guildId);
+			}
+		}
+	} else {
+		// ── recurring events (ruins, altar) ────────────────────
+		for (const { originalOccurrence, mergedEvent, fireMoment } of await recurringFireCandidates(event, now)) {
+			for (const offsetMinutes of event.reminderOffsets) {
+				const reminderTime = new Date(fireMoment.getTime() - offsetMinutes * 60 * 1000);
+
+				if (!isReminderDue(reminderTime, now)) continue;
+
+				// Same rationale as the one-time branch: dedup keys on
+				// the original computed occurrence, not on the override
+				// moment. See resolveOverride above.
+				const alreadyFired = await reminderStore.exists({
+					eventId: event.eventId,
+					eventOccurrence: originalOccurrence,
+					offsetMinutes,
+				});
+				if (alreadyFired) continue;
+
+				try {
+					await fireReminder(client, mergedEvent, fireMoment, offsetMinutes, originalOccurrence);
+					recordFireSuccess();
+				} catch (err) {
+					recordFireFailure();
+					console.error(LOG_MESSAGES.api.errorTestReminder ?? "fireReminder failed", err);
+				}
+			}
+		}
+	}
 }
 
 // ── stopScheduler ────────────────────────────────────────────────────
@@ -481,7 +639,7 @@ export async function announceSeasonEnd(client: Client, event: IGameEvent): Prom
 		// `create()` write key off the same Date object. Without this
 		// shared reference, a future refactor that mutates event.seasonEnd
 		// between the two reads (or moves the truthy guard) could land
-		// `eventOccurrence: 1970-01-01` on the create — silently
+		// `eventOccurrence: 1970-01-01` on the create, silently
 		// breaking dedup since 1970-01-01 is a fixed-point epoch zero
 		// every guild would collide on.
 		const seasonEndDate = new Date(event.seasonEnd);
@@ -507,7 +665,7 @@ export async function announceSeasonEnd(client: Client, event: IGameEvent): Prom
 		//        circuits the channel.send.
 		// Where: the loop in startReminderScheduler() is sequential
 		//        (for-of with await), so the first call's create() lands
-		//        before the second call's exists() runs — no TOCTOU race
+		//        before the second call's exists() runs, no TOCTOU race
 		//        within a single tick. Across ticks, the record persists
 		//        in reminderStore so the second tick is also a no-op.
 		// How:   prefix "season-end:" + event.guildId. The "season-end:"
@@ -535,7 +693,7 @@ export async function announceSeasonEnd(client: Client, event: IGameEvent): Prom
 		//        duplicate for a silent miss: a Discord 5xx or
 		//        permission change after the row lands blocks every
 		//        retry on subsequent ticks and the season-end is
-		//        skipped without a user-visible signal — a worse
+		//        skipped without a user-visible signal, a worse
 		//        failure mode.
 		// When:  the crash window between these two awaits is
 		//        sub-second on a healthy host, so a duplicate is the

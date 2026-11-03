@@ -1,0 +1,651 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+// Dero's variant lines always pick the first, so these tests read exact words.
+// The shoe shuffles with secureRandom (2026-10 item 276, D15); routed through Math.random here so
+// the Math.random spies below still stack the deal.
+vi.mock("@utils/secureRng.js", () => ({ secureRandom: () => Math.random() }));
+vi.mock("@utils/pickLine.js", () => ({ pickLine: <Line>(lines: readonly Line[]): Line => lines[0] as Line }));
+import type { ButtonInteraction, Client, TextChannel } from "discord.js";
+
+// ── a room's Blackjack table plays for a bankroll (2026-10 item 267) ──────────
+// What is pinned here is the handler's half of the owner's decisions: every hand opens on its
+// betting turns, a settle pays the bets into the stacks and writes them to the row, a broke seat
+// is out, Leave cashes a seat out at once and only once, the turn clock bets the smallest choice
+// or stands, a free table never reaches a wallet, and the room finishes once, paying its coins
+// once, when nobody is left. The payout arithmetic itself is pinned in blackjackState.test.ts;
+// each shoe below is stacked so the hand it deals is known.
+
+const roomRow = vi.hoisted(() => ({ current: null as Record<string, unknown> | null, duringRead: [] as (null | (() => Promise<unknown>))[] }));
+const moves = vi.hoisted(() => ({ recorded: [] as { actorId: string; kind: string; text: string }[] }));
+vi.mock("@db/stores/gameRoomStore.js", () => ({
+	gameRoomStore: {
+		// `duringRead` runs inside one chosen read, to land a member's move in the window a
+		// clock spends awaiting the row (2026-10 item 276).
+		findByRoomId: vi.fn(async () => {
+			const hook = roomRow.duringRead.shift();
+			if (hook) await hook();
+			return roomRow.current;
+		}),
+		appendMove: vi.fn(async (_guildId: string, _roomId: string, move: { actorId: string; kind: string; text: string }) => {
+			moves.recorded.push(move);
+		}),
+	},
+}));
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn(async () => null) } }));
+// The ledger writes and claims have their own suite (blackjackChips.test.ts) and the restart over
+// them runs end to end in challengeBoard.rematch.test.ts; here they are what the handler asks for.
+vi.mock("@features/game-rooms/blackjackChips.js", () => ({ cashOutBlackjackSeat: vi.fn(async () => true), saveBlackjackStacks: vi.fn(async () => undefined) }));
+vi.mock("@features/game-rooms/roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn(async () => true) } }));
+vi.mock("@features/game-rooms/turnPrompt.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("@features/game-rooms/turnPrompt.js")>()), syncTurnPrompt: vi.fn(async () => undefined) }));
+vi.mock("@utils/answerInChannel.js", () => ({ answerInChannel: vi.fn(async () => undefined), beginChannelAnswer: vi.fn() }));
+vi.mock("./gameXp.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./gameXp.js")>()), awardBlackjackResult: vi.fn(), awardBlackjackTableCoins: vi.fn() }));
+// The rating write has its own suite (recordMatchRatings.test.ts); here it is what the end asks for.
+vi.mock("@features/ratings/recordMatchRatings.js", () => ({ recordHouseTableRatings: vi.fn(async () => undefined) }));
+// A shared table's open card (2026-10 item 276, D14) has its own suite (challengeCard); here it is what the table asks for.
+vi.mock("@features/game-rooms/challengeCard.js", () => ({ refreshTableCard: vi.fn(async () => undefined) }));
+vi.mock("./blackjackRenderer.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("./blackjackRenderer.js")>()),
+	renderBlackjackTableCard: vi.fn(async () => null),
+	renderBlackjackResultCard: vi.fn(async () => null),
+}));
+
+import {
+	_activeBlackjackGameCount,
+	_blackjackTableOf,
+	_clearBlackjackGames,
+	blackjackTurnAdapter,
+	confirmBlackjackLeave,
+	holdLateSeat,
+	lateSeatRefusalOf,
+	leaveBlackjackRoomSeat,
+	payLateSeat,
+	sharedTableSeatsOf,
+	startBlackjackTable,
+} from "./blackjackHandler.js";
+import { refreshTableCard } from "@features/game-rooms/challengeCard.js";
+import type { Card, Rank } from "./blackjackState.js";
+import { gamesCopy } from "./gamesCopy.js";
+import { awardBlackjackResult, awardBlackjackTableCoins } from "./gameXp.js";
+import { cashOutBlackjackSeat, saveBlackjackStacks } from "@features/game-rooms/blackjackChips.js";
+import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
+import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
+import { _resetDrawingPauses } from "@features/game-rooms/drawingPause.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { recordHouseTableRatings } from "@features/ratings/recordMatchRatings.js";
+
+const ALICE = { userId: "alice", username: "Alice" };
+const BOB = { userId: "bob", username: "Bob" };
+const CHIP_TABLE = { buyIn: 1000, chips: true };
+const FREE_TABLE = { buyIn: 1000, chips: false };
+const roomOf = { channelId: "ch-1", roomId: "room-1", guildId: "g1" } as never;
+const ROOM = { channelId: "ch-1", roomId: "room-1", guildId: "g1" };
+
+const saveMock = saveBlackjackStacks as unknown as ReturnType<typeof vi.fn>;
+const cashOutMock = cashOutBlackjackSeat as unknown as ReturnType<typeof vi.fn>;
+const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
+const coinsMock = awardBlackjackTableCoins as unknown as ReturnType<typeof vi.fn>;
+const rateMock = recordHouseTableRatings as unknown as ReturnType<typeof vi.fn>;
+
+// A room channel that keeps its messages, hears every board through one collector, and is
+// the channel the trail resolves.
+function fakeRoom() {
+	let collect: ((click: unknown) => void) | undefined;
+	let end: (() => void) | undefined;
+	let counter = 0;
+	const messages: Array<{ id: string; payload: Record<string, unknown> }> = [];
+	const client = { channels: { fetch: vi.fn(async () => channel) } } as unknown as Client;
+	const channel: Record<string, unknown> = {
+		id: "ch-1",
+		client,
+		isTextBased: () => true,
+		isDMBased: () => false,
+		isSendable: () => true,
+		createMessageComponentCollector: () => {
+			const collector = {
+				on(event: string, listener: (arg: unknown) => void) {
+					if (event === "collect") collect = listener;
+					else end = listener as () => void;
+					return collector;
+				},
+				// As discord.js does: stopping a collector runs its end handler, the table's one cleanup.
+				stop: () => end?.(),
+			};
+			return collector;
+		},
+		send: vi.fn(async (payload: Record<string, unknown>) => {
+			const message = {
+				id: `m${++counter}`,
+				channelId: "ch-1",
+				payload,
+				get embeds() {
+					return (message.payload.embeds as unknown[]) ?? [];
+				},
+				attachments: new Map(),
+				channel,
+				client,
+				edit: vi.fn(async (edit: Record<string, unknown>) => {
+					message.payload = { ...message.payload, ...edit };
+					return message;
+				}),
+			};
+			messages.push(message);
+			return message;
+		}),
+		messages: { fetch: vi.fn(async (id: string) => messages.find((message) => message.id === id) ?? null) },
+	};
+	return { channel: channel as unknown as TextChannel, client, click: (fake: unknown) => collect?.(fake) };
+}
+
+// A press of a board button: a notice can open from it, and its update acknowledges it.
+function press(action: string, userId: string, client: Client = {} as Client) {
+	const click = {
+		id: `press-${action}-${userId}`,
+		customId: `minigame:blackjack:ch-1:${action}`,
+		user: { id: userId, username: userId, globalName: userId },
+		client,
+		deferred: false,
+		replied: false,
+		isMessageComponent: () => true,
+		isModalSubmit: () => false,
+		update: vi.fn(async () => undefined),
+		editReply: vi.fn(async () => undefined),
+		deferUpdate: vi.fn(async () => undefined),
+		reply: vi.fn(async () => undefined),
+		showModal: vi.fn(async () => undefined),
+		followUp: vi.fn(async () => undefined),
+	};
+	return click;
+}
+
+const cards = (ranks: Rank[]): Card[] => ranks.map((rank) => ({ rank, suit: "S" }));
+const table = () => {
+	const live = _blackjackTableOf("ch-1");
+	if (!live) throw new Error("no table in ch-1");
+	return live;
+};
+const bet = (userId: string, amount: number) => blackjackTurnAdapter.apply({} as never, roomOf, userId, { bet: String(amount) }, async () => undefined);
+const act = (userId: string, move: string) => blackjackTurnAdapter.apply({} as never, roomOf, userId, { move }, async () => undefined);
+const lastStacks = () => saveMock.mock.calls.filter((call) => (call[1] as unknown[]).length > 0).at(-1)?.[1];
+
+// Leave at a chip table asks first (2026-10 item 276, D6 and D9): the press opens the confirm,
+// and its Submit, which the game room confirms route to confirmBlackjackLeave, takes the seat off.
+async function leaveAndConfirm(room: ReturnType<typeof fakeRoom>, userId: string) {
+	const leave = press("leave", userId, room.client);
+	room.click(leave);
+	await vi.waitFor(() => expect(leave.showModal).toHaveBeenCalled());
+	const submit = press("bleaveok", userId, room.client);
+	await confirmBlackjackLeave(submit as never, "ch-1");
+	return { leave, submit };
+}
+const modalText = (click: ReturnType<typeof press>): string => JSON.stringify((click.showModal.mock.calls as unknown[][]).map((call) => (call[0] as { toJSON(): unknown }).toJSON()));
+const flush = async () => {
+	for (let i = 0; i < 20; i++) await Promise.resolve();
+};
+
+beforeEach(() => {
+	_clearBlackjackGames();
+	_resetDrawingPauses();
+	vi.clearAllMocks();
+	moves.recorded = [];
+	roomRow.current = { ...ROOM, game: "blackjack", status: "playing" };
+	roomRow.duringRead = [];
+	finishMock.mockResolvedValue(true);
+	cashOutMock.mockResolvedValue(true);
+	vi.spyOn(Math, "random").mockReturnValue(0.5);
+});
+
+afterEach(() => {
+	_clearBlackjackGames();
+	vi.restoreAllMocks();
+	vi.useRealTimers();
+});
+
+describe("a two seat chip table, hand after hand", () => {
+	it("bets, pays 1 to 1, 3 to 2 and a push into the stacks, puts a broke seat out, and cashes the last seat out once", async () => {
+		const room = fakeRoom();
+		expect(await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [BOB], CHIP_TABLE)).toBe("started");
+		expect(table().phase).toBe("betting");
+
+		// Hand 1: Alice 19 beats the dealer's 18 for 1 to 1, Bob is dealt a natural for 3 to 2.
+		table().shoe = cards(["10", "A", "10", "9", "K", "8"]);
+		expect(await bet(ALICE.userId, 100)).toEqual({ ok: true });
+		expect(await bet(BOB.userId, 50)).toEqual({ ok: true });
+		expect(await act(ALICE.userId, "stand")).toEqual({ ok: true });
+		expect(lastStacks()).toEqual([
+			{ userId: ALICE.userId, stack: 1100 },
+			{ userId: BOB.userId, stack: 1075 },
+		]);
+		expect(table().handNumber).toBe(2);
+
+		// Hand 2: everyone holds 18, so both bets push back.
+		table().shoe = cards(["10", "10", "10", "8", "8", "8"]);
+		await bet(ALICE.userId, 250);
+		await bet(BOB.userId, 100);
+		await act(ALICE.userId, "stand");
+		await act(BOB.userId, "stand");
+		expect(lastStacks()).toEqual([
+			{ userId: ALICE.userId, stack: 1100 },
+			{ userId: BOB.userId, stack: 1075 },
+		]);
+
+		// Hand 3: Alice goes all in on 16 and loses it; Bob's 19 wins.
+		table().shoe = cards(["10", "10", "10", "6", "9", "8"]);
+		await bet(ALICE.userId, 1100);
+		await bet(BOB.userId, 50);
+		await act(ALICE.userId, "stand");
+		await act(BOB.userId, "stand");
+		expect(lastStacks()).toEqual([
+			{ userId: ALICE.userId, stack: 0 },
+			{ userId: BOB.userId, stack: 1125 },
+		]);
+		expect(table().seats[0].out).toBe("broke");
+		expect(moves.recorded.map((move) => move.text)).toContain(gamesCopy.blackjack.brokeTrail(ALICE.userId));
+		// Hand 4 waits on Bob alone.
+		expect(blackjackTurnAdapter.whoseTurn(roomOf)).toBe(BOB.userId);
+
+		// XP per hand, and no coins until the room ends.
+		expect(awardBlackjackResult).toHaveBeenCalledTimes(3);
+		expect(vi.mocked(awardBlackjackResult).mock.calls.every((call) => call[0].coinsPerHand === false)).toBe(true);
+		expect(coinsMock).not.toHaveBeenCalled();
+
+		// Bob leaves: his stack goes back to his wallet at once, through the ledger claim, once.
+		const { submit } = await leaveAndConfirm(room, BOB.userId);
+		await vi.waitFor(() => expect(finishMock).toHaveBeenCalledOnce());
+		expect(cashOutMock).toHaveBeenCalledOnce();
+		expect(cashOutMock).toHaveBeenCalledWith(ROOM, BOB.userId, 1125);
+		expect(answerInChannel).toHaveBeenCalledWith(submit, "here", { content: gamesCopy.blackjack.leftWithChips(1125) });
+
+		// The room finishes once, naming the one member who ended above the buy in, and pays its coins once.
+		expect(finishMock.mock.calls[0][2]).toEqual({ winnerId: BOB.userId });
+		expect(coinsMock).toHaveBeenCalledOnce();
+		expect(coinsMock).toHaveBeenCalledWith({
+			guildId: "g1",
+			game: "blackjack",
+			roomId: "room-1",
+			stacks: [
+				{ userId: ALICE.userId, buyIn: 1000, stack: 0 },
+				{ userId: BOB.userId, buyIn: 1000, stack: 1125 },
+			],
+		});
+		// Rated once against the house (2026-10 item 276, D8): each seat by its stack against its
+		// buy in, Bob's at the stack his Leave cashed out.
+		expect(rateMock).toHaveBeenCalledOnce();
+		expect(rateMock).toHaveBeenCalledWith(
+			roomRow.current,
+			[
+				{ userId: ALICE.userId, net: -1000 },
+				{ userId: BOB.userId, net: 125 },
+			],
+			[],
+			{ rated: true }
+		);
+		expect(_activeBlackjackGameCount()).toBe(0);
+	});
+
+	it("cashes a seat that leaves mid table out once, and the table plays on without it", async () => {
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [BOB], CHIP_TABLE);
+		table().shoe = cards(["10", "10", "10", "6", "7", "8"]);
+		await bet(ALICE.userId, 100);
+		await bet(BOB.userId, 100);
+
+		// Bob leaves with a hand in play: the confirm names the 900 he takes and nothing moves
+		// before Submit; then the bet on the hand is lost and the rest of his stack goes home.
+		const leave = press("leave", BOB.userId, room.client);
+		room.click(leave);
+		await vi.waitFor(() => expect(leave.showModal).toHaveBeenCalled());
+		expect(modalText(leave)).toContain(JSON.stringify(gameRoomsCopy.confirms.leaveBlackjackTable(900)).slice(1, -1));
+		expect(cashOutMock).not.toHaveBeenCalled();
+		await confirmBlackjackLeave(press("bleaveok", BOB.userId, room.client) as never, "ch-1");
+		expect(cashOutMock).toHaveBeenCalledOnce();
+		expect(cashOutMock).toHaveBeenCalledWith(ROOM, BOB.userId, 900);
+
+		// A second Submit (the fallback reply's button, say) finds the seat gone and cashes nothing.
+		await confirmBlackjackLeave(press("bleaveok", BOB.userId, room.client) as never, "ch-1");
+
+		const again = press("leave", BOB.userId, room.client);
+		room.click(again);
+		await flush();
+		expect(cashOutMock).toHaveBeenCalledOnce();
+		expect(finishMock).not.toHaveBeenCalled();
+		expect(blackjackTurnAdapter.whoseTurn(roomOf)).toBe(ALICE.userId);
+	});
+
+	// A member who leaves the server (2026-10 item 276, audit P1-4) leaves through the same seat
+	// leave their Leave plays: cashed out once, and the table goes on for the rest. The watcher
+	// used to finish the whole room instead.
+	it("takes a seat whose member left the server off the table exactly as their Leave would", async () => {
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [BOB], CHIP_TABLE);
+		table().shoe = cards(["10", "10", "10", "6", "7", "8"]);
+		await bet(ALICE.userId, 100);
+		await bet(BOB.userId, 100);
+
+		expect(await leaveBlackjackRoomSeat("ch-1", BOB.userId)).toBe(true);
+		expect(cashOutMock).toHaveBeenCalledWith(ROOM, BOB.userId, 900);
+		expect(moves.recorded).toContainEqual(expect.objectContaining({ actorId: BOB.userId, kind: "forfeit" }));
+
+		expect(await leaveBlackjackRoomSeat("ch-1", BOB.userId)).toBe(false);
+		expect(cashOutMock).toHaveBeenCalledOnce();
+		expect(finishMock).not.toHaveBeenCalled();
+		expect(blackjackTurnAdapter.whoseTurn(roomOf)).toBe(ALICE.userId);
+	});
+
+	it("ends the table when the last seat's member leaves the server", async () => {
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [], CHIP_TABLE);
+
+		expect(await leaveBlackjackRoomSeat("ch-1", ALICE.userId)).toBe(true);
+
+		await vi.waitFor(() => expect(finishMock).toHaveBeenCalledOnce());
+		expect(cashOutMock).toHaveBeenCalledWith(ROOM, ALICE.userId, 1000);
+		// No hand settled, so opening a ranked table and leaving it moves no rating.
+		expect(rateMock).toHaveBeenCalledWith(roomRow.current, [{ userId: ALICE.userId, net: 0 }], [], { rated: false });
+	});
+
+	it("leaves nothing when this process holds no table for the channel", async () => {
+		expect(await leaveBlackjackRoomSeat("ch-gone", ALICE.userId)).toBe(false);
+		expect(cashOutMock).not.toHaveBeenCalled();
+	});
+
+	it("pays no coins when the room was already finished another way", async () => {
+		const room = fakeRoom();
+		finishMock.mockResolvedValue(false);
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [], CHIP_TABLE);
+		await leaveAndConfirm(room, ALICE.userId);
+		await vi.waitFor(() => expect(finishMock).toHaveBeenCalledOnce());
+		expect(coinsMock).not.toHaveBeenCalled();
+		expect(rateMock).not.toHaveBeenCalled();
+	});
+});
+
+describe("a free table", () => {
+	it("plays the same hands on a pretend stack and never reaches a wallet", async () => {
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [], FREE_TABLE);
+		table().shoe = cards(["10", "10", "9", "8"]);
+		await bet(ALICE.userId, 50);
+		await act(ALICE.userId, "stand");
+
+		expect(table().seats[0].stack).toBe(1050);
+		// The stacks are never written for a free table, only when a member last acted.
+		expect(saveMock.mock.calls.every((call) => (call[1] as unknown[]).length === 0)).toBe(true);
+		room.click(press("leave", ALICE.userId, room.client));
+		await vi.waitFor(() => expect(finishMock).toHaveBeenCalledOnce());
+		expect(cashOutMock).not.toHaveBeenCalled();
+	});
+});
+
+// At a room table Leave sits on the turn line, so a press that drew through the click would turn
+// the acting seat's line into a board with no moves (2026-10 item 280).
+describe("a free table seat leaving on another seat's turn", () => {
+	it("redraws the board itself and leaves the pressed turn line alone", async () => {
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [BOB], FREE_TABLE);
+		table().shoe = cards(["10", "10", "10", "6", "7", "8"]);
+		await bet(ALICE.userId, 100);
+		await bet(BOB.userId, 100);
+		expect(table().turn).toBe(0);
+
+		const leave = press("leave", BOB.userId, room.client);
+		room.click(leave);
+		await vi.waitFor(() => expect(leave.deferUpdate).toHaveBeenCalled());
+		await flush();
+		expect(table().seats[1].out).toBe("left");
+		expect(leave.update).not.toHaveBeenCalled();
+		expect(leave.editReply).not.toHaveBeenCalled();
+		expect(leave.showModal).not.toHaveBeenCalled();
+	});
+});
+
+describe("the turn clock", () => {
+	const CLOCK = BOT_CONSTANTS.BLACKJACK_TURN_TIMEOUT_MS;
+
+	it("bets the smallest choice when a betting turn runs out and stands when an action turn does, neither counting as the member acting", async () => {
+		vi.useFakeTimers();
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [BOB], FREE_TABLE);
+		table().shoe = cards(["10", "10", "10", "6", "7", "8"]);
+		const openedAt = saveMock.mock.calls[0][2] as Date;
+
+		await vi.advanceTimersByTimeAsync(CLOCK - 1_000);
+		expect(table().seats[0].bet).toBe(0);
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(table().seats[0].bet).toBe(50);
+		await vi.advanceTimersByTimeAsync(CLOCK);
+		expect(table().phase).toBe("playing");
+
+		await vi.advanceTimersByTimeAsync(CLOCK);
+		expect(table().seats[0].hands[0].status).toBe("stood");
+		await vi.advanceTimersByTimeAsync(CLOCK);
+		expect(table().handNumber).toBe(2);
+
+		const words = gameRoomsCopy.turnBoard;
+		const lines = moves.recorded.map((move) => move.text);
+		expect(lines).toContain(words.blackjackTimedOutBet(ALICE.userId, 50));
+		expect(lines).toContain(words.blackjackTimedOutStand(ALICE.userId, "16"));
+		// Every write of when a member last acted still names the table's open.
+		expect(saveMock.mock.calls.every((call) => call[2] === openedAt)).toBe(true);
+	});
+
+	// The shared turn clock (2026-10 item 267, decision 15) warns before the table's own timeout.
+	const LEAD = BOT_CONSTANTS.TURN_WARNING_LEAD_MS;
+	const sentLines = (room: ReturnType<typeof fakeRoom>, line: string) =>
+		(room.channel.send as unknown as ReturnType<typeof vi.fn>).mock.calls.filter((call) => (call[0] as { content?: string }).content === line);
+
+	it("warns the seat on the clock once, ten seconds before its turn runs out, pinging only that seat", async () => {
+		vi.useFakeTimers({ now: Date.UTC(2026, 9, 29, 12, 0, 0) });
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [BOB], FREE_TABLE);
+		const warning = gameRoomsCopy.turnClock.warningLine[0](ALICE.userId, LEAD / 1000);
+
+		await vi.advanceTimersByTimeAsync(CLOCK - LEAD - 1);
+		expect(sentLines(room, warning)).toHaveLength(0);
+		await vi.advanceTimersByTimeAsync(1);
+		const warned = sentLines(room, warning);
+		expect(warned).toHaveLength(1);
+		expect((warned[0][0] as { allowedMentions: unknown }).allowedMentions).toEqual({ users: [ALICE.userId] });
+		expect(table().seats[0].bet).toBe(0);
+
+		// The turn ends at the deadline through the table's own timeout, and the warning stays one.
+		await vi.advanceTimersByTimeAsync(LEAD);
+		expect(table().seats[0].bet).toBe(50);
+		expect(sentLines(room, warning)).toHaveLength(1);
+	});
+
+	it("never warns or times out a seat whose turn was played first", async () => {
+		vi.useFakeTimers({ now: Date.UTC(2026, 9, 29, 12, 0, 0) });
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [BOB], FREE_TABLE);
+		await vi.advanceTimersByTimeAsync(60_000);
+		await bet(ALICE.userId, 100);
+		await flush();
+
+		await vi.advanceTimersByTimeAsync(CLOCK - 60_000);
+		expect(sentLines(room, gameRoomsCopy.turnClock.warningLine[0](ALICE.userId, LEAD / 1000))).toHaveLength(0);
+		expect(table().seats[0].bet).toBe(100);
+		// Bob's betting turn started with Alice's bet and has its own full clock.
+		expect(sentLines(room, gameRoomsCopy.turnClock.warningLine[0](BOB.userId, LEAD / 1000))).toHaveLength(0);
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(sentLines(room, gameRoomsCopy.turnClock.warningLine[0](BOB.userId, LEAD / 1000))).toHaveLength(1);
+	});
+
+	it("stops a table whose room was finished another way instead of playing on in it", async () => {
+		vi.useFakeTimers();
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [], FREE_TABLE);
+		roomRow.current = { ...ROOM, game: "blackjack", status: "finished" };
+
+		await vi.advanceTimersByTimeAsync(CLOCK);
+
+		expect(_activeBlackjackGameCount()).toBe(0);
+		expect(moves.recorded).toEqual([]);
+	});
+});
+
+// ── a turn is claimed once (2026-10 item 276, audit P2-12 and the turn clock P3) ──
+describe("claiming a turn", () => {
+	it("plays a double pressed Hit once: the second press meets a passed turn", async () => {
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [], FREE_TABLE);
+		// Alice 2 and 3 against the dealer's 10 and 7, then small cards, so no hit can end the hand.
+		table().shoe = cards(["2", "10", "3", "7", "2", "2", "2"]);
+		await bet(ALICE.userId, 100);
+		const turn = blackjackTurnAdapter.fingerprintOf(roomOf);
+		expect(turn).toMatch(/^j1\./);
+		// Both presses passed the turn line's check on the same turn, then awaited their acknowledgement.
+		let release = (): void => undefined;
+		const acknowledged = new Promise<void>((resolve) => (release = resolve));
+		const first = blackjackTurnAdapter.apply({} as never, roomOf, ALICE.userId, { move: "hit" }, () => acknowledged, turn!);
+		const second = blackjackTurnAdapter.apply({} as never, roomOf, ALICE.userId, { move: "hit" }, () => acknowledged, turn!);
+		release();
+
+		const results = await Promise.all([first, second]);
+
+		expect(results).toEqual([{ ok: true }, { ok: false, reason: gameRoomsCopy.turnPrompt.turnPassed }]);
+		expect(table().seats[0].hands[0].cards).toHaveLength(3);
+	});
+
+	it("still plays the next press, made on the turn the first one opened", async () => {
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [], FREE_TABLE);
+		table().shoe = cards(["2", "10", "3", "7", "2", "2", "2"]);
+		await bet(ALICE.userId, 100);
+		await blackjackTurnAdapter.apply({} as never, roomOf, ALICE.userId, { move: "hit" }, async () => undefined, blackjackTurnAdapter.fingerprintOf(roomOf)!);
+
+		const next = await blackjackTurnAdapter.apply({} as never, roomOf, ALICE.userId, { move: "hit" }, async () => undefined, blackjackTurnAdapter.fingerprintOf(roomOf)!);
+
+		expect(next).toEqual({ ok: true });
+		expect(table().seats[0].hands[0].cards).toHaveLength(4);
+	});
+
+	it("never bets for the next seat when the counted seat bet while the clock read the row", async () => {
+		vi.useFakeTimers();
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [BOB], FREE_TABLE);
+		await vi.advanceTimersByTimeAsync(BOT_CONSTANTS.BLACKJACK_TURN_TIMEOUT_MS - 1);
+		// At the deadline the shared clock reads the row first, then the table's own timeout reads
+		// it again to see the room still plays; Alice's bet lands inside that second read.
+		roomRow.duringRead = [null, () => bet(ALICE.userId, 100)];
+
+		await vi.advanceTimersByTimeAsync(1);
+
+		expect(table().seats[0].bet).toBe(100);
+		expect(table().seats[1].bet).toBe(0);
+		expect(moves.recorded.map((move) => move.text)).not.toContain(gameRoomsCopy.turnBoard.blackjackTimedOutBet(BOB.userId, 50));
+	});
+});
+
+// A click from a member on a board button reaches the collector the room table wired on its channel.
+it("answers a Leave from somebody with no seat with a notice, and moves nothing", async () => {
+	const room = fakeRoom();
+	await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [], CHIP_TABLE);
+	const stranger = press("leave", "stranger", room.client);
+	room.click(stranger as unknown as ButtonInteraction);
+	await flush();
+	expect(stranger.showModal.mock.calls.length + stranger.reply.mock.calls.length).toBe(1);
+	expect(cashOutMock).not.toHaveBeenCalled();
+});
+
+// ── a ranked table is shared (2026-10 item 276, owner decisions D14 and D16) ──────────────────
+// A member who presses Join on the open card holds a seat here, synchronously, before any chip
+// moves (blackjackLateSeat charges and writes the ledger between the hold and payLateSeat); a
+// paid seat is dealt in at the next hand's bets, never mid hand, and a table whose last seat
+// leaves deals on for a seat that waited.
+describe("late seats at a shared table", () => {
+	const CAROL = { userId: "carol", username: "Carol" };
+	const DAVE = { userId: "dave", username: "Dave" };
+	const ERIN = { userId: "erin", username: "Erin" };
+	const FRANK = { userId: "frank", username: "Frank" };
+	const cardMock = refreshTableCard as unknown as ReturnType<typeof vi.fn>;
+	const shared = (room: ReturnType<typeof fakeRoom>, others = [BOB]) => startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", others, CHIP_TABLE, false, true);
+	const seatIds = () => table().seats.map((seat) => seat.userId);
+
+	it("deals a paid late seat in at the next hand's bets, never the hand in play, and rates it on its own hands", async () => {
+		const room = fakeRoom();
+		await shared(room);
+		expect(holdLateSeat("ch-1", CAROL)).toEqual({ ok: true, buyIn: 1000, chips: true });
+		expect(payLateSeat("ch-1", CAROL.userId, room.client)).toBe(true);
+		await flush();
+		// The open card shows the seat at once, three of five.
+		expect(cardMock).toHaveBeenLastCalledWith(room.client, roomRow.current, { userIds: [ALICE.userId, BOB.userId, CAROL.userId], max: 5 });
+
+		table().shoe = cards(["10", "10", "10", "9", "7", "8"]);
+		await bet(ALICE.userId, 100);
+		await bet(BOB.userId, 100);
+		// Hand 1 is in play without Carol.
+		expect(seatIds()).toEqual([ALICE.userId, BOB.userId]);
+		await act(ALICE.userId, "stand");
+		await act(BOB.userId, "stand");
+
+		// Hand 2 opens on its bets with Carol seated last, at the buy in.
+		expect(seatIds()).toEqual([ALICE.userId, BOB.userId, CAROL.userId]);
+		expect(table().seats[2]).toMatchObject({ stack: 1000, out: null });
+		expect(moves.recorded.map((move) => move.text)).toContain(gamesCopy.blackjack.lateSeatDealtTrail(CAROL.userId));
+
+		// Everyone leaves before Carol plays a hand: she is rated on her own hands, so she is left out.
+		await leaveBlackjackRoomSeat("ch-1", ALICE.userId);
+		await leaveBlackjackRoomSeat("ch-1", BOB.userId);
+		await leaveBlackjackRoomSeat("ch-1", CAROL.userId);
+		await vi.waitFor(() => expect(rateMock).toHaveBeenCalledOnce());
+		expect(rateMock.mock.calls[0][2]).toEqual([CAROL.userId]);
+		expect(rateMock.mock.calls[0][3]).toEqual({ rated: true });
+	});
+
+	it("refuses a second hold, a full table, a member who played here before and a table that takes no late seats", async () => {
+		const room = fakeRoom();
+		await shared(room, [BOB, CAROL, DAVE]);
+		expect(holdLateSeat("ch-1", ERIN).ok).toBe(true);
+		// A double press meets the hold before any chip moves.
+		expect(holdLateSeat("ch-1", ERIN)).toEqual({ ok: false, refusal: "alreadySeated" });
+		expect(holdLateSeat("ch-1", FRANK)).toEqual({ ok: false, refusal: "full" });
+		expect(lateSeatRefusalOf("ch-1", ALICE.userId)).toBe("alreadySeated");
+		await leaveBlackjackRoomSeat("ch-1", DAVE.userId);
+		expect(lateSeatRefusalOf("ch-1", DAVE.userId)).toBe("alreadyPlayed");
+		expect(sharedTableSeatsOf("ch-1")).toEqual({ userIds: [ALICE.userId, BOB.userId, CAROL.userId, ERIN.userId], max: 5 });
+
+		_clearBlackjackGames();
+		const casual = fakeRoom();
+		await startBlackjackTable(casual.channel, "g1", ALICE, true, "room-1", [BOB], CHIP_TABLE);
+		expect(holdLateSeat("ch-1", ERIN)).toEqual({ ok: false, refusal: "noTable" });
+		expect(sharedTableSeatsOf("ch-1")).toBeNull();
+	});
+
+	it("gives a late seat that leaves before its first hand its whole buy in back, with no confirm", async () => {
+		const room = fakeRoom();
+		await shared(room);
+		holdLateSeat("ch-1", CAROL);
+		payLateSeat("ch-1", CAROL.userId, room.client);
+
+		const leave = press("leave", CAROL.userId, room.client);
+		room.click(leave);
+		await vi.waitFor(() => expect(cashOutMock).toHaveBeenCalledOnce());
+		expect(cashOutMock).toHaveBeenCalledWith(ROOM, CAROL.userId, 1000);
+		expect(leave.showModal).not.toHaveBeenCalled();
+		await vi.waitFor(() => expect(answerInChannel).toHaveBeenCalledWith(leave, "here", { content: gamesCopy.blackjack.leftWithChips(1000) }));
+		expect(sharedTableSeatsOf("ch-1")?.userIds).toEqual([ALICE.userId, BOB.userId]);
+	});
+
+	it("deals on for a late seat that waited when every seat leaves during the bets (D16)", async () => {
+		const room = fakeRoom();
+		await shared(room);
+		holdLateSeat("ch-1", CAROL);
+		payLateSeat("ch-1", CAROL.userId, room.client);
+
+		await leaveBlackjackRoomSeat("ch-1", ALICE.userId);
+		await leaveBlackjackRoomSeat("ch-1", BOB.userId);
+
+		expect(finishMock).not.toHaveBeenCalled();
+		expect(table().phase).toBe("betting");
+		expect(blackjackTurnAdapter.whoseTurn(roomOf)).toBe(CAROL.userId);
+	});
+
+	it("ends the table when its last seat leaves and only an unpaid hold waits, and refuses to pay that hold after", async () => {
+		const room = fakeRoom();
+		await shared(room, []);
+		holdLateSeat("ch-1", CAROL);
+		await leaveBlackjackRoomSeat("ch-1", ALICE.userId);
+		await vi.waitFor(() => expect(finishMock).toHaveBeenCalledOnce());
+		expect(payLateSeat("ch-1", CAROL.userId, room.client)).toBe(false);
+	});
+});

@@ -1,0 +1,43 @@
+name: CI
+
+# The bot had no CI. Lint is advisory until the first run shows how much debt it carries, then
+# drop continue-on-error. A known flaky Monopoly bot turn test is recorded in TECH_DEBT.md; a red
+# test step is read against that entry before it is treated as a regression. The bot deploys
+# manually (npm run deploy registers slash commands), so this workflow ships nothing.
+
+on:
+  push:
+    branches: [staging, master]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Rule 1 of the platform CLAUDE.md: no em dash or en dash in anything written. Only ADDED
+      # lines are checked, so text that predates the rule cannot turn this gate permanently red.
+      # Byte patterns under LC_ALL=C because the runner locale is not guaranteed to be UTF-8.
+      - name: No dashes in added lines
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE="$(git rev-list --max-parents=0 HEAD | tail -1)"
+          fi
+          if git diff -U0 "$BASE" HEAD -- . ':(exclude)package-lock.json' \
+            | grep -E '^\+' | grep -v '^+++' | LC_ALL=C grep -P '\xE2\x80\x94|\xE2\x80\x93'; then
+            echo "::error::An em dash or en dash was added. Rewrite the sentence without it."
+            exit 1
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run lint
+        continue-on-error: true
+      - run: npx tsc --noEmit
+      - run: npm test

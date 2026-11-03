@@ -1,9 +1,11 @@
-import { SlashCommandBuilder, MessageFlags, type ChatInputCommandInteraction } from "discord.js";
+import { SlashCommandBuilder, type ChatInputCommandInteraction } from "discord.js";
 import { redeemCode } from "@features/fortune/secretCodes.js";
 import { secretCodeCopy } from "@features/fortune/fortuneCopy.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /secret-code ───────────────────────────────────────────────────────────
-// Redeem a secret phrase for a PERMANENT luck buff on /fortune. Open to every
+// Redeem a secret phrase for a PERMANENT fortune luck buff. Open to every
 // member (deliberately NOT in BOT_CONSTANTS.ADMIN_COMMANDS): the launch code is
 // public and the rarer ones are meant to be hunted or handed out. Every reply is
 // ephemeral, so a code and its outcome are seen only by the person redeeming and
@@ -31,5 +33,5 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 				? secretCodeCopy.granted(outcome.percent)
 				: secretCodeCopy.unchanged(outcome.percent);
 
-	await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+	await showNotice(interaction, { title: getPluginCopy(null).notice.secretCode, sections: [content] });
 }

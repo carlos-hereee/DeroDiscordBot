@@ -1,6 +1,10 @@
 import { Client, Events, DMChannel, NonThreadGuildBasedChannel, GuildChannel, CategoryChannel, ChannelType } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { finish as finishGameRoom } from "@features/game-rooms/roomLifecycle.js";
+import { NON_TERMINAL_ROOM_STATUSES } from "@features/game-rooms/roomTypes.js";
 import { GuildSetupManager } from "./GuildSetupManager.js";
+import { isRetiredAdminControls } from "./retireAdminControls.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 
 // ── ChannelDeleteWatcher ──────────────────────────────────────────────
@@ -36,8 +40,12 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 //        ⑦ delegate to GuildSetupManager.repairOneChannel, then call
 //           GuildSetupManager.postRepairNotices for the single repaired
 //           channel so the inner sanctum gets the audit line.
-//        Errors after the cooldown gate are logged and swallowed — the
+//        Errors after the cooldown gate are logged and swallowed, the
 //        gateway connection must never crash because of a repair fault.
+//        ⚠️ A SECOND ChannelDelete LISTENER EXISTS ON PURPOSE: satelliteSeats
+//        seats out the players of a network table's satellite channel when it
+//        is deleted (2026-10 item 244 Phase 5a). Satellites are not rooms of
+//        their guild, so this watcher's room lookup never finds one.
 
 // ── cooldown map ──────────────────────────────────────────────────────
 // Key format: `${guildId}:${configField}`. configField is the GuildConfig
@@ -71,6 +79,46 @@ export function registerChannelDeleteWatcher(client: Client): void {
 			const stored = await guildConfigStore.findByGuildId(guild.id);
 			if (!stored) return;
 
+			// 🎛️admin-controls is deleted on purpose by the boot sweep (retireAdminControls,
+			// 2026-10 item 263 Phase 4a), and the event can arrive before the sweep clears
+			// its stored id. It is no room and no managed slot any more: no repair, no line.
+			if (isRetiredAdminControls(stored as unknown as Record<string, unknown>, channel.id)) return;
+
+			// ── risk R14: the deleted channel was a live GAME ROOM ──
+			// What:  finish the room as abandoned and stop, before any homebase logic.
+			// Why:   a room channel is NOT a CHANNEL_SPECS entry, so without this the
+			//        spec lookup below would simply find nothing and return, silently.
+			//        Nothing would ever finish the row, and because the partial unique
+			//        index counts non-terminal statuses, that dead row would hold its
+			//        host's ONE room slot forever: that member could never start another
+			//        game, everyone else would be fine, and no error would be raised
+			//        anywhere. The boot sweep catches it, but only on the next restart.
+			// Where: deliberately ABOVE the autoHealEnabled and homebaseDestroyed gates
+			//        rather than beside the spec lookup. Those two govern whether the bot
+			//        REBUILDS a channel, which is a different question from whether its
+			//        own room bookkeeping stays true. A guild with auto-heal off still
+			//        wants its rooms closed out, and /self-destruct deletes room channels
+			//        along with everything else, which is exactly when a pile of rooms
+			//        needs finishing.
+			const liveRoom = await gameRoomStore.findByChannelId(guild.id, channel.id).catch(() => null);
+			// A finished room is no abandonment: roomLifecycle.archiveRoom deletes the
+			// channel BEFORE markArchived clears channelId, so every normal archive (and a
+			// self destruct sweeping finished rooms) lands here with the row still pointing
+			// at the channel. Only a room still holding its host's slot (draft, open or
+			// playing) is closed, so the abandonment line means a real one. The room's
+			// channel is never a managed slot either, so it stops here too.
+			if (liveRoom && !(NON_TERMINAL_ROOM_STATUSES as readonly string[]).includes(liveRoom.status)) return;
+			if (liveRoom) {
+				console.log(`[realtime-repair] channel ${channel.id} in guild ${guild.id} was a game room; closing it as abandoned.`);
+				// finish() looks the channel up itself, finds it gone, and simply stamps
+				// the row. No rebuild, ever: a room is a per-match channel, not a managed
+				// slot, and recreating it would resurrect a match nobody is playing.
+				await finishGameRoom(client, liveRoom, { abandoned: true }).catch((error) =>
+					console.error("[realtime-repair] failed to close abandoned game room", { roomId: liveRoom.roomId, error })
+				);
+				return;
+			}
+
 			// auto-heal toggle gate. when off, the admin has explicitly
 			// opted out of automatic channel rebuilds. log a single
 			// line citing the toggle so the admin can find it again,
@@ -79,40 +127,44 @@ export function registerChannelDeleteWatcher(client: Client): void {
 			// the admin's decision.
 			if (!stored.autoHealEnabled) {
 				console.log(
-					`[realtime-repair] skipped channel delete in guild ${guild.id} because autoHealEnabled is false; run /configure-auto-heal enabled:True to resume.`
+					`[realtime-repair] skipped channel delete in guild ${guild.id} because autoHealEnabled is false; run /server auto-heal enabled:True to resume.`
 				);
 				return;
 			}
 
 			// self-destruct gate. demolishHomebase sets homebaseDestroyed=true
 			// BEFORE deleting any channel, so this fires for every channel it
-			// removes — skip rebuild so the teardown is not undone mid-demolish.
+			// removes, skip rebuild so the teardown is not undone mid-demolish.
 			// Run /setup to rebuild. The boot sweep honors the same flag.
-			if (stored.homebaseDestroyed) {
-				console.log(
-					`[realtime-repair] skipped channel delete in guild ${guild.id} because the homebase was self-destructed; run /setup to rebuild.`
-				);
-				return;
-			}
+			// Silent on purpose: a self destruct deletes every managed channel at once, and
+			// a line per channel buried the boot log (2026-10 item 257, Log 5).
+			// demolishHomebase in selfDestruct.ts prints the one summary line instead.
+			if (stored.homebaseDestroyed) return;
 
 			// ③ match the deleted channel id to one of the six homebase fields.
-			//    also short circuit if the deleted channel IS the category —
+			//    also short circuit if the deleted channel IS the category,
 			//    that is a full rebuild case and we leave it to the boot sweep
 			//    so we do not fight an admin who is intentionally removing
 			//    the bot.
-			if (channel.id === stored.categoryId) {
+			// EITHER managed category counts. The arcade category has to be named
+			// explicitly here: it is not a CHANNEL_SPECS entry, so without this
+			// check its delete would fall through to the spec lookup below, match
+			// nothing, and return silently as if it were an unrelated channel.
+			// Recognising it is what produces the honest log line, and the boot
+			// sweep is what rebuilds it.
+			const storedIds = stored as unknown as Record<string, string | null | undefined>;
+			// 🏰 DERO HEADQUARTERS (2026-10 item 257 Phase 2a) is the third, for the same reason.
+			if (channel.id === stored.categoryId || channel.id === storedIds.gamesCategoryId || channel.id === storedIds.headquartersCategoryId) {
 				console.warn(LOG_MESSAGES.setup.realtimeRepairCategoryGone(guild.id));
 				return;
 			}
 
-			const spec = GuildSetupManager.CHANNEL_SPECS.find(
-				(s) => (stored as unknown as Record<string, string | null | undefined>)[s.configField] === channel.id
-			);
+			const spec = GuildSetupManager.CHANNEL_SPECS.find((s) => storedIds[s.configField] === channel.id);
 			if (!spec) return; // not a homebase channel
 
 			// per-channel user-removed gate. when the admin explicitly removed
 			// THIS specific slot via a slash command's follow-up button (eg
-			// /configure-leaderboard-tracking → Remove leaderboard channel),
+			// /server leaderboard tracking → Remove leaderboard channel),
 			// the configField is in userRemovedChannels and we skip rebuild
 			// even though autoHealEnabled is on. This supersedes auto-heal at
 			// the slot level. The boot sweep honors the same flag. Defense
@@ -141,12 +193,25 @@ export function registerChannelDeleteWatcher(client: Client): void {
 
 			console.log(LOG_MESSAGES.setup.realtimeRepairStarted(spec.displayName, guild.id));
 
-			// ⑤ verify category still exists. if the admin just nuked the
-			//    whole category the child channel delete events will fire
-			//    alongside the category delete — we do NOT want to rebuild
+			// ⑤ verify THIS SPEC'S category still exists. if the admin just nuked
+			//    the whole category the child channel delete events will fire
+			//    alongside the category delete, we do NOT want to rebuild
 			//    child channels under a dead category. let ensureHomebase
 			//    handle the full rebuild on next wake.
-			const category = await guild.channels.fetch(stored.categoryId).catch(() => null);
+			//
+			// ⚠️ RESOLVED FROM spec.categoryField, NOT from stored.categoryId. This
+			// is risk R2 in its realtime form and it is the more surprising half:
+			// the boot sweep at least walks specs in a loop, whereas this path
+			// looks like it is handling "the" category. Before this, deleting
+			// ⚔️challenges fetched the HOMEBASE category, found it alive, and
+			// rebuilt the arcade channel under 🪧 NOTICE BOARD. Nothing throws, and
+			// the misplaced channel then poisons the adopt-before-build scan.
+			//
+			// Reading the spec's own field also fixes the inverse case for free: if
+			// the arcade category is gone, its id fetches to null and we correctly
+			// decline to rebuild its children under anything.
+			const parentId = storedIds[spec.categoryField];
+			const category = parentId ? await guild.channels.fetch(parentId).catch(() => null) : null;
 			if (!category || category.type !== ChannelType.GuildCategory) {
 				console.warn(LOG_MESSAGES.setup.realtimeRepairCategoryGone(guild.id));
 				return;
@@ -154,7 +219,7 @@ export function registerChannelDeleteWatcher(client: Client): void {
 
 			// ⑥ ownership probe. Refuse repair ONLY when the homebase is positively
 			//    foreign (anchor authored by a different bot). "unknown" (missing or
-			//    deleted anchor) proceeds to repair — same rule as the boot sweep, so
+			//    deleted anchor) proceeds to repair, same rule as the boot sweep, so
 			//    a deleted schedule message never blocks a legitimate channel repair.
 			const ownership = await GuildSetupManager.isHomebaseOwnedByThisBot(client, guild.id, stored);
 			if (ownership === "foreign") {
@@ -186,7 +251,7 @@ export function registerChannelDeleteWatcher(client: Client): void {
 			repairCooldowns.set(cooldownKey, Date.now());
 			console.log(LOG_MESSAGES.setup.realtimeRepairCompleted(spec.displayName, guild.id));
 		} catch (error) {
-			// best effort. never crash the gateway listener — an unhandled
+			// best effort. never crash the gateway listener, an unhandled
 			// throw here propagates through discord.js and can wedge other
 			// event handlers. log and move on; boot sweep will catch any
 			// repair that could not land at runtime.

@@ -1,4 +1,4 @@
-import { ChatInputCommandInteraction } from "discord.js";
+import type { RepliableInteraction } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -7,6 +7,8 @@ import { v4 } from "uuid";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 interface IKvKSeasonInput {
 	seasonEnd: Date;
@@ -21,7 +23,7 @@ interface IKvKSeasonInput {
 
 	// What:  optional admin-authored preparation checklist that overrides the
 	//        per-event-type defaults baked into rok-events.json.
-	// Who:   /configure-kvk-season command, populated only when the admin
+	// Who:   /events kvk-season command, populated only when the admin
 	//        picks "Customize" in the post confirmation button flow.
 	// When:  undefined means "use each event type's default prepSteps from
 	//        rok-events.json." A non-empty array means "apply this exact list
@@ -36,13 +38,18 @@ interface IKvKSeasonInput {
 	customChecklist?: readonly string[];
 }
 
+/** Where configureKvKSeason's one result line goes: the caller's prompt, or the interaction's own reply. */
+export type KvKSeasonReport = (answer: { content: string }) => Promise<unknown>;
+
 export class GuildEventManager {
-	static async configureKvKSeason(interaction: ChatInputCommandInteraction, input: IKvKSeasonInput): Promise<void> {
+	// `report` defaults to the interaction's own reply; /events kvk-season passes the edit of
+	// its prompt, which posts in 🛠️server-config (2026-10 item 257 Phase 5).
+	static async configureKvKSeason(interaction: RepliableInteraction, input: IKvKSeasonInput, report: KvKSeasonReport = (answer) => interaction.editReply(answer)): Promise<void> {
 		try {
 			const guildId = interaction.guildId!;
 
 			// read the announcements channel once for the reply footer. the
-			// event rows themselves do not store a channelId anymore — that
+			// event rows themselves do not store a channelId anymore, that
 			// would freeze the channel into stale data if the admin later
 			// reconfigures the home base. ReminderJob reads GuildConfig fresh
 			// every tick.
@@ -57,14 +64,14 @@ export class GuildEventManager {
 			//        announcementType is "kvk", and by the health endpoint that
 			//        the EventCreatePage hits to enable / disable the KvK
 			//        toggle.
-			// When:  every /configure-kvk-season invocation overwrites this so
+			// When:  every /events kvk-season invocation overwrites this so
 			//        rerunning the slash command rolls the season forward in a
 			//        single transaction with the new event rows below.
 			// Where: GuildConfig is created during /setup (autoSetup), so the
 			//        update path here always finds an existing row. If config
-			//        is missing we still proceed with event creation — the
+			//        is missing we still proceed with event creation, the
 			//        rest of the slash command was already tolerant of that
-			//        edge — but log it so the field gap is visible.
+			//        edge, but log it so the field gap is visible.
 			// How:   fire and forget at this point would race with the dashboard
 			//        reading the value moments later. Awaiting the update keeps
 			//        the slash command response and the cached value in lock
@@ -104,17 +111,17 @@ export class GuildEventManager {
 			//        any currently-active KvK events in this guild whose
 			//        name matches one of the rok-events.json canonical
 			//        names. Without this step, a second run of
-			//        /configure-kvk-season for a new season simply
+			//        /events kvk-season for a new season simply
 			//        accumulates duplicates: the bot then ends up with
 			//        TWO active "Ancient Ruins" documents, fires reminders
 			//        twice per cycle, and the schedule board shows two
 			//        rows that confuse members.
-			// Who:   the admin who re-runs /configure-kvk-season at the
+			// Who:   the admin who re-runs /events kvk-season at the
 			//        start of every new season. Streamer events created
-			//        via /configure-stream-schedule are NOT touched —
+			//        via /events stream weekly are NOT touched,
 			//        the seasonEnd != null filter excludes them because
 			//        streamer schedules leave seasonEnd null by design.
-			// When:  exactly once per /configure-kvk-season invocation,
+			// When:  exactly once per /events kvk-season invocation,
 			//        before any of the create loops run. Soft-delete is
 			//        idempotent: events already inactive stay inactive
 			//        (the store's update is a no-op on already-flipped
@@ -129,7 +136,7 @@ export class GuildEventManager {
 			//          this guild. ③ filter to those with a name match
 			//          AND a non-null seasonEnd (the KvK marker). ④ soft-
 			//          delete each via eventStore.deleteInGuild. Failures
-			//          are logged but do not abort the season setup —
+			//          are logged but do not abort the season setup,
 			//          a stale duplicate is less harmful than failing to
 			//          configure the new season.
 			const kvkNames = new Set(rokEvents.events.map((e) => e.name));
@@ -149,21 +156,26 @@ export class GuildEventManager {
 				{ key: "altar_of_darkness", firstOccurrence: input.altarFirst },
 			];
 
+			// `eventDefinition`, not `config`: this is a row from the static
+			// rokEvents catalog (name, cadence, prep steps), a different thing
+			// entirely from the guild's GuildConfig read as `config` above. The
+			// two shared a name until 2026-08-08, which read as if the loop were
+			// reassigning the guild settings.
 			for (const { key, firstOccurrence } of recurringEvents) {
-				const config = rokEvents.events.find((e) => e.key === key)!;
+				const eventDefinition = rokEvents.events.find((e) => e.key === key)!;
 
 				await eventStore.create({
-					name: config.name,
+					name: eventDefinition.name,
 					description: "",
 					type: "recurring",
-					intervalHours: config.intervalHours,
+					intervalHours: eventDefinition.intervalHours,
 					firstOccurrence,
 					seasonEnd: input.seasonEnd,
 					reminderOffsets: [...BOT_CONSTANTS.DEFAULT_REMINDER_OFFSETS],
-					// channelId intentionally omitted — falls back to
+					// channelId intentionally omitted, falls back to
 					// guildConfig.announcementsChannelId at fire time
 					guildId,
-					prepSteps: resolvePrepSteps(config),
+					prepSteps: resolvePrepSteps(eventDefinition),
 					active: true,
 				});
 			}
@@ -176,40 +188,44 @@ export class GuildEventManager {
 				{ key: "kau_karuak_nightmare", date: input.kauNightmare },
 			];
 
+			// Same rename and same reason as the recurring loop above: a catalog
+			// row, not the guild's config.
 			for (const { key, date } of kauOccurrences) {
-				const config = rokEvents.events.find((e) => e.key === key)!;
+				const eventDefinition = rokEvents.events.find((e) => e.key === key)!;
 
 				await eventStore.create({
-					name: config.name,
+					name: eventDefinition.name,
 					description: "",
 					type: "one-time",
 					intervalHours: 0,
 					firstOccurrence: date,
 					seasonEnd: input.seasonEnd,
 					reminderOffsets: [...BOT_CONSTANTS.DEFAULT_REMINDER_OFFSETS],
-					// channelId intentionally omitted — see note above
+					// channelId intentionally omitted, see note above
 					guildId,
-					prepSteps: resolvePrepSteps(config),
+					prepSteps: resolvePrepSteps(eventDefinition),
 					active: true,
 				});
 			}
 
-			await interaction.editReply({
+			await report({
 				content: rokCommanderCopy.responses.kvkConfigured(
 					Math.floor(input.seasonEnd.getTime() / 1000),
 					announcementsChannelId
 				),
 			});
 
+			adminLog.emitFor(interaction, guildId, "event.create", { subject: setupCopy.adminLog.kvkSeason, detail: setupCopy.adminLog.created });
+
 			// refresh the pinned schedule board now that events exist. fire
-			// and forget — the admin's reply has already gone out and the
+			// and forget, the admin's reply has already gone out and the
 			// schedule is eventually consistent via the hourly safety tick.
 			refreshSchedule(interaction.client, guildId).catch((err) =>
 				console.error(LOG_MESSAGES.schedule.refreshAfterConfigureFailed, err)
 			);
 		} catch (error) {
 			console.error(LOG_MESSAGES.guildEvent.configureKvkFailed, error);
-			await interaction.editReply({
+			await report({
 				content: rokCommanderCopy.responses.kvkConfigureFailed,
 			});
 		}

@@ -27,7 +27,7 @@ import { buildScheduleControlRow } from "@features/schedule/ScheduleControls.js"
 
 /**
  * Refresh the schedule board for a single guild. Safe to call fire and
- * forget — swallows any error and logs it. Returns nothing.
+ * forget, swallows any error and logs it. Returns nothing.
  */
 export async function refreshSchedule(client: Client, guildId: string): Promise<void> {
 	try {
@@ -36,7 +36,7 @@ export async function refreshSchedule(client: Client, guildId: string): Promise<
 		if (config?.homebaseDestroyed) return;
 		if (!config?.scheduleChannelId) {
 			// guild has not finished its home base build yet. silent bail is
-			// correct — autoSetup will take care of this state transition.
+			// correct, autoSetup will take care of this state transition.
 			return;
 		}
 
@@ -65,7 +65,7 @@ export async function refreshSchedule(client: Client, guildId: string): Promise<
 		// When:  null when the guild has zero KvK events (regular-announcements
 		//        guild) or a fully-ended season (kvkEvents already swept).
 		//        scheduleBoardEmbed treats null as "omit the banner".
-		// How:   earliest is a defensive choice. /configure-kvk-season writes
+		// How:   earliest is a defensive choice. /events kvk-season writes
 		//        the same seasonEnd to every event, but if a future flow allows
 		//        per-event season extensions the earliest still represents the
 		//        season anchor every event respects.
@@ -130,7 +130,7 @@ function toField(event: IGameEvent): IScheduleField {
 	// Regular announcements have no seasonEnd, so we omit the timestamp
 	// (null). Retained for backwards compatibility with consumers that
 	// still read seasonEndTs per row, but the schedule embed no longer
-	// renders it in row bodies — the banner moved to the description.
+	// renders it in row bodies, the banner moved to the description.
 	const seasonEndTs = event.seasonEnd ? Math.floor(new Date(event.seasonEnd).getTime() / 1000) : null;
 
 	const firstOccurrenceMs = new Date(event.firstOccurrence).getTime();
@@ -138,7 +138,7 @@ function toField(event: IGameEvent): IScheduleField {
 	// What:  partitions one-time events into "active" (date still future) and
 	//        "completed" (date passed) so scheduleBoardEmbed can render them
 	//        in separate blocks. Recurring events are NEVER completed within
-	//        a live season — they recur forever until seasonEnd swaps the
+	//        a live season, they recur forever until seasonEnd swaps the
 	//        whole board into the season-ended state.
 	// When:  evaluated on every refresh tick against Date.now(). A one-time
 	//        event flips from active to completed the moment its
@@ -157,10 +157,10 @@ function toField(event: IGameEvent): IScheduleField {
 		seasonEndTs,
 		// Forward the live paused flag straight to the embed builder.
 		// Coerce the Mongoose-inferred `boolean | null | undefined` down
-		// to a clean boolean so IScheduleField stays narrow — the embed
+		// to a clean boolean so IScheduleField stays narrow, the embed
 		// builder never needs to distinguish "false" from "unset". All
 		// three falsy states map to "not paused", which matches how the
-		// scheduler and /pause-schedule both interpret the field.
+		// scheduler and /events pause both interpret the field.
 		paused: event.paused === true,
 		firstOccurrenceTs: Math.floor(firstOccurrenceMs / 1000),
 		isCompleted,
@@ -231,7 +231,7 @@ async function postOrEdit(
 			// What: the whole homebase in this guild's GuildConfig belongs to
 			//       a different bot (rotated token, stale data from a sibling
 			//       environment, or a prior shared-DB era). the bot must NOT
-			//       post in that channel — that would pollute the other bot's
+			//       post in that channel, that would pollute the other bot's
 			//       home base.
 			// Who:  detected by author mismatch on the stored scheduleMessageId
 			//       (either pre-check or Discord 50005).
@@ -264,7 +264,7 @@ async function postOrEdit(
 	}
 
 	// No pin: the schedule channel is read-only, so the board stays put without one
-	// (2026-06 pinning policy — only the member-writable introductions channel is
+	// (2026-06 pinning policy, only the member-writable introductions channel is
 	// pinned, where member chatter would otherwise bury a message).
 	await guildConfigStore.update(guildId, { scheduleMessageId: message.id });
 }
@@ -273,7 +273,7 @@ async function postOrEdit(
 // What: recovery from the "GuildConfig in my DB points to a homebase that
 //       is no longer ours" state. Runs autoSetup with force:true so a fresh
 //       category and channels owned by THIS bot are built. Critically does
-//       NOT call deleteByGuildId — in the shared MongoDB cluster scenario
+//       NOT call deleteByGuildId, in the shared MongoDB cluster scenario
 //       (dev and prod bots pointed at the same collection) that delete
 //       would nuke the other bot's row. Foreign rows are never touched.
 // Who:  called from postOrEdit when the stored schedule message is authored
@@ -282,7 +282,7 @@ async function postOrEdit(
 // When: rare. only fires when DB data is stale against reality (rotated
 //       bot account, cross-environment seeding, manual DB edits, or two
 //       bots sharing a Mongo collection).
-// Where: leaves the OLD category/channels in Discord untouched — they
+// Where: leaves the OLD category/channels in Discord untouched, they
 //        belong to the other bot and we have no right to delete them.
 //        the new category picks up the "(dev)" suffix automatically via
 //        GuildSetupManager.resolveCategoryName when NODE_ENV=development.
@@ -291,11 +291,13 @@ async function postOrEdit(
 //        updates it in place with the new channel ids. If the row is
 //        foreign (shared cluster), autoSetup will hit the duplicate-key
 //        guard on its insert path and bail loudly without overwriting.
-//        Either branch keeps prod state safe.
+//        Either branch keeps prod state safe. foreignHomebase, because this only
+//        runs when another bot authored the board: every channel is built new
+//        and none of that bot's is kept (2026-10 item 273, D1).
 async function rebuildHomebase(guild: TextChannel["guild"], guildId: string): Promise<void> {
 	try {
 		console.warn(LOG_MESSAGES.schedule.rebuildingHomebase(guildId));
-		await GuildSetupManager.autoSetup(guild, { guildId, ownerId: guild.ownerId }, { force: true });
+		await GuildSetupManager.autoSetup(guild, { guildId, ownerId: guild.ownerId }, { force: true, foreignHomebase: true });
 	} catch (error) {
 		console.error(LOG_MESSAGES.schedule.rebuildHomebaseFailed(guildId), error);
 	}

@@ -1,16 +1,19 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction, MessageFlags } from "discord.js";
+import { SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction, type EmbedBuilder } from "discord.js";
 import { activityStore } from "@db/stores/activityStore.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { leaderboardEmbed } from "@utils/embedBuilder.js";
 import { thisWeekRange, thisMonthRange, weekBoundaryTitle, type WeekStart } from "@features/leaderboard/leaderboardWindow.js";
+import { answerInChannel, type AnswerChannelConfig } from "@utils/answerInChannel.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /leaderboard ──────────────────────────────────────────────────────
 // What:  show participation rankings for an event or across every event
 //        the guild has run. Replaces the legacy "type an event id by hand"
 //        UX with an autocomplete dropdown that lists every event by name
 //        and offers an "All time" option at the top.
-// Who:   any member of the guild. Reads only — never mutates the activity
+// Who:   any member of the guild. Reads only, never mutates the activity
 //        store. Not admin-gated because mortals viewing their own
 //        ranking is the whole point of a leaderboard.
 // When:  on demand. Future enhancement: a LeaderboardBoard module will
@@ -42,7 +45,7 @@ const THIS_WEEK_SENTINEL = "__thisweek__";
 // reuses the same window math instead of forking a copy.
 
 // /leaderboard intentionally does NOT setDefaultMemberPermissions. As of
-// the 2026-04-24 public/admin command guide split it is a member command —
+// the 2026-04-24 public/admin command guide split it is a member command,
 // mortals viewing their own ranking is the whole point of a leaderboard
 // and the command only ever READS activity data. The admin-gate check in
 // main.ts's ADMIN_COMMANDS was also dropped for the same reason.
@@ -71,11 +74,11 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
 	// thing members want to scroll back through.
 	const events = await eventStore.findByGuildId(interaction.guildId);
 	// All time first so it is the default highlighted suggestion. Slice
-	// events to 24 instead of 25 to leave room for the sentinel — Discord's
+	// events to 24 instead of 25 to leave room for the sentinel, Discord's
 	// hard limit is 25 total autocomplete entries.
 	// Three rolling-window views at the top of the dropdown, then events by
 	// name. Slice events to 22 instead of 25 to leave room for the three
-	// sentinels — Discord's hard limit is 25 total autocomplete entries.
+	// sentinels, Discord's hard limit is 25 total autocomplete entries.
 	const choices = [
 		{ name: "🌟 All time (across all events)", value: ALL_TIME_SENTINEL },
 		{ name: "📅 This month", value: THIS_MONTH_SENTINEL },
@@ -88,7 +91,7 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
 export async function execute(interaction: ChatInputCommandInteraction) {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ content: "❌ Run this in a server, not a DM.", ephemeral: true });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["❌ Run this in a server, not a DM."] });
 		return;
 	}
 
@@ -137,7 +140,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
 		const records = await activityStore.findAllGroupedByPlayerInEvents(eventIds, dateRange);
 		if (!records.length) {
-			await interaction.reply({ content: emptyMessage, ephemeral: true });
+			await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: [emptyMessage] });
 			return;
 		}
 		const ranked = records.slice(0, 10).map(
@@ -148,23 +151,19 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 				totalAcknowledged: r.totalAcknowledged,
 			})
 		);
-		const embed = leaderboardEmbed(title, ranked, config);
-		await interaction.reply({
-			embeds: [embed],
-			flags: isPublic ? undefined : MessageFlags.Ephemeral,
-		});
+		await answerWithStandings(interaction, leaderboardEmbed(title, ranked, config), isPublic, config);
 		return;
 	}
 
 	// ── per-event branch ─────────────────────────────────────────
-	// findByIdInGuild scopes the lookup to this guild — works under both
+	// findByIdInGuild scopes the lookup to this guild, works under both
 	// the legacy local-DB path and the Future-A remote API path. eventValue
 	// here is a real eventId because the autocomplete dropdown handed it to
 	// the user; we still validate because nothing prevents a user from
 	// typing a free-form value into the field.
 	const event = await eventStore.findByIdInGuild(eventValue, guildId);
 	if (!event) {
-		await interaction.reply({ content: "❌ Event not found. Pick one from the dropdown.", ephemeral: true });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["❌ Event not found. Pick one from the dropdown."] });
 		return;
 	}
 
@@ -174,7 +173,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 	// two branches sharing one code path through the embed render.
 	const records = await activityStore.findAllGroupedByPlayerInEvents([event.eventId]);
 	if (!records.length) {
-		await interaction.reply({ content: "No activity recorded for this event yet.", ephemeral: true });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["No activity recorded for this event yet."] });
 		return;
 	}
 
@@ -187,10 +186,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 		})
 	);
 
-	const embed = leaderboardEmbed(event.name, ranked, config);
+	await answerWithStandings(interaction, leaderboardEmbed(event.name, ranked, config), isPublic, config);
+}
 
-	await interaction.reply({
-		embeds: [embed],
-		flags: isPublic ? undefined : MessageFlags.Ephemeral,
-	});
+// The standings: posted where the command ran when the member asked for a public answer,
+// and otherwise in 💬dero-commands (2026-10 item 257 Phase 5) instead of the private reply
+// they were, since a table with fields cannot ride a notice modal.
+async function answerWithStandings(interaction: ChatInputCommandInteraction, embed: EmbedBuilder, isPublic: boolean, config: AnswerChannelConfig | null): Promise<void> {
+	if (isPublic) {
+		await interaction.reply({ embeds: [embed] });
+		return;
+	}
+	await answerInChannel(interaction, "member", { embeds: [embed] }, { config });
 }

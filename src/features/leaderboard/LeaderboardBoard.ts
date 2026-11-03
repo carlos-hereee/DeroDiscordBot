@@ -6,6 +6,7 @@ import { leaderboardEmbed } from "@utils/embedBuilder.js";
 import { thisWeekRange, weekBoundaryTitle, type WeekStart } from "@features/leaderboard/leaderboardWindow.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { BOARD_POSTED, boardNotPosted, type BoardRefreshResult } from "@base/interfaces/IBoardRefreshResult.js";
 
 // ── LeaderboardBoard ──────────────────────────────────────────────────
 // Owns a single pinned message per guild in the leaderboard channel created
@@ -37,23 +38,24 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 /**
  * Refresh the leaderboard board for a single guild. Safe to call fire and
- * forget — swallows any error and logs it. Returns nothing.
+ * forget, swallows any error and logs it. Says whether the board was posted or
+ * edited, and why not when it was not; only Refresh standings reads that.
  */
-export async function refreshLeaderboard(client: Client, guildId: string): Promise<void> {
+export async function refreshLeaderboard(client: Client, guildId: string): Promise<BoardRefreshResult> {
 	try {
 		const config = await guildConfigStore.findByGuildId(guildId);
 		// self-destructed guild: homebase channels are gone, nothing to refresh.
-		if (config?.homebaseDestroyed) return;
+		if (config?.homebaseDestroyed) return boardNotPosted("homebase-destroyed");
 		if (!config?.leaderboardChannelId) {
 			// guild has not finished its home base build yet. silent bail is
-			// correct — autoSetup / ensureHomebase will take care of this state.
-			return;
+			// correct, autoSetup / ensureHomebase will take care of this state.
+			return boardNotPosted("not-set-up");
 		}
 
 		const channel = await client.channels.fetch(config.leaderboardChannelId).catch(() => null);
 		if (!channel || !(channel instanceof TextChannel)) {
 			console.error(LOG_MESSAGES.leaderboard.channelMissing(config.leaderboardChannelId, guildId));
-			return;
+			return boardNotPosted("channel-missing");
 		}
 
 		// Weekly window anchored to the guild's configured weekStart (Phase 1).
@@ -69,7 +71,7 @@ export async function refreshLeaderboard(client: Client, guildId: string): Promi
 		const eventIds = events.map((e) => e.eventId);
 		const records = await activityStore.findAllGroupedByPlayerInEvents(eventIds, range);
 
-		// Top 10, same shape /leaderboard renders. An empty list is fine — the
+		// Top 10, same shape /leaderboard renders. An empty list is fine, the
 		// embed builder renders the board's empty-state copy in that case.
 		const ranked = records.slice(0, 10).map(
 			(r: { username: string; totalScore: number; eventsAttended: number; totalAcknowledged: number }) => ({
@@ -82,9 +84,10 @@ export async function refreshLeaderboard(client: Client, guildId: string): Promi
 
 		const embed = leaderboardEmbed(weekBoundaryTitle(weekStart), ranked, config);
 
-		await postOrEdit(channel, config.leaderboardMessageId ?? null, embed, guildId);
+		return await postOrEdit(channel, config.leaderboardMessageId ?? null, embed, guildId);
 	} catch (error) {
 		console.error(LOG_MESSAGES.leaderboard.unexpectedError(guildId), error);
+		return boardNotPosted("unexpected-error");
 	}
 }
 
@@ -105,7 +108,7 @@ const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /**
  * Request a leaderboard refresh after activity, coalesced per guild. Safe to
- * call on every ✅ reaction / voice event — at most one refresh fires per
+ * call on every ✅ reaction / voice event, at most one refresh fires per
  * guild per LEADERBOARD_REFRESH_DEBOUNCE_MS window.
  */
 export function scheduleLeaderboardRefresh(client: Client, guildId: string): void {
@@ -132,7 +135,7 @@ async function postOrEdit(
 	existingMessageId: string | null,
 	embed: ReturnType<typeof leaderboardEmbed>,
 	guildId: string
-): Promise<void> {
+): Promise<BoardRefreshResult> {
 	// resolve our own bot id so the author guard below can compare cheaply.
 	const selfId = channel.client.user?.id;
 
@@ -145,17 +148,17 @@ async function postOrEdit(
 			// is stale (rotated token, cross-environment DB seeding, shared cluster).
 			// ScheduleBoard owns the heavyweight rebuildHomebase recovery; the
 			// leaderboard board must NOT trigger a second rebuild nor post into a
-			// foreign channel. Bail quietly — the next refresh after ScheduleBoard
+			// foreign channel. Bail quietly, the next refresh after ScheduleBoard
 			// has rebuilt the homebase will post a fresh board we own.
 			if (selfId && existing.author.id !== selfId) {
 				console.warn(LOG_MESSAGES.leaderboard.staleAuthor(existingMessageId, guildId));
-				return;
+				return boardNotPosted("foreign-message");
 			}
 
 			// Embed-only board: the Phase 5 power-up buttons live on a separate
 			// pinned message, so there are no components to reapply here.
 			await existing.edit({ embeds: [embed] });
-			return;
+			return BOARD_POSTED;
 		} catch (error) {
 			// 10008 Unknown Message → admin deleted it. 10003 Unknown Channel →
 			// channel was wiped. Both resolve the same way: drop into the post path
@@ -164,14 +167,14 @@ async function postOrEdit(
 				console.warn(LOG_MESSAGES.leaderboard.storedMessageDeleted(existingMessageId, guildId));
 			} else if (error instanceof DiscordAPIError && error.code === 50005) {
 				// cache race: the pre-check missed the author mismatch but Discord
-				// caught it on edit. Same posture as the pre-check — bail, do not
+				// caught it on edit. Same posture as the pre-check, bail, do not
 				// repost into a channel we may not own.
 				console.warn(LOG_MESSAGES.leaderboard.staleAuthor(existingMessageId, guildId));
-				return;
+				return boardNotPosted("foreign-message");
 			} else {
 				console.error(LOG_MESSAGES.leaderboard.editFailed(existingMessageId, guildId), error);
 				// unknown error: do not fall through. the next trigger retries.
-				return;
+				return boardNotPosted("edit-failed");
 			}
 		}
 	}
@@ -182,12 +185,13 @@ async function postOrEdit(
 		message = await channel.send({ embeds: [embed] });
 	} catch (error) {
 		console.error(LOG_MESSAGES.leaderboard.postFailed(guildId), error);
-		return;
+		return boardNotPosted("post-failed");
 	}
 
 	// No pin: the leaderboard channel is read-only, so the board stays put without
-	// one (2026-06 pinning policy — only the member-writable introductions channel
+	// one (2026-06 pinning policy, only the member-writable introductions channel
 	// is pinned).
 
 	await guildConfigStore.update(guildId, { leaderboardMessageId: message.id });
+	return BOARD_POSTED;
 }

@@ -13,10 +13,10 @@ import { createHmac } from "crypto";
 //   incurs one HTTPS round-trip to Heroku, so callers are responsible for caching when
 //   appropriate (the cron tick reads through remoteEventStore which has a 60s TTL).
 // Where: lives next to config.ts because it shares the same env vars (SERVER_BASE_URL,
-//   DASHBOARD_SIGNING_SECRET). No Discord types — pure HTTP.
+//   DASHBOARD_SIGNING_SECRET). No Discord types, pure HTTP.
 // How:
 //   ① Build the canonical string: METHOD\npath?sortedQuery\ntimestamp\nsha256(body).
-//      MUST match nexious-server/src/features/plugin-proxy/signRequest.ts byte-for-byte
+//      MUST match companyuno-server/nexious-server/src/features/plugin-proxy/signRequest.ts byte-for-byte
 //      because the server's verifyBotSignature recomputes the same string.
 //   ② HMAC-SHA256 with DASHBOARD_SIGNING_SECRET. Hex-encode for header transport.
 //   ③ fetch() the URL with x-timestamp + x-signature headers, plus the legacy
@@ -28,7 +28,7 @@ import { dashboardApiKey, dashboardSigningSecret } from "@utils/config.js";
 import { buildCanonicalString, hashBody } from "@utils/canonicalRequest.js";
 
 // Base URL of the nexious-server. Heroku in prod, localhost during dev. Empty when not
-// set — every call short-circuits to a "not configured" error so we never accidentally
+// set, every call short-circuits to a "not configured" error so we never accidentally
 // leak requests to a default URL.
 // Accept BOTH env names: the code historically read SERVER_BASE_URL, but both CLAUDE.md
 // files document the var as NEXIOUS_BASE_URL. Reading either prevents the remote-events
@@ -85,7 +85,7 @@ export class ServerNotConfiguredError extends Error {
 // ── Latency tracking ──
 // Per the F5 observability item: log p50/p95/p99 of outbound calls so we notice if the
 // cron tick (60s budget) is at risk of overruns. The ring buffer is per-process, so
-// restarts wipe it — fine for a single Railway dyno, would need shipping to a metrics
+// restarts wipe it, fine for a single Railway dyno, would need shipping to a metrics
 // store for multi-instance.
 const LATENCY_RING_SIZE = 200;
 const latencyRing: number[] = [];
@@ -126,7 +126,7 @@ export const getServerReachabilityState = (): {
 	const now = Date.now();
 	// "currently failing" is defined as: the last failure happened more recently
 	// than the last success. If we have no signal at all (cold boot, no calls
-	// yet), we are NOT currently failing — there is nothing to notify about.
+	// yet), we are NOT currently failing, there is nothing to notify about.
 	const currentlyFailing =
 		lastFailureAt !== null && (lastSuccessAt === null || lastFailureAt > lastSuccessAt);
 	// failureDurationMs is how long we have been in the failing state. Zero
@@ -147,7 +147,7 @@ interface RequestArgs {
 	path: string;
 	// Optional query parameters as a record; serialized into the URL.
 	query?: Record<string, string>;
-	// Optional JSON body — serialized once so signing and transmission see the same bytes.
+	// Optional JSON body, serialized once so signing and transmission see the same bytes.
 	body?: unknown;
 	// Per-call timeout override. Defaults to DEFAULT_TIMEOUT_MS.
 	timeoutMs?: number;
@@ -170,7 +170,7 @@ const request = async <T>({ method, path, query, body, timeoutMs }: RequestArgs)
 	}
 
 	// Serialize the body exactly once. Both the signature input AND the wire payload must
-	// be the SAME bytes — re-stringifying could drift on key order or whitespace.
+	// be the SAME bytes, re-stringifying could drift on key order or whitespace.
 	const hasBody = method === "POST" || method === "PATCH";
 	const bodyText = hasBody ? JSON.stringify(body ?? {}) : "";
 
@@ -199,7 +199,7 @@ const request = async <T>({ method, path, query, body, timeoutMs }: RequestArgs)
 				"content-type": "application/json",
 				"x-timestamp": timestamp,
 				"x-signature": signature,
-				// Defense in depth — server's allowBotOrUser only checks the signature, but
+				// Defense in depth, server's allowBotOrUser only checks the signature, but
 				// the legacy api key is forwarded in case the server tightens auth later.
 				...(dashboardApiKey ? { "x-api-key": dashboardApiKey } : {}),
 			},
@@ -207,11 +207,11 @@ const request = async <T>({ method, path, query, body, timeoutMs }: RequestArgs)
 			signal: controller.signal,
 		});
 	} catch (err) {
-		// AbortError, ECONNREFUSED, DNS failures — everything that prevents a response.
+		// AbortError, ECONNREFUSED, DNS failures, everything that prevents a response.
 		// Surface as a single "unreachable" error so the caller can decide whether to
 		// fall back to the local DB or error the user.
 		// Mark the failure timestamp BEFORE throwing so the outage watcher sees it
-		// on its next tick. We classify only TRANSPORT failures as "unreachable" —
+		// on its next tick. We classify only TRANSPORT failures as "unreachable",
 		// a 4xx/5xx response counts as reachable-but-erroring and is tracked below.
 		lastFailureAt = Date.now();
 		throw new ServerUnreachableError(err);
@@ -220,7 +220,7 @@ const request = async <T>({ method, path, query, body, timeoutMs }: RequestArgs)
 		recordLatency(Date.now() - startedAt);
 	}
 
-	// Try to parse JSON regardless of status — error responses also come as JSON. Falls
+	// Try to parse JSON regardless of status, error responses also come as JSON. Falls
 	// back to text on parse failure so we don't lose the diagnostic message.
 	const text = await response.text();
 	let parsed: unknown;
@@ -234,7 +234,7 @@ const request = async <T>({ method, path, query, body, timeoutMs }: RequestArgs)
 		// 5xx is server-side trouble; we count it as "currently failing" because the
 		// outage watcher cares about "can the server actually serve us." 4xx is a
 		// caller bug (bad request, unauthorized, not found) and does NOT indicate
-		// the server is down — only 5xx flips the failure timestamp.
+		// the server is down, only 5xx flips the failure timestamp.
 		if (response.status >= 500) {
 			lastFailureAt = Date.now();
 		} else {
@@ -244,7 +244,7 @@ const request = async <T>({ method, path, query, body, timeoutMs }: RequestArgs)
 		}
 		throw new ServerResponseError(response.status, parsed);
 	}
-	// 2xx — server is reachable and happy.
+	// 2xx, server is reachable and happy.
 	lastSuccessAt = Date.now();
 	return parsed as T;
 };

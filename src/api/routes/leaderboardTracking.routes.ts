@@ -3,11 +3,11 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { requireGuildId } from "../middleware/requireGuildId.js";
 
 // ── /api/leaderboard-tracking ─────────────────────────────────────────
-// What:  HTTP twin of /configure-leaderboard-tracking slash command. Lets
+// What:  HTTP twin of /server leaderboard tracking slash command. Lets
 //        the Command Center dashboard button toggle
 //        GuildConfig.leaderboardTrackingEnabled without the admin opening
 //        Discord. Body: { enabled: boolean }. Same idempotency contract
-//        as the slash command — re-writing the same state is a no-op
+//        as the slash command, re-writing the same state is a no-op
 //        with a clear "already that way" response.
 // Who:   called by the nexious-server plugin proxy when the dashboard's
 //        Command Center leaderboard pause/continue button is clicked.
@@ -17,7 +17,7 @@ import { requireGuildId } from "../middleware/requireGuildId.js";
 //        ② load GuildConfig + idempotency check;
 //        ③ on enable, also clear "leaderboardChannelId" from
 //           userRemovedChannels so the channel rebuilds on the next
-//           sweep — same behavior the slash command's enable path has;
+//           sweep, same behavior the slash command's enable path has;
 //        ④ return new state so the dashboard updates without GET.
 
 interface ToggleBody {

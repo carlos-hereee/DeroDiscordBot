@@ -7,19 +7,19 @@ import { creatorId } from "@utils/config.js";
 //   nexious-server continuously for 5 minutes. Resets when a call succeeds.
 //   Mirrors the M9.3 ops posture in the bot CLAUDE.md.
 // Who: called once per call attempt by callers that want this behavior. The
-//   scheduler's per-guild fetch is the primary call site — every cron tick
+//   scheduler's per-guild fetch is the primary call site, every cron tick
 //   either succeeds or fails, and the notifier accumulates across ticks.
 // When: the owner gets at most ONE DM per outage. The flag stays set until
 //   `noteSuccess()` is called, then the next outage can re-trip.
 // Where: pure module-state. Not persisted across bot restarts (a restart resets
-//   the timer, which is the right behavior — if the bot restarted, the outage
+//   the timer, which is the right behavior, if the bot restarted, the outage
 //   may have just been the bot itself).
 // How:
 //   ① noteFailure(err) records the first failure timestamp if not already set.
 //      If 5 minutes have elapsed since that timestamp AND we have not yet
 //      sent a notice for this outage, DM the creator.
 //   ② noteSuccess() clears all state so the next failure starts a fresh timer.
-//   ③ Errors that aren't ServerUnreachableError don't count — those are 4xx
+//   ③ Errors that aren't ServerUnreachableError don't count, those are 4xx
 //      validation issues and should not page the owner.
 
 const OUTAGE_THRESHOLD_MS = 5 * 60 * 1000;
@@ -46,7 +46,7 @@ export const _peekState = (): Readonly<OutageState> => state;
 // the bot, DMs disabled) logs but does not throw, because the caller is
 // already in an error path and we don't want to compound the failure.
 export const noteFailure = (client: Client, err: unknown): void => {
-	// Only count "server unreachable" — ignore validation errors, signature
+	// Only count "server unreachable", ignore validation errors, signature
 	// mismatches, etc. Those are not platform-down conditions.
 	const isUnreachable = err instanceof ServerUnreachableError;
 	if (!isUnreachable) return;
@@ -71,7 +71,7 @@ export const noteFailure = (client: Client, err: unknown): void => {
 
 	// Mark sent BEFORE awaiting so a slow Discord API call doesn't allow a
 	// concurrent caller to also send. The notice goes once per outage even if
-	// Discord briefly fails — we'll log the Discord failure and move on.
+	// Discord briefly fails, we'll log the Discord failure and move on.
 	state.noticeSentForThisOutage = true;
 
 	(async () => {
@@ -103,7 +103,7 @@ export const noteSuccess = (client: Client): void => {
 	const wasNoticed = state.noticeSentForThisOutage;
 	state.firstFailureAt = null;
 	state.noticeSentForThisOutage = false;
-	// Only DM the recovery message if we'd previously DM'd the outage — no
+	// Only DM the recovery message if we'd previously DM'd the outage, no
 	// point pinging the owner with "recovered" if they never knew about it.
 	if (wasNoticed && creatorId) {
 		(async () => {

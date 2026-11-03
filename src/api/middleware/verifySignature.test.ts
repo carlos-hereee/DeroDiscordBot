@@ -181,7 +181,7 @@ describe("verifySignature", () => {
 
 	it("rejects when the timestamp is older than the replay window", async () => {
 		const verifySignature = await loadMiddleware({ signingSecret: SECRET, apiKey: API_KEY });
-		// 6 minutes in the past — past the 5 minute cutoff.
+		// 6 minutes in the past, past the 5 minute cutoff.
 		const timestamp = String(now - 6 * 60 * 1000);
 		const signature = signLike({
 			method: "GET",

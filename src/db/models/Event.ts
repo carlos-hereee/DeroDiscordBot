@@ -17,7 +17,7 @@ const eventSchema = new Schema(
 		description: { type: String, default: "" },
 		// ── optional event image (v1.6 Phase 4, media attachments) ──────
 		// What:  public https URL of an image rendered in this event's Discord
-		//        embeds — a large banner on go-live and decree posts, a small
+		//        embeds, a large banner on go-live and decree posts, a small
 		//        thumbnail on reminders. null means no image and the embeds post
 		//        as text exactly as before.
 		// Who:   set by the dashboard upload flow (the client + server half of
@@ -25,7 +25,7 @@ const eventSchema = new Schema(
 		//        renders it; the create/update handler passes it straight through
 		//        and the embed sites read it with GuildConfig.defaultEventImageUrl
 		//        as the fallback.
-		// When:  optional and additive — legacy events load null and render
+		// When:  optional and additive, legacy events load null and render
 		//        unchanged, so no backfill.
 		// How:   plain nullable String. URL validation / whitelisting is the
 		//        server-and-client half's responsibility; the bot trusts the
@@ -38,7 +38,7 @@ const eventSchema = new Schema(
 		//        GuildConfig.kvkSeasonEnd at create time so admins never
 		//        type the same date twice. Regular announcements (the
 		//        new "regular" announcementType) leave it null and never
-		//        auto archive — they live until an admin retires them.
+		//        auto archive, they live until an admin retires them.
 		// Who:   ReminderScheduler skips its season-end branch when the
 		//        field is null, ScheduleBoard hides the "Season ends"
 		//        line for that event, and embedBuilder treats it as
@@ -70,12 +70,12 @@ const eventSchema = new Schema(
 		//        to GuildConfig.memberRoleId, then @here. TestReminderJob
 		//        applies the same precedence so the test fire mirrors the
 		//        real fire's mention surface.
-		// When:  set at event create time by /configure-stream-schedule
+		// When:  set at event create time by /events stream weekly
 		//        or any future command that needs a non-default audience.
 		//        Legacy events (created before this field existed) load
 		//        with null, so the fallback to memberRoleId preserves
 		//        existing behavior.
-		// Where: nullable string — Mongoose stores absent as null which
+		// Where: nullable string, Mongoose stores absent as null which
 		//        the ?? fallback in ReminderJob handles uniformly.
 		mentionRoleId: { type: String, required: false, default: null },
 
@@ -83,12 +83,12 @@ const eventSchema = new Schema(
 		// What:  when true, ReminderScheduler skips this event entirely
 		//        on every cron tick. The event still exists, still shows
 		//        up on the schedule board (with a "paused" tag), still
-		//        appears in /event-list — it just does not fire reminders
-		//        until /continue-schedule flips this back to false (or
+		//        appears in /event-list, it just does not fire reminders
+		//        until /events resume flips this back to false (or
 		//        pausedUntil expires and the scheduler auto-resumes).
 		// Who:   ReminderScheduler (gates the fire decision and handles
 		//        the pausedUntil auto-resume), ScheduleBoard (renders the
-		//        paused tag), the /pause-schedule and /continue-schedule
+		//        paused tag), the /events pause and /events resume
 		//        commands (write these fields).
 		// When:  flipped on demand by the streamer when they want to take
 		//        a week (or several) off.
@@ -101,9 +101,9 @@ const eventSchema = new Schema(
 		//        automatically flip paused back to false on the next cron
 		//        tick at or after this date. Persisted (not setTimeout) so
 		//        the auto-resume survives a bot restart. Null means
-		//        "paused indefinitely" — only /continue-schedule clears it.
-		// Who:   /pause-schedule writes this when the streamer passes a
-		//        days argument. /continue-schedule clears both paused and
+		//        "paused indefinitely", only /events resume clears it.
+		// Who:   /events pause writes this when the streamer passes a
+		//        days argument. /events resume clears both paused and
 		//        pausedUntil. ReminderScheduler reads it.
 		// When:  optional. Most streamer pauses will be open-ended ("I'm
 		//        going on vacation, I'll resume when I'm back") and leave
@@ -114,6 +114,16 @@ const eventSchema = new Schema(
 		//        the per-event paused check so a just-expired pause does
 		//        not skip its own resume tick.
 		pausedUntil: { type: Date, required: false, default: null },
+
+		// ── the zone a weekly event keeps its local time in (2026-10 item 263 Phase 4c) ──
+		// What:  the IANA zone /events stream weekly read its day and time in, the
+		//        server's zone unless the admin typed another.
+		// Who:   occurrenceCalculator reads it: a weekly event with a zone fires on the
+		//        same local weekday and time every week, through daylight saving.
+		// When:  written at create time by /events stream weekly. Absent (null) on every
+		//        event created before, which keeps the plain 168 hour steps it always had
+		//        (risk R12), so there is no backfill.
+		timezone: { type: String, required: false, default: null },
 	},
 	{ timestamps: true } // adds createdAt + updatedAt automatically
 );
@@ -122,7 +132,7 @@ const eventSchema = new Schema(
 // EventModel.find({ guildId, active: true }) once per guild (see eventStore
 // .findByGuildId / .findAll). Without this compound index those are collection
 // scans, so tick duration grows linearly with the Event collection and
-// eventually overruns the 60s budget — the condition the overlap guard in
+// eventually overruns the 60s budget, the condition the overlap guard in
 // ReminderScheduler exists to survive. The field order is { guildId, active }
 // because guildId is the high-selectivity equality match and active narrows
 // within it; this same index also serves the guild-scoped findByGuildId reads

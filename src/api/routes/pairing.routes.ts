@@ -11,14 +11,14 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 // Who:   nexious-server's plugin-proxy forwards the dashboard's "Claim
 //        server" form POST to this endpoint. No other caller. The signed
 //        proxy is the only entry point because verifySignature gates every
-//        /api/* route — there is no Discord-side redemption surface by
+//        /api/* route, there is no Discord-side redemption surface by
 //        design (the binding has to land in the platform's pluginConfig,
 //        which the bot does not own).
 // When:  every successful paste of a claim code into the Company Uno
 //        dashboard's plugin panel.
 // Where: mounted at /api/pairing under verifySignature in server.ts.
 //        Deliberately does NOT carry a ?guildId= query param because the
-//        code IS the discriminator — the platform server does not know
+//        code IS the discriminator, the platform server does not know
 //        which guild the code came from until this endpoint tells it.
 // How:
 //   ① Validate body.code is a non-empty string (400 otherwise). The store
@@ -27,7 +27,7 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 //      end up running findOneAndUpdate with code:"" which a future schema
 //      change could match in unexpected ways.
 //   ② Call pendingPairingStore.redeem. The store collapses invalid,
-//      expired, and already-consumed into a single null return — deliberate
+//      expired, and already-consumed into a single null return, deliberate
 //      so this endpoint is not an oracle a probing attacker can use to
 //      distinguish "code does not exist" from "code is in use." We mirror
 //      the collapse with a single 410 Gone response shape for every miss.
@@ -38,12 +38,12 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 //      block or fail the response. Once redeem returns a doc the code is
 //      already atomically consumed (single-use). If we returned 500 on a
 //      log failure the platform would retry, get a 410 on the now-consumed
-//      code, and never learn the guildId — the code becomes a black hole
+//      code, and never learn the guildId, the code becomes a black hole
 //      and the user sees "claim failed" even though the bind data exists.
 //      So we try/catch the log call locally and degrade analytics rather
 //      than redemption. Metadata key is `ownerId` (not ownerUserId) so it
 //      joins cleanly to PAIRING_CODE_SENT's `{ ownerId }` for funnel
-//      queries — same shape across both events even though the underlying
+//      queries, same shape across both events even though the underlying
 //      model field is named `ownerUserId`.
 //   ④ Return { data: { guildId, ownerUserId, consumedAt } }. consumedAt
 //      lets the platform server stamp the bind row with the moment of
@@ -96,8 +96,8 @@ export function createPairingRouter(): Router {
 
 			// ③ funnel close. Local try/catch because the redeem is already
 			// committed atomically; a log failure here must not turn into a
-			// 500 that the platform retries (it would get 410 on retry — the
-			// code is now consumed — and the user would see "claim failed"
+			// 500 that the platform retries (it would get 410 on retry, the
+			// code is now consumed, and the user would see "claim failed"
 			// for a successful claim). Degrade analytics, not redemption.
 			// Metadata key `ownerId` matches PAIRING_CODE_SENT's shape so a
 			// single funnel query can join the two on guildId + slice by
@@ -121,7 +121,7 @@ export function createPairingRouter(): Router {
 				},
 			});
 		} catch (error) {
-			// ⑤ generic 500. Body kept sparse — the signed proxy caller logs
+			// ⑤ generic 500. Body kept sparse, the signed proxy caller logs
 			// detail server-side and a probing attacker should not learn
 			// anything from a transient Mongo failure.
 			console.error("[pairing route] unhandled error during redeem", error);

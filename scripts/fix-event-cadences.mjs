@@ -3,7 +3,7 @@
 //   the old (wrong) rok-events.json constants. Ancient Ruins moves from 36 to
 //   40, Altar of Darkness moves from 84 to 86. The match is by name + type +
 //   active so we never touch unrelated events that happen to share an interval.
-//   Idempotent — running twice does NOT double-bump anything because the second
+//   Idempotent, running twice does NOT double-bump anything because the second
 //   run finds no documents at the wrong interval.
 // Who: operators running this once after deploying the rok-events.json fix.
 //   Not part of the runtime path. Safe to re-run.
@@ -13,7 +13,7 @@
 // Where: connects to the bot's local Mongo (MONGOOSE_URI). Today (2026-04-26)
 //   USE_REMOTE_EVENTS is OFF in production, so events live in the bot DB.
 //   When the F4 cutover happens and events move to the platform DB, this
-//   script will need a sibling targeting MIGRATION_TARGET_URI — for now the
+//   script will need a sibling targeting MIGRATION_TARGET_URI, for now the
 //   bot DB is the only place that holds wrong-cadence events.
 // How:
 //   ① Connect to source (bot DB).
@@ -48,7 +48,7 @@ if (!sourceUri) {
 
 // ── corrections table ────────────────────────────────────────
 // What: maps each event name to the (old, new) intervalHours pair. The match
-//   by old value is what makes the script idempotent — once a doc has been
+//   by old value is what makes the script idempotent, once a doc has been
 //   corrected its intervalHours no longer matches the OLD predicate so a
 //   re-run is a no-op.
 // Where: keep this in sync with rok-events.json. If a future game patch
@@ -61,7 +61,7 @@ const CORRECTIONS = [
 const sourceConn = await mongoose.createConnection(sourceUri).asPromise();
 console.log(`Source: ${sourceConn.name}`);
 if (limitGuild) console.log(`Scope:  guildId=${limitGuild} (single-guild mode)`);
-console.log(dryRun ? "DRY RUN — no writes will be made\n" : "LIVE RUN — writes are real\n");
+console.log(dryRun ? "DRY RUN, no writes will be made\n" : "LIVE RUN, writes are real\n");
 
 // strict:false so we can read the document fields without a full schema decl.
 const Event = sourceConn.model(
@@ -116,7 +116,7 @@ for (const { name, oldInterval, newInterval } of CORRECTIONS) {
 	// Sanity check: count any docs already at the NEW interval. If both old
 	// and new exist for the same name, the operator likely has duplicate
 	// events from a prior partial run or a manual correction. Surface it
-	// without failing — this script's job is to advance docs from old to new,
+	// without failing, this script's job is to advance docs from old to new,
 	// not to deduplicate.
 	const alreadyCorrect = await Event.countDocuments({
 		name,
@@ -141,7 +141,7 @@ if (dryRun) {
 } else {
 	console.log("\nFix complete. Next steps:");
 	console.log("  1. Spot-check one corrected event in MongoDB Atlas.");
-	console.log("  2. Watch the next reminder fire in #announcements — should align with the canonical schedule.");
+	console.log("  2. Watch the next reminder fire in #announcements, should align with the canonical schedule.");
 	console.log("  3. Refresh the schedule board (any event mutation triggers it; or restart the bot).");
 }
 

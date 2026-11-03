@@ -1,0 +1,179 @@
+import {
+	ActionRowBuilder,
+	ButtonBuilder,
+	ButtonStyle,
+	EmbedBuilder,
+	type RepliableInteraction,
+	type SlashCommandSubcommandBuilder,
+} from "discord.js";
+import { eventStore } from "@db/stores/eventStore.js";
+import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
+import { errorEmbed } from "@utils/embedBuilder.js";
+import { parseEventDateTimeMinutes } from "@utils/dateParser.js";
+import { resolveServerTimezone } from "@utils/tzParser.js";
+import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
+import { LOG_MESSAGES } from "@base/constants/log-messages.js";
+import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
+import { askInChannel } from "@utils/answerInChannel.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
+
+// ── /events stream announce ──────────────────────────────────────────────────
+// What:  schedules a one-time stream announcement at a specific future
+//        date+time. Creates a one-time Event so the existing
+//        ReminderScheduler fires the standard reminder offsets (default
+//        30 and 15 min before) automatically, no special-case logic
+//        needed downstream.
+// Who:   streamers planning a one-off (charity stream, special guest,
+//        scheduled premiere). Pairs with /events stream soon for the
+//        forgot-to-announce case and /events stream weekly for
+//        recurring weekly cadence.
+// When:  on demand. The streamer types the date once, the bot handles
+//        the reminders. After the stream the event auto-deactivates
+//        (one-time event handling in ReminderScheduler already does
+//        this, we get it for free).
+// Where: writes a one-time Event into the same collection as KvK and
+//        weekly stream events. ScheduleBoard renders it next to other
+//        active events with no special casing.
+// The typed time is read in the server's timezone (2026-10 item 263 Phase 4c, UTC
+// until an admin picks one in 🛠️server-config), and every refusal and the
+// confirmation name that zone. The option is `when`: a registered option's
+// description is global, one text for every server, so it says "this server's
+// timezone" and the prompts name the zone itself.
+// How:   ① parse + validate the date (must be in the future); ②
+//        confirmation embed; ③ on confirm, eventStore.create with
+//        type:"one-time"; ④ kick a schedule board refresh.
+
+const c = rokCommanderCopy.announceStream;
+
+/** The options this handler reads, added to the merged command's subcommand. */
+export function addAnnounceStreamOptions(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
+	return sub
+		.addStringOption((option) =>
+			option.setName("title").setDescription("Stream title (e.g. Charity Stream, Patch Day)").setRequired(true).setMaxLength(80)
+		)
+		.addStringOption((option) =>
+			option.setName("when").setDescription("Date and time in this server's timezone, format MM/DD @HH:MM (e.g. 04/26 @19:30)").setRequired(true)
+		)
+		.addRoleOption((option) =>
+			option
+				.setName("mention-role")
+				.setDescription("Role to ping when reminders fire (defaults to the guild member role)")
+				.setRequired(false)
+		)
+		.addStringOption((option) =>
+			option
+				.setName("description")
+				.setDescription("Optional one-liner shown in the reminder embed")
+				.setRequired(false)
+				.setMaxLength(500)
+		);
+}
+
+export async function announceStream(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
+	const guildId = interaction.guildId;
+	if (!guildId) {
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: ["Run this in a server, not a DM."] });
+		return;
+	}
+
+	const config = await guildConfigStore.findByGuildId(guildId);
+	if (!config?.announcementsChannelId) {
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.setupRequired] });
+		return;
+	}
+
+	const title = options.getString("title", true).trim();
+	const whenRaw = options.getString("when", true);
+	// Read by name: the store returns a hydrated document, whose fields are getters.
+	const timezone = resolveServerTimezone(config.timezone);
+	const mentionRole = options.getRole("mention-role", false);
+	const description = options.getString("description", false)?.trim() ?? "";
+
+	// Parse + validate. Past dates are rejected outright, a one-time
+	// event whose firstOccurrence is already in the past would never
+	// fire (ReminderScheduler's diff-window check skips negative diffs)
+	// so accepting it would silently swallow the streamer's input.
+	const startDate = parseEventDateTimeMinutes(whenRaw, undefined, timezone);
+	if (!startDate) {
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.invalidDateTime, c.zoneLine(timezone)] });
+		return;
+	}
+	if (startDate.getTime() <= Date.now()) {
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.dateInPast, c.zoneLine(timezone)] });
+		return;
+	}
+
+	const startUnix = Math.floor(startDate.getTime() / 1000);
+	const mentionRoleId = mentionRole?.id ?? null;
+
+	// ── confirmation preview ──
+	// Same two-line pattern as /events stream weekly so the streamer
+	// sees a familiar form: when + where + who. Color reuses SCHEDULE so
+	// the preview matches the eventual schedule board entry.
+	const previewLines = [
+		c.confirm.description(title, startUnix),
+		c.zoneLine(timezone),
+		"",
+		c.confirm.audienceLine(mentionRoleId ?? config.memberRoleId ?? null, config.announcementsChannelId),
+	];
+
+	const confirmEmbed = new EmbedBuilder()
+		.setTitle(c.confirm.title)
+		.setDescription(previewLines.join("\n"))
+		.setColor(rokCommanderCopy.COLORS.SCHEDULE);
+
+	const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+		new ButtonBuilder().setCustomId("announce_confirm").setLabel(c.confirm.confirmButtonLabel).setStyle(ButtonStyle.Success),
+		new ButtonBuilder().setCustomId("announce_cancel").setLabel(c.confirm.cancelButtonLabel).setStyle(ButtonStyle.Secondary)
+	);
+
+	// Posted in 🛠️server-config (2026-10 item 257 Phase 5); only this admin's press counts.
+	const prompt = await askInChannel(interaction, "admin", { embeds: [confirmEmbed], components: [row] });
+
+	try {
+		const press = await prompt.awaitPress(120_000);
+		if (!press) throw new Error("the stream announce prompt timed out");
+
+		if (press.customId === "announce_cancel") {
+			await press.update({ embeds: [errorEmbed(c.cancelled)], components: [] });
+			return;
+		}
+
+		// confirmed, persist as a one-time event. intervalHours 0 is the one time value every
+		// reader agrees on (a required Number accepts 0); the 1 written here before read as an
+		// hourly repeat on the schedule boards (2026-10 item 280).
+		try {
+			await eventStore.create({
+				name: title,
+				description,
+				type: "one-time",
+				intervalHours: 0,
+				firstOccurrence: startDate,
+				guildId,
+				prepSteps: [],
+				active: true,
+				mentionRoleId,
+				paused: false,
+			});
+
+			await press.update({
+				embeds: [new EmbedBuilder().setDescription(c.saved(title)).setColor(rokCommanderCopy.COLORS.SCHEDULE)],
+				components: [],
+			});
+
+			adminLog.emitFor(interaction, guildId, "schedule.create", { subject: title, detail: setupCopy.adminLog.streamAnnounced });
+			refreshSchedule(interaction.client, guildId).catch((err) =>
+				console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/events stream announce"), err)
+			);
+		} catch (err) {
+			console.error("[stream announce] save failed", err);
+			await press.update({ embeds: [errorEmbed(c.saveFailed)], components: [] });
+		}
+	} catch {
+		await prompt.edit({ embeds: [errorEmbed(c.timedOut)], components: [] });
+	}
+}

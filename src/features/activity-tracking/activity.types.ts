@@ -5,14 +5,14 @@ export interface IPlayerActivity {
 	userId: string;
 	username: string;
 
-	// phase 3a — reaction tracking
+	// phase 3a, reaction tracking
 	acknowledgedReminder: boolean;
 	acknowledgedAt: Date | null;
 
-	// phase 3b — presence tracking
+	// phase 3b, presence tracking
 	wasOnlineAtStart: boolean;
 
-	// phase 3c — voice tracking
+	// phase 3c, voice tracking
 	joinedVoiceDuring: boolean;
 	voiceMinutes: number;
 

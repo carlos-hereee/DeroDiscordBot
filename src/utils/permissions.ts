@@ -1,4 +1,6 @@
-import type { ButtonInteraction, GuildMember } from "discord.js";
+import type { ButtonInteraction, ChatInputCommandInteraction, GuildMember, ModalSubmitInteraction, StringSelectMenuInteraction } from "discord.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { creatorId } from "@utils/config.js";
 
 // ── permissions ─────────────────────────────────────────────────────
 // Centralized authorization helpers. Today only the decree-edit flow
@@ -8,12 +10,12 @@ import type { ButtonInteraction, GuildMember } from "discord.js";
 //
 // Why a helper instead of inlining the check at the call site: persistent
 // button interactions (the Edit button on NextUpBoard posts) cannot rely
-// on Discord's built-in setDefaultMemberPermissions slash-command gate —
+// on Discord's built-in setDefaultMemberPermissions slash-command gate,
 // that only filters the command picker. The component handler must
 // re-verify the actor on every interaction, and that re-verification
 // must match the gate the slash command would have applied.
 
-interface IGuildConfigPermissionShape {
+export interface IGuildConfigPermissionShape {
 	adminRoleId?: string | null;
 }
 
@@ -23,13 +25,12 @@ interface IGuildConfigPermissionShape {
  * What:  decides whether a Discord member is allowed to mutate an event
  *        through the decree-edit UI (apply once or apply permanent).
  *        Mirrors the slash-command admin gate in main.ts so a member who
- *        could run /list-events / /delete-event can also click Edit on a
- *        NextUpBoard post.
+ *        could run /events delete can also click Edit on a NextUpBoard post.
  * Who:   read by the persistent button + modal handlers in the decree-edit
  *        flow. Returns true on the happy path; the caller replies with an
  *        ephemeral denial when false.
  * When:  evaluated on every button click and every modal submit. The
- *        permission check is NOT cached — a role removal on Discord
+ *        permission check is NOT cached, a role removal on Discord
  *        propagates to the next interaction immediately.
  * How:   server owner always passes. Admin-role match falls back to
  *        guild-level role cache, which discord.js refreshes on
@@ -62,15 +63,21 @@ export function isOwnerOrAdmin(member: GuildMember, config: IGuildConfigPermissi
  * handlers cannot lean on a slash command's setDefaultMemberPermissions, so
  * they must re-verify the clicker. ButtonInteraction.member can be a partial
  * API member with no populated roles cache, and the guild cache can be cold
- * after a restart, so we resolve cache-first then fetch — a miss would wrongly
+ * after a restart, so we resolve cache-first then fetch, a miss would wrongly
  * deny a real admin. Returns false (deny) when there is no guild context or the
  * member cannot be resolved.
+ *
+ * Accepts a string select and a modal submit too (the game request ballot, 2026-10
+ * item 245 Phase 4a): their customIds and values are user input exactly like a
+ * button press, and the gate reads only the guild and the clicker, which all carry.
+ * And a slash command (2026-10 item 257): /claim with chips off routes an admin to the
+ * switch, and the gate reads nothing a command lacks.
  *
  * Note: ScheduleControls and the main.ts command gate still inline this same
  * resolution; they could adopt this helper on a future cleanup pass.
  */
 export async function gateOwnerOrAdmin(
-	interaction: ButtonInteraction,
+	interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction | ChatInputCommandInteraction,
 	config: IGuildConfigPermissionShape | null | undefined
 ): Promise<boolean> {
 	if (!interaction.guild) return false;
@@ -80,4 +87,34 @@ export async function gateOwnerOrAdmin(
 	let member = interaction.guild.members.cache.get(interaction.user.id) ?? null;
 	if (!member) member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
 	return member ? member.roles.cache.has(adminRoleId) : false;
+}
+
+/**
+ * isAdminCommand
+ *
+ * Whether a slash command, or one leaf of it, sits behind the owner or admin gate.
+ * BOT_CONSTANTS.ADMIN_COMMANDS lists the commands gated whole; MEMBER_SUBCOMMANDS lists
+ * the leaves of those commands that stay open to members ("events list"), and is checked
+ * FIRST, so everything else under an admin command is gated by default. The leaf is the
+ * group and the subcommand together, so a subcommand inside a group can never match a
+ * member leaf of the same name at the top level. main.ts's slash command gate asks this.
+ * The admin command launcher does not need to: it re-runs gateOwnerOrAdmin at every step,
+ * so a button refuses everyone the slash command would, and a member view such as
+ * /events list stays on the slash command.
+ */
+export function isAdminCommand(commandName: string, subcommand: string | null, group: string | null = null): boolean {
+	const leafPath = [group, subcommand].filter((part): part is string => part !== null).join(" ");
+	if (leafPath !== "" && BOT_CONSTANTS.MEMBER_SUBCOMMANDS.has(`${commandName} ${leafPath}`)) return false;
+	return BOT_CONSTANTS.ADMIN_COMMANDS.has(commandName);
+}
+
+/**
+ * isPlatformOwner
+ *
+ * True only for the platform owner (CREATOR_DISCORD_ID); an unset id refuses everyone.
+ * The one gate of /platform: its network bans and its render analytics each ask it, so
+ * the two cannot disagree about who the owner is.
+ */
+export function isPlatformOwner(userId: string): boolean {
+	return creatorId !== "" && userId === creatorId;
 }

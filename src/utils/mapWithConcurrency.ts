@@ -9,7 +9,7 @@
 //        USE_REMOTE_EVENTS) calls in a single cron tick, pile up against the
 //        connection pool / Heroku, and blow the 60s tick budget.
 // When:  per call. Pure utility, no Discord or DB imports.
-// Where: pairs with the overlapping-tick guard in ReminderScheduler — the
+// Where: pairs with the overlapping-tick guard in ReminderScheduler, the
 //        guard stops ticks from overlapping, this keeps a single tick from
 //        saturating downstream services.
 // How:   spin up `limit` worker loops that pull the next index off a shared
@@ -29,7 +29,7 @@ export async function mapWithConcurrency<T, R>(
 	const runners = Array.from({ length: effectiveLimit }, async () => {
 		// Each runner races to claim the next index off the shared cursor.
 		// The post-increment is safe without a lock because JS is single
-		// threaded — only one runner observes any given value of cursor.
+		// threaded, only one runner observes any given value of cursor.
 		for (;;) {
 			const index = cursor++;
 			if (index >= items.length) return;

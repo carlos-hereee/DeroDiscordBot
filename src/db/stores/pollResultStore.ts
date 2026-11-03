@@ -27,4 +27,9 @@ export const pollResultStore = {
 		for (const row of rows) counts[row._id] = row.count;
 		return counts;
 	},
+
+	// Self destruct's server data delete (post-launch plan item 10): every row this guild owns.
+	async deleteGuild(guildId: string) {
+		return PollResultModel.deleteMany({ guildId });
+	},
 };

@@ -1,0 +1,177 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { TextChannel, type ButtonInteraction } from "discord.js";
+
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
+vi.mock("@utils/permissions.js", () => ({ gateOwnerOrAdmin: vi.fn() }));
+vi.mock("@features/games/hangmanHandler.js", () => ({ startHangmanRound: vi.fn(), isHangmanRoundRunning: () => false }));
+vi.mock("@features/setup/adminLog.js", () => ({ adminLog: { emit: vi.fn(), emitFor: vi.fn() } }));
+vi.mock("./challengeBoard.js", () => ({ offerChallengeDraft: vi.fn(async () => null) }));
+const registry = vi.hoisted(() => ({ buttons: new Map<string, (interaction: ButtonInteraction) => Promise<void>>() }));
+vi.mock("@handlers/interactionRegistry.js", () => ({
+	registerButton: (prefix: string, handler: (interaction: ButtonInteraction) => Promise<void>) => registry.buttons.set(prefix, handler),
+	registerModal: vi.fn(),
+}));
+
+import { buildPartyGamesRow, registerPartyGameHandlers } from "./partyGames.js";
+import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { gateOwnerOrAdmin } from "@utils/permissions.js";
+import { startHangmanRound } from "@features/games/hangmanHandler.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { offerChallengeDraft } from "./challengeBoard.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
+
+// ── partyGames (post-launch plan item 3) ─────────────────────────────
+// The 🎉party-games card's two admin buttons. The buttons are public, so the gate is
+// the handler's, and Host hangman opens the round in the party channel, never in the
+// channel the press came from. The admin's answer posts in 🎰arcade-control (2026-10 item
+// 257 Phase 5), and privately only where setup never stored that channel.
+
+const words = gameRoomsCopy.partyGames;
+const configMock = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
+const gateMock = gateOwnerOrAdmin as unknown as ReturnType<typeof vi.fn>;
+const hangmanMock = startHangmanRound as unknown as ReturnType<typeof vi.fn>;
+const logMock = adminLog as unknown as { emitFor: ReturnType<typeof vi.fn> };
+const draftMock = offerChallengeDraft as unknown as ReturnType<typeof vi.fn>;
+
+const partyChannel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, { id: "ch-party" });
+const arcadeControl = { id: "ch-arcade", isSendable: () => true, send: vi.fn(async () => ({ id: "answer-msg" })) };
+const channelsById: Record<string, unknown> = { "ch-party": partyChannel, "ch-arcade": arcadeControl };
+
+function press(customId: string): ButtonInteraction {
+	return {
+		customId,
+		guildId: "guild-1",
+		guild: { id: "guild-1" },
+		user: { id: "admin-1" },
+		client: { channels: { fetch: vi.fn(async (id: string) => channelsById[id] ?? null) } },
+		isModalSubmit: () => false,
+		isMessageComponent: () => true,
+		deferUpdate: vi.fn().mockResolvedValue(undefined),
+		reply: vi.fn().mockResolvedValue(undefined),
+		deferReply: vi.fn().mockResolvedValue(undefined),
+		editReply: vi.fn().mockResolvedValue(undefined),
+		showModal: vi.fn().mockResolvedValue(undefined),
+	} as unknown as ButtonInteraction;
+}
+
+registerPartyGameHandlers();
+const handle = (interaction: ButtonInteraction) => registry.buttons.get("party_games")!(interaction);
+
+// The modals a press opened, and the text of its notice: a refusal or a short answer now
+// opens a notice modal instead of a private reply (2026-10 item 254 Phase 5b).
+const shownModals = (interaction: { showModal: unknown }) =>
+	(interaction.showModal as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { toJSON(): { custom_id: string; components: { content?: string }[] } }).toJSON());
+const noticeText = (interaction: { showModal: unknown }): string =>
+	shownModals(interaction)
+		.filter((modal) => modal.custom_id.startsWith("notice:"))
+		.flatMap((modal) => modal.components.map((component) => component.content ?? ""))
+		.join("\n");
+// True when every modal the press opened is a notice, so no form or game modal opened.
+const onlyNoticesShown = (interaction: { showModal: unknown }): boolean => shownModals(interaction).every((modal) => modal.custom_id.startsWith("notice:"));
+
+beforeEach(() => {
+	vi.clearAllMocks();
+	gateMock.mockResolvedValue(true);
+	configMock.findByGuildId.mockResolvedValue({ partyGamesChannelId: "ch-party", arcadeControlChannelId: "ch-arcade" });
+	hangmanMock.mockResolvedValue("started");
+});
+
+describe("buildPartyGamesRow", () => {
+	it("carries Host hangman, Host Texas hold em, Host Monopoly and Schedule a party game, inside one row's five", () => {
+		const ids = buildPartyGamesRow()
+			.toJSON()
+			.components.map((button) => ("custom_id" in button ? button.custom_id : ""));
+		expect(ids).toEqual(["party_games:host:hangman", "party_games:host:holdem", "party_games:host:monopoly", "party_games:schedule"]);
+		expect(ids.length).toBeLessThanOrEqual(5);
+	});
+});
+
+// ── Hold'em and Monopoly from 🎉party-games (2026-10 item 254, Arcade 4) ──
+// Hosting one posts its normal challenge card through the one door every challenge takes,
+// which answers the press itself and puts a rated game's card in 🏆rated-challenges.
+describe("hosting a table game from 🎉party-games", () => {
+	it("opens the game's normal challenge for an admin, and answers through it", async () => {
+		for (const game of ["holdem", "monopoly"]) {
+			const interaction = press(`party_games:host:${game}`);
+
+			await handle(interaction);
+
+			expect(draftMock).toHaveBeenLastCalledWith(interaction, game);
+			expect(interaction.deferReply).not.toHaveBeenCalled();
+		}
+		expect(hangmanMock).not.toHaveBeenCalled();
+	});
+
+	it("refuses a member who is neither the owner nor an admin before any card is posted", async () => {
+		gateMock.mockResolvedValue(false);
+		const interaction = press("party_games:host:holdem");
+
+		await handle(interaction);
+
+		expect(noticeText(interaction)).toBe(words.adminsOnly);
+		expect(draftMock).not.toHaveBeenCalled();
+	});
+
+	it("still opens hangman from a card posted before the table games joined the row", async () => {
+		const interaction = press("party_games:host:hangman");
+
+		await handle(interaction);
+
+		expect(hangmanMock).toHaveBeenCalledOnce();
+		expect(draftMock).not.toHaveBeenCalled();
+	});
+});
+
+describe("the party games buttons", () => {
+	it("refuses a member who is neither the owner nor an admin, and does nothing else", async () => {
+		gateMock.mockResolvedValue(false);
+		const interaction = press("party_games:host:hangman");
+
+		await handle(interaction);
+
+		expect(noticeText(interaction)).toBe(words.adminsOnly);
+		expect(hangmanMock).not.toHaveBeenCalled();
+		expect(onlyNoticesShown(interaction)).toBe(true);
+	});
+
+	it("opens a hangman round in 🎉party-games for an admin and logs it", async () => {
+		const interaction = press("party_games:host:hangman");
+
+		await handle(interaction);
+
+		expect(hangmanMock).toHaveBeenCalledWith(partyChannel, "admin-1");
+		expect(logMock.emitFor).toHaveBeenCalledWith(interaction, "guild-1", "powerup.toggle", expect.anything());
+		expect(arcadeControl.send).toHaveBeenCalledWith(expect.objectContaining({ content: `<@admin-1> ${words.hostStarted("ch-party")}`, allowedMentions: { parse: [], users: ["admin-1"] } }));
+		expect(interaction.deferReply).not.toHaveBeenCalled();
+		expect(interaction.editReply).not.toHaveBeenCalled();
+	});
+
+	it("answers the admin privately where setup never stored 🎰arcade-control", async () => {
+		configMock.findByGuildId.mockResolvedValue({ partyGamesChannelId: "ch-party", arcadeControlChannelId: null });
+		const interaction = press("party_games:host:hangman");
+
+		await handle(interaction);
+
+		expect(arcadeControl.send).not.toHaveBeenCalled();
+		expect(interaction.editReply).toHaveBeenCalledWith(expect.objectContaining({ content: words.hostStarted("ch-party") }));
+	});
+
+	it("says so when the party channel is not built yet", async () => {
+		configMock.findByGuildId.mockResolvedValue({ partyGamesChannelId: null });
+		const interaction = press("party_games:host:hangman");
+
+		await handle(interaction);
+
+		expect(hangmanMock).not.toHaveBeenCalled();
+		expect(logMock.emitFor).not.toHaveBeenCalled();
+	});
+
+	it("opens the schedule modal for an admin", async () => {
+		const interaction = press("party_games:schedule");
+
+		await handle(interaction);
+
+		const modal = (interaction.showModal as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { toJSON(): { custom_id: string } };
+		expect(modal.toJSON().custom_id).toBe("party_games:schedule");
+	});
+});

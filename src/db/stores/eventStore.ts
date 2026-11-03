@@ -18,7 +18,7 @@ import { remoteEventStore } from "@db/stores/remoteEventStore.js";
 
 // Returned events keep field shapes identical between the two paths so callers do not
 // need to know which one they're hitting. Mongoose Documents have extra methods (.save(),
-// .toObject()) that nothing in the bot currently relies on — confirmed via grep.
+// .toObject()) that nothing in the bot currently relies on, confirmed via grep.
 type EventLike = {
 	eventId: string;
 	guildId: string;
@@ -34,6 +34,9 @@ type EventLike = {
 	mentionRoleId: string | null;
 	paused: boolean;
 	pausedUntil: Date | null;
+	// Absent on a remote event: the platform server's event carries no zone, so a remote
+	// weekly event keeps the plain interval math.
+	timezone?: string | null;
 	active: boolean;
 };
 
@@ -46,24 +49,24 @@ export const eventStore = {
 	// remote mode so the scheduler refactor is forced before the flag flips.
 	async findAll(): Promise<EventLike[]> {
 		if (useRemoteEvents) {
-			// Loud failure rather than silent empty array — scheduler must be refactored
+			// Loud failure rather than silent empty array, scheduler must be refactored
 			// to iterate guilds before the flag is enabled.
 			throw new Error(
-				"eventStore.findAll() is not available under USE_REMOTE_EVENTS — refactor caller to iterate guilds and use findByGuildId"
+				"eventStore.findAll() is not available under USE_REMOTE_EVENTS, refactor caller to iterate guilds and use findByGuildId"
 			);
 		}
 		return EventModel.find({ active: true }) as unknown as Promise<EventLike[]>;
 	},
 
 	// ── findById ──
-	// Look up a single event by its eventId. The legacy interface omits guildId — most
-	// callers do their own cross-guild check on the returned doc — so we keep that
+	// Look up a single event by its eventId. The legacy interface omits guildId, most
+	// callers do their own cross-guild check on the returned doc, so we keep that
 	// signature, but in remote mode we cannot satisfy a guildId-less call. Fail loudly
 	// and require callers to thread the guildId through (see findByIdInGuild below).
 	async findById(eventId: string): Promise<EventLike | null> {
 		if (useRemoteEvents) {
 			throw new Error(
-				"eventStore.findById(eventId) requires guildId under USE_REMOTE_EVENTS — call findByIdInGuild(eventId, guildId) instead"
+				"eventStore.findById(eventId) requires guildId under USE_REMOTE_EVENTS, call findByIdInGuild(eventId, guildId) instead"
 			);
 		}
 		return EventModel.findOne({ eventId }) as unknown as Promise<EventLike | null>;
@@ -91,9 +94,9 @@ export const eventStore = {
 	},
 
 	// ── create ──
-	// data shape varies between callers (configure-stream-schedule, announce-stream,
-	// GuildEventManager, configure-rok-reminders) — they all build the document fields
-	// inline before calling. Accept the union here; remote mode requires guildId on
+	// data shape varies between callers (/events stream weekly, /events stream announce,
+	// GuildEventManager for /events kvk-season, and POST /api/events), they all
+	// build the document fields inline before calling. Accept the union here; remote mode requires guildId on
 	// the input (callers all pass it today).
 	async create(data: {
 		guildId: string;
@@ -118,12 +121,12 @@ export const eventStore = {
 	// ── update ──
 	// Legacy two-arg signature. Local mode tolerates it. Remote mode needs guildId, so
 	// callers must use updateInGuild. This method preserves the legacy entry point for
-	// the few call sites that haven't been threaded yet — they'll surface the error
+	// the few call sites that haven't been threaded yet, they'll surface the error
 	// the moment the flag flips.
 	async update(eventId: string, data: Record<string, unknown>): Promise<EventLike | null> {
 		if (useRemoteEvents) {
 			throw new Error(
-				"eventStore.update(eventId, data) requires guildId under USE_REMOTE_EVENTS — call updateInGuild(eventId, guildId, data) instead"
+				"eventStore.update(eventId, data) requires guildId under USE_REMOTE_EVENTS, call updateInGuild(eventId, guildId, data) instead"
 			);
 		}
 		return EventModel.findOneAndUpdate({ eventId }, { $set: data }, { new: true }) as unknown as Promise<EventLike | null>;
@@ -134,7 +137,7 @@ export const eventStore = {
 			return remoteEventStore.update(eventId, guildId, data) as unknown as Promise<EventLike | null>;
 		}
 		// Local mode: scope the update by guildId too. Mongo's findOneAndUpdate with
-		// a missing guildId match returns null — same null-on-not-found shape callers
+		// a missing guildId match returns null, same null-on-not-found shape callers
 		// already handle.
 		return EventModel.findOneAndUpdate(
 			{ eventId, guildId },
@@ -148,7 +151,7 @@ export const eventStore = {
 	async delete(eventId: string): Promise<EventLike | null> {
 		if (useRemoteEvents) {
 			throw new Error(
-				"eventStore.delete(eventId) requires guildId under USE_REMOTE_EVENTS — call deleteInGuild(eventId, guildId) instead"
+				"eventStore.delete(eventId) requires guildId under USE_REMOTE_EVENTS, call deleteInGuild(eventId, guildId) instead"
 			);
 		}
 		return EventModel.findOneAndUpdate(

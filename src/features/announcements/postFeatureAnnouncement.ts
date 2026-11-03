@@ -1,4 +1,4 @@
-import { Client, TextChannel } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, Client, TextChannel } from "discord.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -6,6 +6,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { featureAnnouncedEvent } from "@base/constants/BOT_LOG_EVENTS.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
+import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 
 // ── postFeatureAnnouncement ──────────────────────────────────────────
@@ -45,7 +46,7 @@ const __dirname = path.dirname(__filename);
 // ── resolve bot version from package.json ───────────────────────────
 // Compiled module lives at dist/features/announcements/postFeatureAnnouncement.js
 // so package.json is three directories up. Resolve once at module load
-// and cache — version cannot change without a new process. fs.readFileSync
+// and cache, version cannot change without a new process. fs.readFileSync
 // is correct here: this is one-shot init, not a hot path.
 function loadBotVersion(): string {
 	try {
@@ -73,10 +74,13 @@ const BOT_VERSION = loadBotVersion();
 // experienced. We hit this 2026-05-05 when the test guild joined post-1.4.0 and
 // got the bug-fix announcement on first boot. Update this map whenever shipping
 // a new version with a featureAnnouncement. ISO 8601 strings.
+// If the release slips by more than two days, re date the entry to the actual bump day.
 const VERSION_SHIPPED_AT: Record<string, string> = {
 	"1.4.0": "2026-04-25T00:00:00Z",
 	"1.5.0": "2026-05-11T00:00:00Z",
 	"1.5.1": "2026-05-13T00:00:00Z",
+	// The release prepared as 1.7.0 ships as 2.0.0, so 1.7.0 never reached a guild.
+	"2.0.0": "2026-11-03T00:00:00Z",
 };
 
 export async function postFeatureAnnouncements(client: Client): Promise<void> {
@@ -135,7 +139,7 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			}
 
 			// Idempotency: has this guild already seen this version?
-			// botLogStore.has is a single-document indexed lookup — cheap
+			// botLogStore.has is a single-document indexed lookup, cheap
 			// enough to run once per guild per boot without batching.
 			const alreadyAnnounced = await botLogStore.has(guild.id, eventKey);
 			if (alreadyAnnounced) {
@@ -144,7 +148,7 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			}
 
 			// Resolve target channels. Both must exist and be TextChannels
-			// for the announcement to fire — a missing announcements
+			// for the announcement to fire, a missing announcements
 			// channel is either a brand-new guild (caught above) or a
 			// destroyed homebase (ensureHomebase's problem, not ours).
 			const announcementsChannelId = config.announcementsChannelId;
@@ -179,15 +183,27 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			// release boot (since this fires once per version per guild
 			// and existing members already have the notification dot).
 			//
-			// allowedMentions: { parse: [] } is belt-and-suspenders —
+			// allowedMentions: { parse: [] } is belt-and-suspenders,
 			// if a future edit ever adds a raw @everyone to the copy,
 			// this prevents accidental mass notifications.
 			// Inject the release version into the title from BOT_VERSION (package.json),
 			// the single source of truth this announcement is keyed to, so the title
 			// always reads the right version with no hardcoded version in the copy packs.
 			const publicEmbed = infoEmbed(`${c.public.title} (v${BOT_VERSION})`, c.public.description, packCopy.COLORS.ANNOUNCEMENTS);
+
+			// Suggestion Box rides the PUBLIC announcement only. A release post is the
+			// one moment a member is already reading about what changed, which is when
+			// "what should we build next" actually gets answers; #command-center's copy
+			// of this button is passive and only found by someone already looking.
+			// Safe to attach anywhere: registerSuggestionBoxHandlers (main.ts) dispatches
+			// by customId PREFIX at the client level, so the button is not bound to the
+			// message or channel it was built in. The admin send deliberately omits it,
+			// admins have the same button in #command-center and the inner-sanctum post
+			// is a changelog, not a call to action.
+			const suggestionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(buildSuggestionBoxButton());
 			await announcementsChannel.send({
 				embeds: [publicEmbed],
+				components: [suggestionRow],
 				allowedMentions: { parse: [] },
 			});
 
@@ -205,7 +221,7 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			// ── ③ log success ──────────────────────────────────────
 			// Only AFTER both posts succeeded. A partial failure above
 			// leaves the log blank, so the next boot re-attempts. This
-			// is why the public post comes first — a duplicate public
+			// is why the public post comes first, a duplicate public
 			// post on retry is visible to the community, so we want the
 			// admin post to be the one that retries, not the public one.
 			// ...Actually on second thought that reasoning is reversed:

@@ -1,12 +1,15 @@
-import { ButtonInteraction, PermissionFlagsBits, MessageFlags, TextChannel } from "discord.js";
+import { ButtonInteraction, PermissionFlagsBits, TextChannel } from "discord.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
+import { showEmbedNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 
 // ── leaderboard channel handlers ──────────────────────────────────────
 // What:  persistent button handlers that follow up the
-//        /configure-leaderboard-tracking flow with optional channel-
+//        /server leaderboard tracking flow with optional channel-
 //        lifecycle actions. When the admin turns tracking OFF, the
 //        command's reply includes a "Remove leaderboard channel" button.
 //        Clicking that button routes here.
@@ -15,7 +18,7 @@ import { COLORS } from "@base/copy/brand.js";
 //        rebuild-now) can register additional prefixes from this module.
 // When:  click time. The button persists indefinitely on the original
 //        reply, so this handler must not assume the toggle is still off
-//        — the admin could have re-enabled tracking in between. Re-read
+//       , the admin could have re-enabled tracking in between. Re-read
 //        GuildConfig at handler entry to make a fresh decision.
 // Where: customId format is `lb-ch-del:<guildId>`. The guildId is
 //        included as positional arg so a stale message from a different
@@ -33,9 +36,9 @@ import { COLORS } from "@base/copy/brand.js";
 
 const BUTTON_PREFIX = "lb-ch-del";
 
-// Exported so the configure-leaderboard-tracking command can build the
-// matching customId. Centralizing the prefix here means the slash command
-// file does not need to know the format string — it just calls this helper.
+// Exported so /server leaderboard tracking (configureLeaderboardTracking.ts)
+// can build the matching customId. Centralizing the prefix here means that
+// handler does not need to know the format string, it just calls this helper.
 export function buildLeaderboardChannelDeleteCustomId(guildId: string): string {
 	return `${BUTTON_PREFIX}:${guildId}`;
 }
@@ -43,10 +46,7 @@ export function buildLeaderboardChannelDeleteCustomId(guildId: string): string {
 async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({
-			embeds: [errorEmbed("Run this in a server, not a DM.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["Run this in a server, not a DM."] });
 		return;
 	}
 
@@ -55,10 +55,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 	const customIdParts = interaction.customId.split(":");
 	const buttonGuildId = customIdParts[1];
 	if (buttonGuildId && buttonGuildId !== guildId) {
-		await interaction.reply({
-			embeds: [errorEmbed("This button was issued for a different server.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["This button was issued for a different server."] });
 		return;
 	}
 
@@ -69,36 +66,25 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 	// suspenders, but the cost is zero.)
 	const member = interaction.member;
 	if (!member || typeof member.permissions === "string" || !member.permissions.has(PermissionFlagsBits.Administrator)) {
-		await interaction.reply({
-			embeds: [errorEmbed("You need Administrator permission to remove the leaderboard channel.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["You need Administrator permission to remove the leaderboard channel."] });
 		return;
 	}
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) {
-		await interaction.reply({
-			embeds: [errorEmbed("This server has not been set up yet. Run /setup first.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["This server has not been set up yet. Run /setup first."] });
 		return;
 	}
 
 	const channelId = config.leaderboardChannelId;
 	if (!channelId) {
-		// Already deleted (or never set). Idempotent reply — surface what
+		// Already deleted (or never set). Idempotent reply, surface what
 		// the admin probably wanted to hear rather than a confusing error.
-		await interaction.reply({
-			embeds: [
-				infoEmbed(
+		await showEmbedNotice(interaction, infoEmbed(
 					"Already removed",
-					"The leaderboard channel is already gone from this server. To restore it later, run /configure-leaderboard-tracking enabled:True with auto-heal enabled.",
+					"The leaderboard channel is already gone from this server. To restore it later, run /server leaderboard tracking enabled:True with auto-heal enabled.",
 					COLORS.SCHEDULE
-				),
-			],
-			flags: MessageFlags.Ephemeral,
-		});
+				));
 		return;
 	}
 
@@ -107,7 +93,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 		// channel. Discord's channelDelete event fires synchronously when we
 		// call channel.delete(), and ChannelDeleteWatcher reads GuildConfig
 		// at that moment to decide whether to rebuild. If we delete first
-		// and flag second, the watcher races us — it reads the pre-flag
+		// and flag second, the watcher races us, it reads the pre-flag
 		// state, sees autoHealEnabled is still true, and rebuilds the
 		// channel before our flag write lands. Reordering closes the race.
 		// Defense in depth: ChannelDeleteWatcher also checks the flag
@@ -119,18 +105,18 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 			userRemovedChannels: Array.from(removed),
 		});
 
-		// Now safe to delete the channel — when the channelDelete event
+		// Now safe to delete the channel, when the channelDelete event
 		// fires, the flag is already on disk and the watcher will honor it.
 		// May be null if the admin already deleted it in Discord directly
 		// between the slash command and the button click. Treat that as
 		// "nothing to do" rather than an error.
 		const channel = await interaction.guild?.channels.fetch(channelId).catch(() => null);
 		if (channel) {
-			await channel.delete("Removed via /configure-leaderboard-tracking follow-up button");
+			await channel.delete("Removed via /server leaderboard tracking follow-up button");
 		}
 
 		// Clear the stored id after the delete settles. Splitting the write
-		// from the flag update is harmless — repairMissingChannels checks
+		// from the flag update is harmless, repairMissingChannels checks
 		// the flag before the storedId, so a state where flag-is-set and
 		// storedId-is-stale still skips rebuild correctly.
 		await guildConfigStore.update(guildId, {
@@ -138,9 +124,9 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 		});
 
 		// Audit notice in the admin channel. Other admins see "X removed
-		// the leaderboard channel via /configure-leaderboard-tracking" so
+		// the leaderboard channel via /server leaderboard tracking" so
 		// the action is traceable without broadcasting to every member.
-		// Swallow send failures — the deletion itself succeeded and the
+		// Swallow send failures, the deletion itself succeeded and the
 		// notice is observability, not the load-bearing path.
 		try {
 			const adminChannel = await interaction.guild?.channels.fetch(config.adminChannelId).catch(() => null);
@@ -150,7 +136,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 					embeds: [
 						infoEmbed(
 							"🗑️ Leaderboard channel removed",
-							`**${actor}** removed the leaderboard channel via /configure-leaderboard-tracking.\n\nTo restore it later, an admin can run /configure-leaderboard-tracking enabled:True. Auto-heal will rebuild the channel on the next boot sweep as long as autoHealEnabled is on.`,
+							`**${actor}** removed the leaderboard channel via /server leaderboard tracking.\n\nTo restore it later, an admin can run /server leaderboard tracking enabled:True. Auto-heal will rebuild the channel on the next boot sweep as long as autoHealEnabled is on.`,
 							COLORS.SCHEDULE
 						),
 					],
@@ -160,29 +146,22 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 			console.warn(`[leaderboard-channel-delete] admin audit notice failed for guild ${guildId}`, noticeErr);
 		}
 
-		await interaction.reply({
-			embeds: [
-				infoEmbed(
+		// A confirmation of work done is an answer, so it posts in 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		await answerInChannel(interaction, "admin", { embeds: [infoEmbed(
 					"🗑️ Leaderboard channel removed",
-					"The leaderboard channel has been deleted from this server and flagged so auto-heal will not rebuild it. To restore it later, run /configure-leaderboard-tracking enabled:True — that re-enables tracking AND clears the removal flag, so the channel rebuilds on the next boot sweep (assuming autoHealEnabled is on).",
+					"The leaderboard channel has been deleted from this server and flagged so auto-heal will not rebuild it. To restore it later, run /server leaderboard tracking enabled:True, that re-enables tracking AND clears the removal flag, so the channel rebuilds on the next boot sweep (assuming autoHealEnabled is on).",
 					COLORS.SCHEDULE
-				),
-			],
-			flags: MessageFlags.Ephemeral,
-		});
+				)] });
 	} catch (err) {
 		console.error("[leaderboard-channel-delete] failed", err);
-		await interaction.reply({
-			embeds: [errorEmbed("Could not remove the leaderboard channel. Check the bot's permissions or delete it manually in Discord.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "Could not remove the leaderboard channel. Check the bot's permissions or delete it manually in Discord.");
 	}
 }
 
 /**
  * Register the leaderboard channel button handlers. Call once at bot boot
  * from main.ts, alongside registerDecreeEditHandlers(). Idempotent at module
- * level — the registry throws on duplicate prefix registration, which
+ * level, the registry throws on duplicate prefix registration, which
  * surfaces a bootstrap bug at startup rather than at first click.
  */
 export function registerLeaderboardChannelHandlers(): void {

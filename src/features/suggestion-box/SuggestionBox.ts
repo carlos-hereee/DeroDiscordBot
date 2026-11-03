@@ -2,7 +2,6 @@ import {
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
-	MessageFlags,
 	ModalBuilder,
 	TextInputBuilder,
 	TextInputStyle,
@@ -10,6 +9,7 @@ import {
 	type ModalSubmitInteraction,
 } from "discord.js";
 import { registerButton, registerModal } from "@handlers/interactionRegistry.js";
+import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import {
 	serverApi,
@@ -17,6 +17,8 @@ import {
 	ServerResponseError,
 	ServerUnreachableError,
 } from "@utils/serverApi.js";
+import { showNotice } from "@utils/textModal.js";
+import { suggestionBoxCopy } from "./suggestionBoxCopy.js";
 
 // ── Suggestion Box ─────────────────────────────────────────────────
 // Lets any guild member send feedback that lands in the platform
@@ -81,23 +83,21 @@ export function buildSuggestionBoxButton(): ButtonBuilder {
 }
 
 // Button handler: just shows the modal. No permission gate because
-// the suggestion box is open to all guild members — friction defeats
+// the suggestion box is open to all guild members, friction defeats
 // the purpose of feedback collection.
 async function handleOpenButton(interaction: ButtonInteraction): Promise<void> {
 	await interaction.showModal(buildSuggestionModal());
 }
 
 // Modal submission handler: pull the text, gather guild + user
-// context, post to server, ack with ephemeral confirmation. Errors
-// are mapped to a single user-facing "could not send" message; the
+// context, post to server, ack with a confirmation in 💬dero-commands
+// (2026-10 item 257 Phase 5) that never repeats the suggestion's text.
+// Errors are mapped to a single user-facing "could not send" message; the
 // underlying typed error is logged for diagnostics.
 async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
 	const text = interaction.fields.getTextInputValue(TEXT_INPUT_ID).trim();
 	if (!text) {
-		await interaction.reply({
-			embeds: [errorEmbed("Suggestion cannot be empty.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showNotice(interaction, { title: suggestionBoxCopy.noticeTitle, sections: [suggestionBoxCopy.empty] });
 		return;
 	}
 
@@ -106,20 +106,16 @@ async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<v
 		// Defensive: Discord scopes the slash command to guilds so
 		// guild is normally populated. Empty branch covers any cache
 		// race or DM path so users get a clear "must be in a server"
-		// message instead of a generic error.
-		await interaction.reply({
-			embeds: [errorEmbed("This must be used inside a server, not a DM.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		// message instead of a generic error, as a private notice.
+		await showNotice(interaction, { title: suggestionBoxCopy.noticeTitle, sections: [suggestionBoxCopy.outsideGuild] });
 		return;
 	}
 
-	// Defer with an ephemeral flag so the spinner is private to the
-	// submitter. Network round trip to Heroku can take 200ms to 2s;
-	// deferring gives us the full 15-min interaction window if the
-	// platform is slow, and avoids a visible "this app is thinking"
-	// state for nearby members in the channel.
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	// Acknowledge first: the network round trip to Heroku can take 200ms to
+	// 2s, and acknowledging gives us the full 15-min interaction window if the
+	// platform is slow, without a visible "this app is thinking" state for
+	// nearby members in the channel.
+	const answer = await beginChannelAnswer(interaction, "member");
 
 	const payload = {
 		text,
@@ -130,7 +126,7 @@ async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<v
 
 	try {
 		await serverApi.post("/api/suggestion-box", payload);
-		await interaction.editReply({
+		await answer.send({
 			content: "✅ Thank you for taking the time to write to us. Every note shapes what comes next.",
 		});
 	} catch (err) {
@@ -146,7 +142,7 @@ async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<v
 		} else {
 			console.error("[suggestion-box] unknown error", err);
 		}
-		await interaction.editReply({
+		await answer.send({
 			embeds: [errorEmbed("Could not send your suggestion right now. Please try again later.")],
 		});
 	}

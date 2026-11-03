@@ -6,7 +6,6 @@ import {
 	ButtonBuilder,
 	ButtonStyle,
 	EmbedBuilder,
-	MessageFlags,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
@@ -16,6 +15,8 @@ import { registerButton } from "@handlers/interactionRegistry.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { ACTIVE_POLLS, IPollDefinition } from "./pollDefinitions.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── PollDispatcher ────────────────────────────────────────────────────
 // Reusable audience-poll mechanism (v1.6 Phase 3, item 34a). Broadcasts each
@@ -35,7 +36,7 @@ import { ACTIVE_POLLS, IPollDefinition } from "./pollDefinitions.js";
 // on the "poll" prefix; this handler splits the rest.
 const POLL_BUTTON_PREFIX = "poll";
 
-// Neutral platform framing — see pollDefinitions for why poll copy is not pack
+// Neutral platform framing, see pollDefinitions for why poll copy is not pack
 // voice. Kept here as module consts so the reusable framing stays in one place.
 const POLL_EMBED_TITLE = "📊 Quick question";
 const POLL_INSTRUCTION =
@@ -55,27 +56,24 @@ async function handlePollVote(interaction: ButtonInteraction): Promise<void> {
 	// message left over from an older deploy). Acknowledge quietly so the click
 	// does not surface a generic interaction error.
 	if (!poll || !option) {
-		await interaction.reply({ content: "This poll is no longer active.", flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.poll, sections: ["This poll is no longer active."] });
 		return;
 	}
 
 	// Polls only post to guild channels, but a button can technically be clicked
-	// from a forwarded/DM context — guard so we never write a null guildId row.
+	// from a forwarded/DM context, guard so we never write a null guildId row.
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ content: "Please vote from within the server.", flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.poll, sections: ["Please vote from within the server."] });
 		return;
 	}
 
 	try {
 		await pollResultStore.recordVote(poll.pollId, guildId, interaction.user.id, option.key);
-		await interaction.reply({
-			content: `Thanks, your vote for "${option.label}" is recorded. Tap another option anytime to change it.`,
-			flags: MessageFlags.Ephemeral,
-		});
+		await showNotice(interaction, { title: getPluginCopy(null).notice.poll, sections: [`Thanks, your vote for "${option.label}" is recorded. Tap another option anytime to change it.`] });
 	} catch (error) {
 		console.error(`[poll] failed to record vote for ${poll.pollId} in guild ${guildId}`, error);
-		await interaction.reply({ content: "Could not record your vote. Try again in a moment.", flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.poll, sections: ["Could not record your vote. Try again in a moment."] });
 	}
 }
 
@@ -152,7 +150,7 @@ async function dispatchOnePoll(client: Client, poll: IPollDefinition): Promise<v
 
 			const announcementsChannelId = config.announcementsChannelId;
 			if (!announcementsChannelId) {
-				// Not a failure — defer without logging so the next boot (once
+				// Not a failure, defer without logging so the next boot (once
 				// ensureHomebase has rebuilt) re-attempts.
 				console.warn(`[poll] guild ${guild.id} missing announcements channel; deferring ${poll.pollId}`);
 				continue;
@@ -181,7 +179,7 @@ async function dispatchOnePoll(client: Client, poll: IPollDefinition): Promise<v
 	}
 
 	if (posted > 0 || skipped > 0) {
-		console.log(`[poll] ${poll.pollId} — posted to ${posted} guild(s), skipped ${skipped}`);
+		console.log(`[poll] ${poll.pollId}, posted to ${posted} guild(s), skipped ${skipped}`);
 	}
 }
 

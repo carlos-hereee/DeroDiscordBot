@@ -1,6 +1,6 @@
 {
 	"name": "dero-discord-bot",
-	"version": "1.6.1",
+	"version": "2.0.0",
 	"description": "This is a discord bot, it will be used to display commander builds ie. talent tress",
 	"main": "./dist/main.js",
 	"scripts": {
@@ -26,13 +26,21 @@
 	"type": "module",
 	"license": "ISC",
 	"dependencies": {
+		"@aws-sdk/client-s3": "^3.1024.0",
+		"@aws-sdk/s3-presigned-post": "^3.1024.0",
+		"@aws-sdk/s3-request-presigner": "3.1024.0",
+		"@discordjs/voice": "^0.19.2",
+		"@napi-rs/canvas": "^1.0.10",
 		"cors": "^2.8.6",
 		"discord.js": "^14.25.1",
 		"dotenv": "^17.2.1",
 		"express": "^5.2.1",
+		"gifenc": "^1.0.3",
 		"mongodb": "^6.18.0",
 		"mongoose": "^8.17.1",
 		"node-cron": "^4.2.1",
+		"openskill": "^5.0.1",
+		"opusscript": "^0.0.8",
 		"uuid": "^11.1.0"
 	},
 	"devDependencies": {
@@ -51,7 +59,6 @@
 		"eslint-plugin-import": "^2.32.0",
 		"eslint-plugin-prettier": "^5.5.5",
 		"fix-esm-import-path": "^1.10.3",
-		"gifenc": "^1.0.3",
 		"nodemon": "^3.1.10",
 		"pngjs": "^7.0.0",
 		"prettier": "^3.8.1",
