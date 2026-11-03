@@ -36,8 +36,9 @@ import { getPluginCopy } from "@base/copy/getCopy.js";
 //   ① "Self destruct" opens a modal that says what goes (every Dero channel and its
 //      message history) and what stays (stored data, and an adopted welcome or
 //      rules channel), and asks through one REQUIRED select:
-//        Just delete channels  demolishHomebase alone. Every setting is kept, so
-//                              /setup rebuilds the server as it was.
+//        Just delete channels  demolishHomebase, then resetConfigsToDefault. The
+//                              records are kept; the settings and stored ids go, so
+//                              /setup builds Dero fresh (2026-11 item 285 debug pass).
 //        Arcade only           the /arcade off path (arcadeSwitch.turnArcadeOff).
 //        Delete my data        answers with one Type CONFIRM button, because a
 //                              modal cannot open from a modal submit.
@@ -279,9 +280,11 @@ async function runChoice(interaction: ModalSubmitInteraction, guild: Guild): Pro
 	await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [c.staleControl] });
 }
 
-// Just delete channels: the teardown alone. Every setting stays on the row, so
-// /setup rebuilds the channels from it (autoSetup with force only rewrites ids).
-// Its answers stay private: every channel they could post in is the one being deleted.
+// Just delete channels: the teardown, then every setting back to its default, with the
+// records kept (owner ruling in the 2026-11 item 285 debug pass, replacing decision 4's
+// "every setting kept"). The teardown clears the stored ids, so /setup builds Dero
+// fresh, Headquarters only. Its answers stay private: every channel they could post in
+// is the one being deleted.
 async function runJustDeleteChannels(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
 	// Logged BEFORE the teardown on purpose: the log channel is about to be deleted,
 	// and the BotLog row is written either way.
@@ -294,8 +297,17 @@ async function runJustDeleteChannels(interaction: ModalSubmitInteraction, guild:
 		await interaction.followUp({ content: c.deleteFailed, flags: MessageFlags.Ephemeral }).catch(() => undefined);
 		return;
 	}
+	// The settings go after the channels, as in Delete my data, so a failed reset still
+	// leaves the teardown done and is named for a rerun to finish.
+	let content: string = c.channelsDone;
+	try {
+		await resetConfigsToDefault(guild.id);
+	} catch (error) {
+		console.error(`[self-destruct] settings reset failed in guild ${guild.id}`, error);
+		content = c.deletePartial([c.settingsLabel]);
+	}
 	// Best effort: the channel this ran in may already be gone.
-	await interaction.followUp({ content: c.channelsDone, flags: MessageFlags.Ephemeral }).catch(() => undefined);
+	await interaction.followUp({ content, flags: MessageFlags.Ephemeral }).catch(() => undefined);
 }
 
 // Arcade only: exactly what /arcade off runs, acknowledged first because deleting a
@@ -399,6 +411,28 @@ async function demolishHomebase(guild: Guild, actorId: string): Promise<void> {
 	// these deletes because the homebase flag is set, so this summary is where an
 	// operator reads what happened (2026-10 item 257, Log 5).
 	console.warn(`[self-destruct] homebase demolished in guild ${guild.id}: ${deleted} channel(s) deleted, none rebuilt until /setup runs`);
+
+	await clearManagedSlots(guild.id);
+}
+
+/**
+ * Forget every channel and category the teardown removed, keeping the row, so the next
+ * /setup reads no managed category and builds Dero fresh, 🏰 DERO HEADQUARTERS only
+ * (runAutoSetup's fresh install branch), instead of rebuilding the old layout from dead
+ * ids. The row stays because homebaseDestroyed lives on it: without a row the boot sweep
+ * would treat the server as new and build Headquarters before anyone ran /setup.
+ *
+ * Written AFTER the deletes, never in the flag write, so a teardown that stops halfway
+ * still holds the ids of what it could not delete. Best effort: a failed write only
+ * means the next /setup rebuilds the old layout, which is how it worked before.
+ */
+async function clearManagedSlots(guildId: string): Promise<void> {
+	const cleared = Object.fromEntries([...HOMEBASE_CHANNEL_FIELDS, ...MANAGED_CATEGORY_FIELDS].map((field) => [field, null]));
+	try {
+		await guildConfigStore.update(guildId, { ...cleared, onDemandChannels: [], tutorialCardMessageIds: {} });
+	} catch (error) {
+		console.warn(`[self-destruct] could not clear the stored channel ids in guild ${guildId}; the next /setup rebuilds the old layout`, error);
+	}
 }
 
 /**

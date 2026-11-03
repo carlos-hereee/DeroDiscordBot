@@ -71,11 +71,12 @@ beforeEach(() => {
 
 // ── the full build ──────────────────────────────────────────────────────────
 // A fresh install builds only 🏰 DERO HEADQUARTERS (2026-11 item 285 Phase 2), so the
-// notice board's welcome and rules adoption runs on the full build that remains: the
-// /setup that rebuilds a self destructed server, a row with no managed id left, built
-// with force and persisted through update (path B).
+// notice board's welcome and rules adoption runs on the full build that remains: a
+// forced rebuild of a legacy row whose 🪧 NOTICE BOARD category was deleted, persisted
+// through update (path B). A self destructed row now builds fresh (2026-11 item 285
+// debug pass), since self destruct clears every stored id.
 
-const FULL_BUILD_ROW = { guildId: "guild-1", homebaseDestroyed: true, setupComplete: false };
+const FULL_BUILD_ROW = { guildId: "guild-1", categoryId: "deleted-notice-board", setupComplete: true };
 
 // The build's own persist write, told apart from any other update by its intro anchors.
 function persistIndex(): number {
@@ -360,8 +361,11 @@ describe("a rebuild of a Community server whose rules channel Onboarding uses", 
 				throw Object.assign(new Error("Onboarding channels must be readable by everyone"), { code: 350003 });
 			});
 		}
+		// A legacy row whose 🪧 NOTICE BOARD was deleted, so the forced rebuild takes the full
+		// path; a row with no managed id would build fresh (2026-11 item 285 debug pass).
 		const existing = {
 			guildId: "guild-1",
+			categoryId: "deleted-notice-board",
 			memberRoleId: "role-member",
 			adminRoleId: null,
 			adoptedChannelIds: ["own-rules"],

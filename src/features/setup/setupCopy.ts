@@ -204,7 +204,7 @@ export const setupCopy = {
 		choiceModalBody: [
 			"**Self destruct deletes every Dero channel and its message history.**",
 			"",
-			"It does **not** delete stored data: announcements, schedules, settings, members' levels, game history and the rest stay. Delete my data also deletes the stored records, puts every setting back to its default, and asks you to type CONFIRM first.",
+			"It also puts every Dero setting back to its default, so the next /setup builds Dero fresh, starting with 🏰 DERO HEADQUARTERS. Stored records (announcements, schedules, members' levels, game history and the rest) stay unless you pick Delete my data, which deletes them too and asks you to type CONFIRM first.",
 			"",
 			"A welcome or rules channel your server had before Dero adopted it is kept.",
 		].join("\n"),
@@ -212,7 +212,7 @@ export const setupCopy = {
 		choices: {
 			channels: {
 				label: "Just delete channels",
-				description: "Delete Dero's channels, keep every setting. /setup brings them back as they were.",
+				description: "Delete Dero's channels and reset its settings, keep the records. /setup starts fresh.",
 				emoji: "🧹",
 			},
 			data: {
@@ -226,8 +226,8 @@ export const setupCopy = {
 				emoji: "🎮",
 			},
 		},
-		deletingChannelsBody: "Deleting Dero's channels now. Every setting and record is kept.",
-		channelsDone: "Done. Dero's channels are gone and every setting is kept. Run /setup to bring them back as they were.",
+		deletingChannelsBody: "Deleting Dero's channels and resetting its settings now. Every record is kept.",
+		channelsDone: "Done. Dero's channels are gone and its settings are back to their defaults; every record is kept. Run /setup to build Dero fresh.",
 		deleteDataTitle: "🗑️ Delete my data",
 		deleteDataBody: [
 			"This deletes both of Dero's categories and every channel in them, every match in progress, and this server's stored records (member levels and renown history, game rooms and their transcripts, game tallies and luck, game requests, poll votes, events and their attendance, and any unclaimed pairing code), and puts every Dero setting back to how a new server starts (Dero's voice switch, lists and budget, the arcade's settings, auto heal, removed channels, channel renames, custom copy, your saved rules text, and the leaderboard and leveling settings).",
@@ -252,7 +252,7 @@ export const setupCopy = {
 		settingsLabel: "settings",
 		// The audit line's detail for each step of the flow.
 		auditRefusedNotOwner: "refused, not the server owner",
-		auditChannelsConfirmed: "just delete channels, settings kept",
+		auditChannelsConfirmed: "just delete channels, settings reset",
 		auditArcadeOff: "arcade only, category and channels deleted",
 		auditArcadeAlreadyOff: "arcade only, the arcade was already off",
 		auditArcadeFailed: "arcade only failed, nothing deleted",

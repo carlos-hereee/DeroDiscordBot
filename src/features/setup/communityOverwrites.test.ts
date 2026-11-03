@@ -141,7 +141,7 @@ function makeStored(overrides: Record<string, unknown> = {}): Record<string, unk
 }
 
 // The full build's row, see "a full build builds every managed channel" below.
-const FULL_BUILD_ROW = { guildId: "guild-1", homebaseDestroyed: true, setupComplete: false };
+const FULL_BUILD_ROW = { guildId: "guild-1", categoryId: "deleted-notice-board", setupComplete: true };
 
 function createCalls(guild: { channels: { create: ReturnType<typeof vi.fn> } }): ICreateCall[] {
 	return guild.channels.create.mock.calls.map((call) => call[0] as ICreateCall);

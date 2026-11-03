@@ -43,10 +43,12 @@ const guildConfigMock = guildConfigStore as unknown as {
 // ── fixtures ──────────────────────────────────────────────────────────
 
 // A fresh install builds only 🏰 DERO HEADQUARTERS (2026-11 item 285 Phase 2), so the
-// full three category build is reached the way it still runs: the /setup that rebuilds
-// a self destructed server, a row with no managed id left, built with force. It
-// persists through update (path B), so fullBuildPayloads reads it from there.
-const FULL_BUILD_ROW = { guildId: "guild-1", homebaseDestroyed: true, setupComplete: false };
+// full three category build is reached the way it still runs: a forced rebuild of a
+// legacy row whose 🪧 NOTICE BOARD category was deleted (Discord answers its stored id
+// as gone). A self destructed row no longer qualifies: self destruct clears every
+// stored id, so its /setup builds fresh (2026-11 item 285 debug pass). It persists
+// through update (path B), so fullBuildPayloads reads it from there.
+const FULL_BUILD_ROW = { guildId: "guild-1", categoryId: "deleted-notice-board", setupComplete: true };
 
 // The build's own persist write, told apart from any other update by its intro anchors.
 function fullBuildPayloads(): Array<Record<string, unknown>> {
@@ -2444,6 +2446,22 @@ describe("GuildSetupManager on a Headquarters only install", () => {
 		const [payload] = guildConfigMock.create.mock.calls[0] as [Record<string, unknown>];
 		expect(payload.gamesCategoryId).toBeNull();
 		expect(callsOf(guild).some((call) => call.parent === "old-games-cat")).toBe(false);
+	});
+
+	// Owner ruling in the 2026-11 item 285 debug pass: self destruct clears every stored id
+	// but keeps the row, so the /setup that follows (autoSetup with force) builds fresh.
+	it("builds Headquarters alone when /setup rebuilds a self destructed row with no managed id left", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue({ guildId: "guild-1", homebaseDestroyed: true, setupComplete: false });
+		const guild = makeInstallGuild();
+
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" }, { force: true });
+
+		const calls = callsOf(guild);
+		expect(calls.filter((call) => call.type === ChannelType.GuildCategory).map((call) => call.name)).toEqual([rokCommanderCopy.setup.headquartersCategoryName]);
+		const payload = guildConfigMock.update.mock.calls.map((call) => call[1] as Record<string, unknown>).find((write) => "headquartersCategoryId" in write)!;
+		expect(payload.categoryId).toBeNull();
+		expect(payload.gamesCategoryId).toBeNull();
+		expect(payload.userRemovedChannels).toEqual(ARCADE_FIELDS);
 	});
 
 	it("leaves a legacy row alone without force, exactly as before", async () => {

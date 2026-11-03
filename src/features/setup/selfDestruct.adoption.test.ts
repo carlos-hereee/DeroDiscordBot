@@ -111,13 +111,15 @@ describe("self-destruct with an adopted channel", () => {
 	});
 
 	it("releases the adopted slot and empties the list in the same write as the flag, before any delete", async () => {
+		// The flag write comes first; the second write, after the deletes, clears every stored id.
+		// The adopted slot is released in the first so nothing points at the kept channel mid teardown.
 		const { stored, channels, interaction } = rig();
 		mocks.findByGuildId.mockResolvedValue(stored);
 
 		await confirm(interaction);
 
-		expect(mocks.update).toHaveBeenCalledOnce();
-		expect(mocks.update).toHaveBeenCalledWith("g1", { homebaseDestroyed: true, setupComplete: false, welcomeChannelId: null, adoptedChannelIds: [] });
+		expect(mocks.update).toHaveBeenCalledTimes(2);
+		expect(mocks.update.mock.calls[0]).toEqual(["g1", { homebaseDestroyed: true, setupComplete: false, welcomeChannelId: null, adoptedChannelIds: [] }]);
 		const writeOrder = mocks.update.mock.invocationCallOrder[0]!;
 		const firstDelete = (channels.get("ch-introChannelId") as Deletable).delete.mock.invocationCallOrder[0]!;
 		expect(writeOrder).toBeLessThan(firstDelete);

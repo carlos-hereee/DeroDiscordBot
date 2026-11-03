@@ -293,10 +293,13 @@ export class GuildSetupManager {
 		// left out and their ids stay null; the onboarding tutorial (Phase 3) builds the
 		// notice board on demand, and the arcade is stored off exactly as turnArcadeOff
 		// leaves it, so the boot sweep never builds it until /arcade on lifts the opt out.
-		// Any existing row (every forced rebuild, a self destruct's /setup) is a legacy
-		// build and takes the full path below, byte for byte as before. This flag is the
-		// one branch; every step it touches reads it rather than deciding again.
-		const headquartersOnly = existing === null;
+		// A row that records no managed category builds fresh too: self destruct clears
+		// every stored id but keeps the row (2026-11 item 285 debug pass), so the /setup
+		// after it starts from Headquarters alone. Every legacy row records a category, so
+		// every other forced rebuild still takes the full path below, byte for byte as
+		// before. This flag is the one branch; every step it touches reads it rather than
+		// deciding again.
+		const headquartersOnly = existing === null || !hasManagedCategory(existing);
 
 		// The SECOND category is LOOKED UP before the homebase category is built, and
 		// only CREATED after it, so the sidebar order stays NOTICE BOARD then ARCADE

@@ -129,7 +129,9 @@ describe("the choice modal", () => {
 		};
 		const text = modal.components.find((component) => component.content)!.content!;
 		expect(text).toContain("deletes every Dero channel and its message history");
-		expect(text).toContain("does **not** delete stored data");
+		// Every teardown resets the settings now (2026-11 item 285 debug pass), and only Delete my data takes the records.
+		expect(text).toContain("puts every Dero setting back to its default");
+		expect(text).toContain("Stored records");
 		expect(text).toContain("adopted it is kept");
 
 		const select = modal.components.find((component) => component.component)!.component!;
@@ -180,18 +182,43 @@ describe("the choice modal", () => {
 });
 
 describe("Just delete channels", () => {
-	it("demolishes the channels, keeps every setting and record, and writes one log line", async () => {
+	// Owner ruling in the 2026-11 item 285 debug pass: Just delete channels resets the
+	// settings and clears every stored id too, so the next /setup builds Dero fresh. The
+	// records stay; only Delete my data wipes them.
+	it("demolishes the channels, clears the stored ids, resets the settings, keeps the records, and writes one log line", async () => {
 		const interaction = choose("channels");
 		await submitModal(interaction);
 
-		// The one write is demolishHomebase's flag: no setting is in it, and no record is wiped.
-		expect(mocks.update).toHaveBeenCalledOnce();
-		expect(mocks.update).toHaveBeenCalledWith("g1", { homebaseDestroyed: true, setupComplete: false, adoptedChannelIds: [] });
+		expect(mocks.update).toHaveBeenCalledTimes(2);
+		expect(mocks.update.mock.calls[0]).toEqual(["g1", { homebaseDestroyed: true, setupComplete: false, adoptedChannelIds: [] }]);
+		const cleared = mocks.update.mock.calls[1]![1] as Record<string, unknown>;
+		for (const field of [...HOMEBASE_CHANNEL_FIELDS, ...MANAGED_CATEGORY_FIELDS]) expect(cleared[field], field).toBeNull();
+		expect(cleared).toMatchObject({ onDemandChannels: [], tutorialCardMessageIds: {} });
+		expect(mocks.resetConfigsToDefault).toHaveBeenCalledWith("g1");
+		expect(mocks.update.mock.invocationCallOrder[1]!).toBeLessThan(mocks.resetConfigsToDefault.mock.invocationCallOrder[0]!);
 		expect(mocks.wipeServerData).not.toHaveBeenCalled();
-		expect(mocks.resetConfigsToDefault).not.toHaveBeenCalled();
 		expect(mocks.turnArcadeOff).not.toHaveBeenCalled();
 		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.channelsDone }));
 		expect(auditDetails()).toEqual([c.auditChannelsConfirmed]);
+	});
+});
+
+describe("Just delete channels, when a step fails", () => {
+	it("names the settings when their reset fails, after the channels are already gone", async () => {
+		mocks.resetConfigsToDefault.mockRejectedValueOnce(new Error("write failed"));
+		const interaction = choose("channels");
+		await submitModal(interaction);
+
+		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.deletePartial([c.settingsLabel]) }));
+	});
+
+	it("still finishes when clearing the stored ids fails, so the next /setup only rebuilds the old layout", async () => {
+		mocks.update.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("write failed"));
+		const interaction = choose("channels");
+		await submitModal(interaction);
+
+		expect(mocks.resetConfigsToDefault).toHaveBeenCalledWith("g1");
+		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.channelsDone }));
 	});
 });
 
