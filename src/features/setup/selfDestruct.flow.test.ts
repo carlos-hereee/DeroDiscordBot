@@ -2,10 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ButtonInteraction, ModalSubmitInteraction } from "discord.js";
 
 // ── selfDestruct, the three choices (2026-10 item 254) ──────────────────────
-// One modal asks what to do. Just delete channels tears the channels down and keeps
-// every setting; Arcade only runs the /arcade off path; Delete my data deletes the
-// records and resets the settings (owner decision 4a), only after the owner types CONFIRM. Every step is owner only, and each choice is one
-// line in the admin log.
+// One modal asks what to do. Just delete channels tears the channels down and resets
+// the settings, keeping the records; Arcade only runs the /arcade off path; Delete my
+// data deletes the records too (owner decision 4a), only after the owner types CONFIRM.
+// Both teardowns then build Dero fresh (2026-11 item 285 debug pass). Every step is
+// owner only, and each choice is one line in the admin log.
 
 const mocks = vi.hoisted(() => ({
 	registerButton: vi.fn(),
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
 	update: vi.fn(),
 	revokeDeroVoiceRooms: vi.fn(),
+	rebuildDestroyedHomebase: vi.fn(),
 }));
 
 vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton, registerModal: mocks.registerModal }));
@@ -28,6 +30,7 @@ vi.mock("@features/voice/deroVoiceRooms.js", () => ({
 	revokeDeroVoiceRooms: mocks.revokeDeroVoiceRooms,
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, update: mocks.update } }));
+vi.mock("./GuildSetupManager.js", () => ({ GuildSetupManager: { rebuildDestroyedHomebase: mocks.rebuildDestroyedHomebase } }));
 
 import {
 	buildChoiceModal,
@@ -39,9 +42,13 @@ import {
 	type SelfDestructChoice,
 } from "./selfDestruct.js";
 import { setupCopy } from "./setupCopy.js";
+import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 
 const c = setupCopy.selfDestruct;
 const OWNER = "owner-1";
+const SANCTUM = "sanctum-1";
+// The second sentence of a teardown's done line once the rebuild stood.
+const REBUILT = c.rebuilt(`<#${SANCTUM}>`, rokCommanderCopy.channelContent.adminWelcome.setupButtonLabel);
 const GUILD = { id: "g1", ownerId: OWNER, channels: { fetch: vi.fn(async () => null) } };
 
 type Reply = { embeds?: Array<{ data: { title?: string; description?: string } }>; components?: Array<{ toJSON(): { components: Array<{ custom_id?: string; label?: string }> } }> };
@@ -104,6 +111,7 @@ function buttonIds(reply: Reply): string[] {
 }
 
 const demolished = (): boolean => mocks.update.mock.calls.some((call) => (call[1] as { homebaseDestroyed?: boolean }).homebaseDestroyed === true);
+const flagCleared = (): boolean => mocks.update.mock.calls.some((call) => (call[1] as { homebaseDestroyed?: boolean }).homebaseDestroyed === false);
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -112,8 +120,9 @@ beforeEach(() => {
 	mocks.wipeServerData.mockResolvedValue({ failed: [] });
 	mocks.resetConfigsToDefault.mockResolvedValue(undefined);
 	mocks.turnArcadeOff.mockResolvedValue("off");
-	mocks.findByGuildId.mockResolvedValue({ guildId: "g1", adoptedChannelIds: [] });
+	mocks.findByGuildId.mockResolvedValue({ guildId: "g1", adoptedChannelIds: [], adminChannelId: SANCTUM });
 	mocks.update.mockResolvedValue(undefined);
+	mocks.rebuildDestroyedHomebase.mockResolvedValue(true);
 });
 
 describe("the self destruct button", () => {
@@ -182,14 +191,14 @@ describe("the choice modal", () => {
 });
 
 describe("Just delete channels", () => {
-	// Owner ruling in the 2026-11 item 285 debug pass: Just delete channels resets the
-	// settings and clears every stored id too, so the next /setup builds Dero fresh. The
-	// records stay; only Delete my data wipes them.
+	// Owner rulings in the 2026-11 item 285 debug pass: Just delete channels resets the
+	// settings and clears every stored id too, then builds Dero fresh at once, so the new
+	// 🔒inner-sanctum offers Set up Dero. The records stay; only Delete my data wipes them.
 	it("demolishes the channels, clears the stored ids, resets the settings, keeps the records, and writes one log line", async () => {
 		const interaction = choose("channels");
 		await submitModal(interaction);
 
-		expect(mocks.update).toHaveBeenCalledTimes(2);
+		expect(mocks.update).toHaveBeenCalledTimes(3);
 		expect(mocks.update.mock.calls[0]).toEqual(["g1", { homebaseDestroyed: true, setupComplete: false, adoptedChannelIds: [] }]);
 		const cleared = mocks.update.mock.calls[1]![1] as Record<string, unknown>;
 		for (const field of [...HOMEBASE_CHANNEL_FIELDS, ...MANAGED_CATEGORY_FIELDS]) expect(cleared[field], field).toBeNull();
@@ -198,9 +207,46 @@ describe("Just delete channels", () => {
 		expect(mocks.update.mock.invocationCallOrder[1]!).toBeLessThan(mocks.resetConfigsToDefault.mock.invocationCallOrder[0]!);
 		expect(mocks.wipeServerData).not.toHaveBeenCalled();
 		expect(mocks.turnArcadeOff).not.toHaveBeenCalled();
-		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.channelsDone }));
+		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: `${c.channelsDone} ${REBUILT}` }));
 		expect(auditDetails()).toEqual([c.auditChannelsConfirmed]);
 	});
+
+	it("builds Dero fresh after the settings reset, then clears the flag so the boot sweep repairs it like any server", async () => {
+		await submitModal(choose("channels"));
+
+		expect(mocks.rebuildDestroyedHomebase).toHaveBeenCalledWith(GUILD);
+		expect(mocks.resetConfigsToDefault.mock.invocationCallOrder[0]!).toBeLessThan(mocks.rebuildDestroyedHomebase.mock.invocationCallOrder[0]!);
+		expect(mocks.update.mock.calls[2]).toEqual(["g1", { homebaseDestroyed: false }]);
+		expect(mocks.rebuildDestroyedHomebase.mock.invocationCallOrder[0]!).toBeLessThan(mocks.update.mock.invocationCallOrder[2]!);
+	});
+});
+
+describe("the rebuild after a teardown, when it does not stand", () => {
+	// Dero can lose Manage Channels or a write can fail between the teardown and the
+	// rebuild. The flag then stays, so /setup's rebuild branch is the retry, and the
+	// done line says so instead of naming a channel that was not built.
+	for (const [label, makeSubmit, done] of [
+		["Just delete channels", () => choose("channels"), c.channelsDone],
+		["Delete my data", () => confirmWord("CONFIRM"), c.deleteDone],
+	] as const) {
+		it(`${label}: keeps the flag and names /setup when the rebuild does not stand`, async () => {
+			mocks.rebuildDestroyedHomebase.mockResolvedValue(false);
+			const interaction = makeSubmit();
+			await submitModal(interaction);
+
+			expect(flagCleared()).toBe(false);
+			expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: `${done} ${c.rebuildFailed}` }));
+		});
+
+		it(`${label}: keeps the flag and names /setup when the rebuild throws`, async () => {
+			mocks.rebuildDestroyedHomebase.mockRejectedValue(new Error("missing access"));
+			const interaction = makeSubmit();
+			await submitModal(interaction);
+
+			expect(flagCleared()).toBe(false);
+			expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: `${done} ${c.rebuildFailed}` }));
+		});
+	}
 });
 
 describe("Just delete channels, when a step fails", () => {
@@ -209,16 +255,16 @@ describe("Just delete channels, when a step fails", () => {
 		const interaction = choose("channels");
 		await submitModal(interaction);
 
-		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.deletePartial([c.settingsLabel]) }));
+		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: `${c.deletePartial([c.settingsLabel])} ${REBUILT}` }));
 	});
 
-	it("still finishes when clearing the stored ids fails, so the next /setup only rebuilds the old layout", async () => {
+	it("still finishes when clearing the stored ids fails, so the rebuild only rebuilds the old layout", async () => {
 		mocks.update.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("write failed"));
 		const interaction = choose("channels");
 		await submitModal(interaction);
 
 		expect(mocks.resetConfigsToDefault).toHaveBeenCalledWith("g1");
-		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.channelsDone }));
+		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: `${c.channelsDone} ${REBUILT}` }));
 	});
 });
 
@@ -318,7 +364,9 @@ describe("Delete my data", () => {
 		expect(mocks.resetConfigsToDefault).toHaveBeenCalledWith("g1");
 		expect(mocks.update.mock.invocationCallOrder[0]!).toBeLessThan(mocks.wipeServerData.mock.invocationCallOrder[0]!);
 		expect(mocks.wipeServerData.mock.invocationCallOrder[0]!).toBeLessThan(mocks.resetConfigsToDefault.mock.invocationCallOrder[0]!);
-		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.deleteDone }));
+		expect(mocks.resetConfigsToDefault.mock.invocationCallOrder[0]!).toBeLessThan(mocks.rebuildDestroyedHomebase.mock.invocationCallOrder[0]!);
+		expect(flagCleared()).toBe(true);
+		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: `${c.deleteDone} ${REBUILT}` }));
 		expect(auditDetails()).toEqual([c.auditDeleteConfirmed]);
 	});
 
@@ -327,7 +375,7 @@ describe("Delete my data", () => {
 		const interaction = confirmWord("CONFIRM");
 		await submitModal(interaction);
 
-		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.deletePartial(["luck"]) }));
+		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: `${c.deletePartial(["luck"])} ${REBUILT}` }));
 	});
 
 	it("names the settings when their reset fails, after the records are already gone", async () => {
@@ -337,6 +385,6 @@ describe("Delete my data", () => {
 		await submitModal(interaction);
 
 		expect(mocks.wipeServerData).toHaveBeenCalledWith("g1");
-		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.deletePartial([c.settingsLabel]) }));
+		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: `${c.deletePartial([c.settingsLabel])} ${REBUILT}` }));
 	});
 });

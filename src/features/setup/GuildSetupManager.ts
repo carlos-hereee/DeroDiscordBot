@@ -2721,6 +2721,29 @@ export class GuildSetupManager {
 		await GuildSetupManager.autoSetup(guild, { guildId: guild.id, ownerId: guild.ownerId }, { force: true, ...options });
 	}
 
+	/**
+	 * Build Dero again on a self destructed server and answer whether the rebuild stood.
+	 * The one rebuild for both callers (2026-11 item 285 debug pass): /setup's rebuild
+	 * branch, and both self destruct teardowns, which rebuild at once so the new
+	 * 🔒inner-sanctum offers Set up Dero. It never writes homebaseDestroyed; each caller
+	 * clears it once its own steps are done, so a false answer leaves /setup as the retry.
+	 *
+	 * autoSetup swallows a missing permissions failure (it catches 50013 and returns
+	 * without building), so the rebuilt category is fetched to prove it exists. A self
+	 * destructed row rebuilds 🏰 DERO HEADQUARTERS alone and stores no notice board, so the
+	 * category proved is the notice board's when there is one and Headquarters' otherwise;
+	 * proving categoryId alone failed every such rebuild.
+	 */
+	static async rebuildDestroyedHomebase(guild: Guild): Promise<boolean> {
+		await GuildSetupManager.autoSetup(guild, { guildId: guild.id, ownerId: guild.ownerId }, { force: true });
+		const rebuilt = await guildConfigStore.findByGuildId(guild.id);
+		const ids = (rebuilt ?? {}) as IManagedCategoryIds;
+		const rebuiltCategoryId = ids.categoryId || ids.headquartersCategoryId;
+		if (!rebuiltCategoryId) return false;
+		const category = await guild.channels.fetch(rebuiltCategoryId).catch(() => null);
+		return category !== null;
+	}
+
 	// ── Phase 2: apply admin role to existing channels ────────
 	static async applyAdminRole(guild: Guild, config: IAdminRoleConfig): Promise<void> {
 		const stored = await guildConfigStore.findByGuildId(config.guildId);

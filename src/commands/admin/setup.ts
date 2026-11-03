@@ -62,25 +62,10 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 		// takes answerInChannel's private fallback (its stored ids point at deleted channels).
 		const answer = await beginChannelAnswer(interaction, "admin", { config });
 		try {
-			await GuildSetupManager.autoSetup(
-				interaction.guild!,
-				{ guildId: interaction.guildId!, ownerId: interaction.guild!.ownerId },
-				{ force: true }
-			);
-
-			// autoSetup swallows a missing-permissions failure (it catches 50013
-			// and returns without building), so confirm the homebase actually came
-			// back before clearing the flag. Otherwise the owner is stranded with
-			// the flag cleared, a stale categoryId, and no channels, unable to
-			// rebuild via /setup. Re-read the fresh config and verify the category.
-			// A self destructed server rebuilds 🏰 DERO HEADQUARTERS alone (2026-11 item 285
-			// debug pass), storing no notice board, so the category proved is the notice
-			// board's when there is one and Headquarters' otherwise. Checking only categoryId
-			// failed every such rebuild and left the roles unset.
-			const rebuilt = await guildConfigStore.findByGuildId(interaction.guildId!);
-			const rebuiltCategoryId = rebuilt?.categoryId ?? (rebuilt as { headquartersCategoryId?: string | null } | null)?.headquartersCategoryId ?? null;
-			const category = rebuiltCategoryId ? await interaction.guild!.channels.fetch(rebuiltCategoryId).catch(() => null) : null;
-			if (!category) {
+			// Self destruct rebuilds Headquarters itself, so this branch runs only when that
+			// rebuild did not stand. A rebuild that does not stand here either keeps the flag:
+			// clearing it would strand the owner with no channels and no way back through /setup.
+			if (!(await GuildSetupManager.rebuildDestroyedHomebase(interaction.guild!))) {
 				// Leave homebaseDestroyed=true so a retry re-enters this branch.
 				await answer.send({ embeds: [errorEmbed(responses.setupFailed)] });
 				return;

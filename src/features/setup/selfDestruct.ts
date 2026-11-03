@@ -29,6 +29,7 @@ import { turnArcadeOff } from "./arcadeSwitch.js";
 import { resetConfigsToDefault, wipeServerData } from "./serverReset.js";
 import { setupCopy } from "./setupCopy.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
+import { GuildSetupManager } from "./GuildSetupManager.js";
 
 // ── Self destruct ──────────────────────────────────────────────────────
 // Server owner only, as three honest choices (2026-10 item 254, the owner's
@@ -37,17 +38,21 @@ import { getPluginCopy } from "@base/copy/getCopy.js";
 //      message history) and what stays (stored data, and an adopted welcome or
 //      rules channel), and asks through one REQUIRED select:
 //        Just delete channels  demolishHomebase, then resetConfigsToDefault. The
-//                              records are kept; the settings and stored ids go, so
-//                              /setup builds Dero fresh (2026-11 item 285 debug pass).
+//                              records are kept; the settings and stored ids go, and
+//                              Dero is built fresh (2026-11 item 285 debug pass).
 //        Arcade only           the /arcade off path (arcadeSwitch.turnArcadeOff).
 //        Delete my data        answers with one Type CONFIRM button, because a
 //                              modal cannot open from a modal submit.
 //   ② Type CONFIRM opens the CONFIRM modal. Only the exact word deletes:
 //      demolishHomebase, then wipeServerData, then resetConfigsToDefault, so the
 //      data AND the settings go (owner decision 4a).
-// GuildConfig.homebaseDestroyed keeps the homebase gone across restarts until
-// /setup runs again. The select IS the confirmation for the two choices that keep
-// the data, which is why it is required and has no default.
+// Both teardowns then build 🏰 DERO HEADQUARTERS fresh, as a new install does, so the
+// new 🔒inner-sanctum offers Set up Dero (owner ruling, 2026-11 item 285 debug pass:
+// self destruct starts over, it does not leave Dero channel free). GuildConfig
+// .homebaseDestroyed holds the homebase gone during the teardown and across a restart
+// until that rebuild stands, or until /setup rebuilds it when the rebuild failed. The
+// select IS the confirmation for the two choices that keep the data, which is why it
+// is required and has no default.
 //
 // Two entry points open the SAME modal: the /self-destruct slash command, and the
 // owner only "Self destruct" button on the admin command guide. Every step re-checks
@@ -282,9 +287,9 @@ async function runChoice(interaction: ModalSubmitInteraction, guild: Guild): Pro
 
 // Just delete channels: the teardown, then every setting back to its default, with the
 // records kept (owner ruling in the 2026-11 item 285 debug pass, replacing decision 4's
-// "every setting kept"). The teardown clears the stored ids, so /setup builds Dero
-// fresh, Headquarters only. Its answers stay private: every channel they could post in
-// is the one being deleted.
+// "every setting kept"), then Dero built fresh, Headquarters only. Its answers stay
+// private: they answer an interaction in a channel being deleted, and the rebuilt
+// 🔒inner-sanctum carries the next step.
 async function runJustDeleteChannels(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
 	// Logged BEFORE the teardown on purpose: the log channel is about to be deleted,
 	// and the BotLog row is written either way.
@@ -306,6 +311,7 @@ async function runJustDeleteChannels(interaction: ModalSubmitInteraction, guild:
 		console.error(`[self-destruct] settings reset failed in guild ${guild.id}`, error);
 		content = c.deletePartial([c.settingsLabel]);
 	}
+	content = `${content} ${await rebuildAfterTeardown(guild)}`;
 	// Best effort: the channel this ran in may already be gone.
 	await interaction.followUp({ content, flags: MessageFlags.Ephemeral }).catch(() => undefined);
 }
@@ -361,11 +367,33 @@ async function handleConfirmModal(interaction: ModalSubmitInteraction, guild: Gu
 		console.error(`[self-destruct] settings reset failed in guild ${guild.id}`, error);
 		failed.push(c.settingsLabel);
 	}
+	const outcome = failed.length === 0 ? c.deleteDone : c.deletePartial(failed);
+	const content = `${outcome} ${await rebuildAfterTeardown(guild)}`;
 	// Best-effort follow-up; the channel this ran in is already gone, and an
 	// ephemeral follow up may go with it.
-	await interaction
-		.followUp({ content: failed.length === 0 ? c.deleteDone : c.deletePartial(failed), flags: MessageFlags.Ephemeral })
-		.catch(() => undefined);
+	await interaction.followUp({ content, flags: MessageFlags.Ephemeral }).catch(() => undefined);
+}
+
+/**
+ * Build Dero fresh after either teardown and return the line that says where to go
+ * next. Runs after the settings reset, so the new Headquarters reads default settings.
+ * The flag is cleared only once the rebuild stands, so the boot sweep then repairs the
+ * new Headquarters like any other; a rebuild that does not stand (Dero lost Manage
+ * Channels, a write failed) keeps the flag, and the line names /setup, whose rebuild
+ * branch is the retry. Never throws: the teardown is done whatever happens here.
+ */
+async function rebuildAfterTeardown(guild: Guild): Promise<string> {
+	try {
+		if (!(await GuildSetupManager.rebuildDestroyedHomebase(guild))) return c.rebuildFailed;
+		await guildConfigStore.update(guild.id, { homebaseDestroyed: false });
+		const rebuilt = await guildConfigStore.findByGuildId(guild.id);
+		const sanctumId = (rebuilt as { adminChannelId?: string | null } | null)?.adminChannelId;
+		const buttonLabel = getPluginCopy(rebuilt).channelContent.adminWelcome.setupButtonLabel;
+		return c.rebuilt(sanctumId ? `<#${sanctumId}>` : c.rebuiltSanctumFallback, buttonLabel);
+	} catch (error) {
+		console.error(`[self-destruct] rebuild after the teardown failed in guild ${guild.id}`, error);
+		return c.rebuildFailed;
+	}
 }
 
 /**

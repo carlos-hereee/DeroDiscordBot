@@ -2,22 +2,22 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ChatInputCommandInteraction } from "discord.js";
 
 // ── /setup after a self destruct (2026-11 item 285 debug pass) ─────────────────
-// Self destruct clears every stored id, so the /setup that follows rebuilds 🏰 DERO
-// HEADQUARTERS alone and stores no notice board. The rebuild branch used to prove the
-// rebuild by categoryId only, so every such /setup answered "setup failed", left the
-// server flagged destroyed and never granted the roles. These pin the fixed check.
+// Self destruct rebuilds Headquarters itself, so this branch runs only when that rebuild
+// did not stand. It asks the same GuildSetupManager.rebuildDestroyedHomebase (whose own
+// tests pin the Headquarters only proof), grants the roles only on a rebuild that stood,
+// and clears the flag last.
 
 const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
 	update: vi.fn(),
-	autoSetup: vi.fn(),
+	rebuildDestroyedHomebase: vi.fn(),
 	applyAdminRole: vi.fn(),
 	send: vi.fn(),
 }));
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, update: mocks.update } }));
 vi.mock("@features/setup/GuildSetupManager.js", () => ({
-	GuildSetupManager: { autoSetup: mocks.autoSetup, applyAdminRole: mocks.applyAdminRole },
+	GuildSetupManager: { rebuildDestroyedHomebase: mocks.rebuildDestroyedHomebase, applyAdminRole: mocks.applyAdminRole },
 	isHeadquartersOnly: () => false,
 }));
 vi.mock("@utils/answerInChannel.js", () => ({ beginChannelAnswer: vi.fn(async () => ({ send: mocks.send })) }));
@@ -27,14 +27,13 @@ import { execute } from "./setup.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 
 const OWNER = "owner-1";
-const HEADQUARTERS = "hq-cat";
 
-function makeInteraction(liveChannelIds: string[]) {
+function makeInteraction() {
 	const roles: Record<string, { id: string }> = { "admin-role": { id: "role-admin" }, "member-role": { id: "role-member" } };
 	return {
 		guildId: "guild-1",
 		user: { id: OWNER },
-		guild: { ownerId: OWNER, channels: { fetch: vi.fn(async (id: string) => (liveChannelIds.includes(id) ? { id } : null)) } },
+		guild: { ownerId: OWNER },
 		options: { getRole: (name: string) => roles[name] },
 	} as unknown as ChatInputCommandInteraction;
 }
@@ -43,23 +42,24 @@ const sentTitles = () => mocks.send.mock.calls.map((call) => (call[0] as { embed
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	mocks.findByGuildId
-		.mockResolvedValueOnce({ guildId: "guild-1", homebaseDestroyed: true, setupComplete: false })
-		.mockResolvedValueOnce({ guildId: "guild-1", categoryId: null, headquartersCategoryId: HEADQUARTERS });
+	mocks.findByGuildId.mockResolvedValueOnce({ guildId: "guild-1", homebaseDestroyed: true, setupComplete: false });
 });
 
 describe("/setup rebuilding a self destructed server", () => {
-	it("proves a Headquarters only rebuild by its Headquarters category, grants the roles and clears the flag", async () => {
-		await execute(makeInteraction([HEADQUARTERS]));
+	it("rebuilds through the shared helper, grants the roles and clears the flag after them", async () => {
+		mocks.rebuildDestroyedHomebase.mockResolvedValue(true);
+		await execute(makeInteraction());
 
-		expect(mocks.autoSetup).toHaveBeenCalledWith(expect.anything(), { guildId: "guild-1", ownerId: OWNER }, { force: true });
+		expect(mocks.rebuildDestroyedHomebase).toHaveBeenCalledWith(expect.objectContaining({ ownerId: OWNER }));
 		expect(mocks.applyAdminRole).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ adminRoleId: "role-admin", memberRoleId: "role-member" }));
 		expect(mocks.update).toHaveBeenCalledWith("guild-1", { homebaseDestroyed: false });
+		expect(mocks.applyAdminRole.mock.invocationCallOrder[0]!).toBeLessThan(mocks.update.mock.invocationCallOrder[0]!);
 		expect(sentTitles()[0]!.description).not.toBe(rokCommanderCopy.responses.setupFailed);
 	});
 
-	it("still refuses when the rebuilt category is not there, leaving the flag for a retry", async () => {
-		await execute(makeInteraction([]));
+	it("still refuses when the rebuild does not stand, leaving the flag for a retry", async () => {
+		mocks.rebuildDestroyedHomebase.mockResolvedValue(false);
+		await execute(makeInteraction());
 
 		expect(mocks.applyAdminRole).not.toHaveBeenCalled();
 		expect(mocks.update).not.toHaveBeenCalled();

@@ -227,7 +227,7 @@ export const setupCopy = {
 			},
 		},
 		deletingChannelsBody: "Deleting Dero's channels and resetting its settings now. Every record is kept.",
-		channelsDone: "Done. Dero's channels are gone and its settings are back to their defaults; every record is kept. Run /setup to build Dero fresh.",
+		channelsDone: "Done. Dero's channels are gone and its settings are back to their defaults; every record is kept.",
 		deleteDataTitle: "🗑️ Delete my data",
 		deleteDataBody: [
 			"This deletes both of Dero's categories and every channel in them, every match in progress, and this server's stored records (member levels and renown history, game rooms and their transcripts, game tallies and luck, game requests, poll votes, events and their attendance, and any unclaimed pairing code), and puts every Dero setting back to how a new server starts (Dero's voice switch, lists and budget, the arcade's settings, auto heal, removed channels, channel renames, custom copy, your saved rules text, and the leaderboard and leveling settings).",
@@ -244,7 +244,14 @@ export const setupCopy = {
 		mismatch: "That was not CONFIRM, so nothing was deleted.",
 		deletingTitle: "💥 Deleting",
 		deletingBody: "Deleting Dero's channels and this server's data, and resetting its settings, now.",
-		deleteDone: "Done. Dero's channels and this server's data are gone and its settings are back to their defaults. The channels stay gone until you run /setup.",
+		deleteDone: "Done. Dero's channels and this server's data are gone and its settings are back to their defaults.",
+		// The second sentence of either teardown's done line: Dero builds 🏰 DERO
+		// HEADQUARTERS fresh right after it (2026-11 item 285 debug pass), and the owner's
+		// next step is the rebuilt inner sanctum's button. rebuiltSanctumFallback names
+		// the channel only when the rebuilt row stores no id for it.
+		rebuilt: (sanctum: string, buttonLabel: string): string => `Dero is built fresh: open ${sanctum} and press **${buttonLabel}**.`,
+		rebuiltSanctumFallback: "Dero Headquarters",
+		rebuildFailed: "Dero could not build its channels again, so run /setup to build Dero fresh.",
 		deleteFailed: "The delete failed before anything was removed. Try again in a moment.",
 		deletePartial: (failed: readonly string[]): string =>
 			`Dero's channels are gone, but these could not be deleted or reset: ${failed.join(", ")}. Run self destruct again to retry them.`,

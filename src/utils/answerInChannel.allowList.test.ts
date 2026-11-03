@@ -80,8 +80,7 @@ const ALLOWED: readonly AllowedLine[] = [
 	// ── no channel: the answers self destruct gives while it deletes every channel ──
 	{ file: "features/setup/selfDestruct.ts", contains: "await interaction.reply({ embeds: [infoEmbed(c.deletingTitle,", count: 2, reason: "no channel", why: "Deleting: posted as every channel it could post in is deleted" },
 	{ file: "features/setup/selfDestruct.ts", contains: "await interaction.followUp({ content: c.deleteFailed, flags: MessageFlags.Ephemeral })", count: 2, reason: "no channel", why: "a failed demolish, answered beside the deleting line" },
-	{ file: "features/setup/selfDestruct.ts", contains: "await interaction.followUp({ content, flags: MessageFlags.Ephemeral })", reason: "no channel", why: "the channels are gone, so there is nowhere left to post (Just delete channels' done or partial line)" },
-	{ file: "features/setup/selfDestruct.ts", contains: ".followUp({ content: failed.length === 0 ? c.deleteDone : c.deletePartial(failed), flags: MessageFlags.Ephemeral })", reason: "no channel", why: "the data is gone with the channels, so there is nowhere left to post" },
+	{ file: "features/setup/selfDestruct.ts", contains: "await interaction.followUp({ content, flags: MessageFlags.Ephemeral })", count: 2, reason: "no channel", why: "either teardown's done or partial line, answering a press in a channel already deleted; the rebuilt inner sanctum carries the next step" },
 ];
 
 interface FoundLine {

@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, update: mocks.update } }));
 vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton, registerModal: mocks.registerModal }));
 vi.mock("./serverReset.js", () => ({ resetConfigsToDefault: vi.fn(), wipeServerData: mocks.wipeServerData }));
+// The rebuild that follows the teardown has its own tests; here it only has to stand.
+vi.mock("./GuildSetupManager.js", () => ({ GuildSetupManager: { rebuildDestroyedHomebase: vi.fn(async () => true) } }));
 vi.mock("./adminLog.js", () => ({ adminLog: { emit: vi.fn() } }));
 
 import { HOMEBASE_CHANNEL_FIELDS, registerSelfDestructHandlers } from "./selfDestruct.js";
@@ -111,14 +113,15 @@ describe("self-destruct with an adopted channel", () => {
 	});
 
 	it("releases the adopted slot and empties the list in the same write as the flag, before any delete", async () => {
-		// The flag write comes first; the second write, after the deletes, clears every stored id.
+		// The flag write comes first; the second write, after the deletes, clears every stored id,
+		// and the third clears the flag once the rebuild stood.
 		// The adopted slot is released in the first so nothing points at the kept channel mid teardown.
 		const { stored, channels, interaction } = rig();
 		mocks.findByGuildId.mockResolvedValue(stored);
 
 		await confirm(interaction);
 
-		expect(mocks.update).toHaveBeenCalledTimes(2);
+		expect(mocks.update).toHaveBeenCalledTimes(3);
 		expect(mocks.update.mock.calls[0]).toEqual(["g1", { homebaseDestroyed: true, setupComplete: false, welcomeChannelId: null, adoptedChannelIds: [] }]);
 		const writeOrder = mocks.update.mock.invocationCallOrder[0]!;
 		const firstDelete = (channels.get("ch-introChannelId") as Deletable).delete.mock.invocationCallOrder[0]!;
