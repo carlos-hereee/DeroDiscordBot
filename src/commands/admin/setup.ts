@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from "discord.js";
-import { GuildSetupManager } from "@features/setup/GuildSetupManager.js";
+import { GuildSetupManager, isHeadquartersOnly } from "@features/setup/GuildSetupManager.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
@@ -100,8 +100,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 		return;
 	}
 
-	// channels haven't been built yet
-	if (!config?.categoryId) {
+	// channels haven't been built yet. A fresh install builds only 🏰 DERO HEADQUARTERS
+	// (2026-11 item 285 Phase 2), so a Headquarters only row is built and goes on to the
+	// role grant; reading categoryId alone would refuse it forever.
+	if (!config || (!config.categoryId && !isHeadquartersOnly(config))) {
 		await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [responses.setupChannelsPending] });
 		return;
 	}

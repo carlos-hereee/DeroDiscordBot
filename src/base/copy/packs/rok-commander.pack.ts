@@ -351,8 +351,8 @@ export const rokCommanderCopy = {
 			"I require one thing from you:\n\n" +
 			"**Run `/setup` in your server and " +
 			"designate an admin role.**\n\n" +
-			"Once done, 🪧 **NOTICE BOARD** will be " +
-			"constructed and my throne established.\n\n" +
+			"Once done, 🏰 **DERO HEADQUARTERS** opens " +
+			"to your admins and my throne is established.\n\n" +
 			"*Do not keep me waiting.*",
 	},
 

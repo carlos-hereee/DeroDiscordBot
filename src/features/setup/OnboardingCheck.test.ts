@@ -95,6 +95,24 @@ describe("checkOnboardingAndNotifyOwner", () => {
 		expect(send).not.toHaveBeenCalled();
 	});
 
+	// 2026-11 item 285 Phase 2: a fresh install builds 🏰 DERO HEADQUARTERS alone, which is
+	// admin only, so the Default Channels warning has nothing members could miss.
+	it("stays silent on a Headquarters only install and writes no log, so a later boot can still warn", async () => {
+		configMock.findByGuildId.mockResolvedValue({ categoryId: null, gamesCategoryId: null, headquartersCategoryId: "hq-cat-1" });
+		const { guild, send } = makeGuild([]);
+		await run(guild);
+		expect(send).not.toHaveBeenCalled();
+		expect(logMock.log).not.toHaveBeenCalled();
+	});
+
+	it("still warns a legacy guild that also has Headquarters", async () => {
+		configMock.findByGuildId.mockResolvedValue({ categoryId: HOMEBASE, gamesCategoryId: ARCADE, headquartersCategoryId: "hq-cat-1" });
+		const { guild, send } = makeGuild([ARCADE]);
+		await run(guild);
+		expect(send).toHaveBeenCalledOnce();
+		expect(dmBody(send)).toContain(rokCommanderCopy.setup.categoryName);
+	});
+
 	it("records which categories were hidden, so an operator can tell the cases apart", async () => {
 		const { guild } = makeGuild([HOMEBASE]);
 		await run(guild);

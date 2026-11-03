@@ -140,6 +140,9 @@ function makeStored(overrides: Record<string, unknown> = {}): Record<string, unk
 	};
 }
 
+// The full build's row, see "a full build builds every managed channel" below.
+const FULL_BUILD_ROW = { guildId: "guild-1", homebaseDestroyed: true, setupComplete: false };
+
 function createCalls(guild: { channels: { create: ReturnType<typeof vi.fn> } }): ICreateCall[] {
 	return guild.channels.create.mock.calls.map((call) => call[0] as ICreateCall);
 }
@@ -166,11 +169,14 @@ describe("non-Community guilds keep today's overwrite shapes byte for byte", () 
 		guildConfigMock.update.mockResolvedValue(undefined);
 	});
 
-	it("a fresh install builds every managed channel with today's array", async () => {
-		guildConfigMock.findByGuildId.mockResolvedValue(null);
+	// A fresh install builds only 🏰 DERO HEADQUARTERS (2026-11 item 285 Phase 2), so every
+	// managed channel is built by the full build that remains: the /setup that rebuilds a
+	// self destructed server, a row with no managed id and no role, built with force.
+	it("a full build builds every managed channel with today's array", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(FULL_BUILD_ROW);
 		const guild = makeGuild();
 
-		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID });
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID }, { force: true });
 
 		const calls = createCalls(guild);
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
@@ -512,11 +518,11 @@ describe("GuildSetupManager on a Community guild", () => {
 		guildConfigMock.update.mockResolvedValue(undefined);
 	});
 
-	it("a fresh install stays open: no member role exists before /setup", async () => {
-		guildConfigMock.findByGuildId.mockResolvedValue(null);
+	it("a full build before /setup stays open: no member role exists yet", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(FULL_BUILD_ROW);
 		const guild = makeGuild(COMMUNITY);
 
-		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID });
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID }, { force: true });
 
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
 			const call = createCalls(guild).find((entry) => entry.name === packNamesByField[spec.configField]);

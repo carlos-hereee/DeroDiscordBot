@@ -53,6 +53,10 @@ export async function checkOnboardingAndNotifyOwner(_client: Client, guild: Guil
 	// config exists yet (eg guildCreate is mid-flight and autoSetup
 	// has not persisted), bail and let a future call try again. The
 	// idempotency log has not been written so we will retry next time.
+	// A Headquarters only install (2026-11 item 285 Phase 2) stores no
+	// notice board id either: Headquarters is admin only and members never
+	// need it, so there is nothing to warn about until the notice board is
+	// built, and the unwritten log lets that later boot warn.
 	const stored = await guildConfigStore.findByGuildId(guild.id);
 	if (!stored?.categoryId) return;
 

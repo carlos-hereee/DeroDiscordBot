@@ -104,7 +104,7 @@ export const LOG_MESSAGES = {
 		// ensureHomebase self heal path on wake up. emitted from
 		// GuildSetupManager.ensureHomebase when the stored category cannot be
 		// fetched (deleted, moved, or never existed on this Discord side).
-		homebaseCategoryMissing: (categoryId: string, guildId: string) =>
+		homebaseCategoryMissing: (categoryId: string | null | undefined, guildId: string) =>
 			`[setup] stored categoryId ${categoryId} missing for guild ${guildId}. rebuilding homebase.`,
 		// emitted when the stored scheduleMessageId is authored by a different
 		// bot or cannot be resolved. tells the operator we are NOT going to

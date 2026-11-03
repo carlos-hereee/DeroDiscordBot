@@ -24,7 +24,7 @@ vi.mock("@features/voice/deroVoiceRooms.js", () => ({
 	DERO_VOICE_ROOM_FIELDS: ["meetingVoiceChannelId", "arcadeVoiceChannelId"],
 }));
 
-import { GuildSetupManager } from "./GuildSetupManager.js";
+import { GuildSetupManager, isHeadquartersOnly } from "./GuildSetupManager.js";
 import { allowDeroVoiceRooms, replaceDeroVoiceRoom } from "@features/voice/deroVoiceRooms.js";
 import { CHALLENGE_GAMES } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { ChannelContent } from "./ChannelContent.js";
@@ -41,6 +41,17 @@ const guildConfigMock = guildConfigStore as unknown as {
 };
 
 // ── fixtures ──────────────────────────────────────────────────────────
+
+// A fresh install builds only 🏰 DERO HEADQUARTERS (2026-11 item 285 Phase 2), so the
+// full three category build is reached the way it still runs: the /setup that rebuilds
+// a self destructed server, a row with no managed id left, built with force. It
+// persists through update (path B), so fullBuildPayloads reads it from there.
+const FULL_BUILD_ROW = { guildId: "guild-1", homebaseDestroyed: true, setupComplete: false };
+
+// The build's own persist write, told apart from any other update by its intro anchors.
+function fullBuildPayloads(): Array<Record<string, unknown>> {
+	return guildConfigMock.update.mock.calls.map((call) => call[1] as Record<string, unknown>).filter((payload) => "introMessageIds" in payload);
+}
 
 function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 	return {
@@ -1051,16 +1062,13 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		permissionOverwrites?: Array<{ id: string; allow?: bigint[]; deny?: bigint[] }>;
 	}
 
-	// Path A, the true fresh install: no stored row, so autoSetup builds both
-	// categories, all ten channels, then inserts. The existing persistence
-	// tests deliberately never complete this path (one forces an update, the
-	// other rejects the insert), so nothing until now ran it end to end.
-	async function runFreshInstall(): Promise<{ categories: ICreateCall[]; textChannels: ICreateCall[] }> {
-		guildConfigMock.findByGuildId.mockResolvedValue(null);
-		guildConfigMock.create.mockResolvedValue(undefined);
+	// The full build end to end: every category and every channel, then one persist
+	// write. FULL_BUILD_ROW says why it is a self destructed row and not a fresh one.
+	async function runFullBuild(): Promise<{ categories: ICreateCall[]; textChannels: ICreateCall[] }> {
+		guildConfigMock.findByGuildId.mockResolvedValue(FULL_BUILD_ROW);
 
 		const guild = makeCreateGuild();
-		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID });
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID }, { force: true });
 
 		const createMock = guild.channels.create as unknown as ReturnType<typeof vi.fn>;
 		const calls = createMock.mock.calls.map((call) => call[0] as ICreateCall);
@@ -1071,7 +1079,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 	}
 
 	it("builds exactly three categories and twenty one channels, each once", async () => {
-		const { categories, textChannels } = await runFreshInstall();
+		const { categories, textChannels } = await runFullBuild();
 
 		// All three categories, in build order, with NO dev suffix: vitest runs under
 		// NODE_ENV=test, and resolveCategoryName only suffixes on "development".
@@ -1116,7 +1124,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 	// misfile. CHANNEL_SPECS.categoryField protects every OTHER consumer;
 	// createChannels passes the parent literally, so only a test protects it.
 	it("files the nine homebase channels, the six arcade channels and the six Headquarters channels under their own categories", async () => {
-		const { textChannels } = await runFreshInstall();
+		const { textChannels } = await runFullBuild();
 
 		const homebaseParent = `cat-${rokCommanderCopy.setup.categoryName}`;
 		const arcadeParent = `cat-${rokCommanderCopy.setup.gamesCategoryName}`;
@@ -1237,7 +1245,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 	];
 
 	it("gives every channel the overwrite array its privacy posture requires", async () => {
-		const { textChannels } = await runFreshInstall();
+		const { textChannels } = await runFullBuild();
 
 		for (const [name, posture] of EXPECTED_POSTURES) {
 			const created = textChannels.find((channel) => channel.name === name);
@@ -1255,7 +1263,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		// deny hides an admin channel from the bot entirely. Both fail at post
 		// time, long after setup reported success, so the failure surfaces as a
 		// missing intro embed rather than as a setup error.
-		const { textChannels } = await runFreshInstall();
+		const { textChannels } = await runFullBuild();
 		expect(textChannels).toHaveLength(21);
 
 		for (const created of textChannels) {
@@ -1274,10 +1282,10 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		// Closed 2026-08-12. Asserting the full set, rather than only the ids a
 		// given change happened to add, is what stops a twelfth channel from
 		// quietly reintroducing the same gap.
-		await runFreshInstall();
+		await runFullBuild();
 
-		expect(guildConfigMock.create).toHaveBeenCalledOnce();
-		const [payload] = guildConfigMock.create.mock.calls[0] as [Record<string, unknown>];
+		expect(fullBuildPayloads()).toHaveLength(1);
+		const [payload] = fullBuildPayloads();
 
 		expect(payload.categoryId).toBe(`cat-${rokCommanderCopy.setup.categoryName}`);
 		expect(payload.gamesCategoryId).toBe(`cat-${rokCommanderCopy.setup.gamesCategoryName}`);
@@ -1307,10 +1315,9 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 	it("posts 🕹️games' intro, then its Challenge Board beneath it, and anchors both", async () => {
 		// Two sends in one channel, in order: the board has to sit BELOW the intro, so
 		// populateChannels chains them rather than racing them in its Promise.all.
-		guildConfigMock.findByGuildId.mockResolvedValue(null);
-		guildConfigMock.create.mockResolvedValue(undefined);
+		guildConfigMock.findByGuildId.mockResolvedValue(FULL_BUILD_ROW);
 		const guild = makeCreateGuild();
-		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID });
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID }, { force: true });
 
 		const createMock = guild.channels.create as unknown as ReturnType<typeof vi.fn>;
 		const index = createMock.mock.calls.findIndex((call) => (call[0] as ICreateCall).name === packChannels.arcadeGames);
@@ -1318,7 +1325,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		const titles = gamesChannel.send.mock.calls.map((call) => (call[0] as { embeds: Array<{ data: { title?: string } }> }).embeds[0].data.title);
 		expect(titles).toEqual([rokCommanderCopy.channelContent.arcadeGames.title, rokCommanderCopy.channelContent.arcadeGames.boardTitle]);
 
-		const [payload] = guildConfigMock.create.mock.calls[0] as [Record<string, unknown>];
+		const [payload] = fullBuildPayloads();
 		const introIds = payload.introMessageIds as Record<string, unknown>;
 		expect(introIds.arcadeGamesChannelId).toBe(`msg-${packChannels.arcadeGames}`);
 		expect(introIds.arcadeGamesBoardId).toBe(`msg-${packChannels.arcadeGames}`);
@@ -1916,8 +1923,8 @@ describe("GuildSetupManager voice rooms", () => {
 		return { guild, calls, voiceCalls, voiceCreated, created };
 	}
 
-	it("builds both rooms on a fresh install, as voice channels under their own categories", async () => {
-		const { voiceCalls } = await runAutoSetup(null);
+	it("builds both rooms on a full build, as voice channels under their own categories", async () => {
+		const { voiceCalls } = await runAutoSetup(FULL_BUILD_ROW, { force: true });
 
 		expect(voiceCalls.map((call) => call.name).sort()).toEqual([packChannels.arcadeVoice, packChannels.meetingVoice].sort());
 		const parentOf = (name: string) => voiceCalls.find((call) => call.name === name)?.parent;
@@ -1927,8 +1934,8 @@ describe("GuildSetupManager voice rooms", () => {
 		expect(parentOf(packChannels.arcadeVoice)).toBe(`cat-${rokCommanderCopy.setup.gamesCategoryName}`);
 	});
 
-	it("gives a fresh room the member-role-only posture with no role grants yet", async () => {
-		const { voiceCalls } = await runAutoSetup(null);
+	it("gives a room built before /setup the member-role-only posture with no role grants yet", async () => {
+		const { voiceCalls } = await runAutoSetup(FULL_BUILD_ROW, { force: true });
 
 		for (const call of voiceCalls) {
 			expect(overwriteFor(call, EVERYONE_ID), `${call.name} @everyone`).toEqual({
@@ -1951,9 +1958,9 @@ describe("GuildSetupManager voice rooms", () => {
 	// Each room's text chat carries one card, /dero's Join, Leave and Status (2026-10
 	// item 245 Phase 4b), anchored like every other intro so the boot sweep keeps it.
 	it("persists both room ids, posts each room its /dero card once, and anchors it", async () => {
-		const { voiceCreated } = await runAutoSetup(null);
+		const { voiceCreated } = await runAutoSetup(FULL_BUILD_ROW, { force: true });
 
-		const [payload] = guildConfigMock.create.mock.calls[0] as [Record<string, unknown>];
+		const [payload] = fullBuildPayloads();
 		expect(payload.meetingVoiceChannelId).toBe(`new-${packChannels.meetingVoice}`);
 		expect(payload.arcadeVoiceChannelId).toBe(`new-${packChannels.arcadeVoice}`);
 
@@ -2040,7 +2047,12 @@ describe("GuildSetupManager voice rooms", () => {
 	it("still posts the pending card and grants no admin role on a fresh install", async () => {
 		const { guild, calls, created } = await runAutoSetup(null);
 
-		for (const { spec, call } of textCallsBySpec(calls)) {
+		// A fresh install builds Headquarters alone (2026-11 item 285 Phase 2), so only
+		// its channels exist to carry a posture.
+		const headquartersCalls = textCallsBySpec(calls).filter(({ spec }) => spec.categoryField === "headquartersCategoryId");
+		expect(headquartersCalls).toHaveLength(6);
+		for (const { spec, call } of headquartersCalls) {
+			expect(call, `${spec.displayName} built`).toBeDefined();
 			expect(call?.permissionOverwrites, `${spec.displayName} posture`).toEqual(
 				communityOverwritesFor(overwriteKindOf(spec), guild, { ownerId: OWNER_ID }, { memberRoleId: null, adminRoleId: null })
 			);
@@ -2139,8 +2151,8 @@ describe("GuildSetupManager voice rooms", () => {
 		);
 	});
 
-	it("puts both rooms a fresh install builds on Dero's voice allow list (owner item 8)", async () => {
-		await runAutoSetup(null);
+	it("puts both rooms a full build makes on Dero's voice allow list (owner item 8)", async () => {
+		await runAutoSetup(FULL_BUILD_ROW, { force: true });
 		expect(allowDeroVoiceRooms).toHaveBeenCalledWith("guild-1", [`new-${packChannels.meetingVoice}`, `new-${packChannels.arcadeVoice}`]);
 	});
 
@@ -2324,5 +2336,186 @@ describe("GuildSetupManager voice rooms", () => {
 			expect(intro, spec.configField).not.toBeNull();
 			if (spec.kind === "voice") expect(intro?.data.title, spec.configField).toBe(rokCommanderCopy.channelContent.voiceRoom.title);
 		}
+	});
+});
+
+// ── a fresh install builds 🏰 DERO HEADQUARTERS alone (2026-11 item 285 Phase 2) ──
+// What:  the fresh install branch in runAutoSetup, the widened "already built" early
+//        return, and ensureHomebase's sweep of a Headquarters only row.
+// Why:   the branch reads only `existing === null`, so a legacy row must never reach
+//        it, and a Headquarters only row must never read as "the notice board is gone",
+//        which would full build it on the next boot.
+describe("GuildSetupManager on a Headquarters only install", () => {
+	const packChannels = rokCommanderCopy.setup.channels;
+	const HEADQUARTERS_PARENT = `cat-${rokCommanderCopy.setup.headquartersCategoryName}`;
+	const HEADQUARTERS_SPECS = GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.categoryField === "headquartersCategoryId");
+	const NOTICE_BOARD_FIELDS = GuildSetupManager.specFieldsUnder("categoryId");
+	const ARCADE_FIELDS = GuildSetupManager.specFieldsUnder("gamesCategoryId");
+
+	interface ICreateCall {
+		name: string;
+		type: number;
+		parent?: string;
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		guildConfigMock.create.mockResolvedValue(undefined);
+		guildConfigMock.update.mockResolvedValue(undefined);
+	});
+
+	// A guild whose create hands back a category or a text channel keyed off the name,
+	// and whose cache may hold categories left from an earlier install.
+	function makeInstallGuild(cached: unknown[] = []): Guild {
+		const create = vi.fn(async (opts: { name: string; type: number }) => {
+			if (opts.type === ChannelType.GuildCategory) return { id: `cat-${opts.name}`, type: ChannelType.GuildCategory, children: { cache: new Map() } };
+			const channel = Object.create(TextChannel.prototype) as TextChannel;
+			return Object.assign(channel, { id: `new-${opts.name}`, guildId: "guild-1", send: vi.fn().mockResolvedValue({ id: `msg-${opts.name}`, pin: vi.fn() }) });
+		});
+		return {
+			id: "guild-1",
+			ownerId: "owner-1",
+			roles: { everyone: { id: "everyone" } },
+			client: { user: { id: "bot-1" } },
+			channels: { create, fetch: vi.fn().mockResolvedValue(null), cache: new Map(cached.map((channel, index) => [`cached-${index}`, channel])) },
+		} as unknown as Guild;
+	}
+
+	const createMockOf = (guild: Guild): ReturnType<typeof vi.fn> => guild.channels.create as unknown as ReturnType<typeof vi.fn>;
+	const callsOf = (guild: Guild): ICreateCall[] => createMockOf(guild).mock.calls.map((call) => call[0] as ICreateCall);
+
+	// What the fresh install branch stores, with every notice board and arcade slot null.
+	function makeHeadquartersOnlyRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+		const unbuilt = Object.fromEntries([...NOTICE_BOARD_FIELDS, ...ARCADE_FIELDS].map((field) => [field, null]));
+		return makeStoredConfig({
+			categoryId: null,
+			gamesCategoryId: null,
+			scheduleMessageId: null,
+			setupComplete: false,
+			userRemovedChannels: ARCADE_FIELDS,
+			...unbuilt,
+			...overrides,
+		});
+	}
+
+	it("builds the Headquarters category and its six channels, and nothing else", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(null);
+		const guild = makeInstallGuild();
+
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" });
+
+		const calls = callsOf(guild);
+		expect(calls.filter((call) => call.type === ChannelType.GuildCategory).map((call) => call.name)).toEqual([rokCommanderCopy.setup.headquartersCategoryName]);
+		const channels = calls.filter((call) => call.type !== ChannelType.GuildCategory);
+		expect(channels.map((call) => call.name).sort()).toEqual(HEADQUARTERS_SPECS.map((spec) => packChannels[spec.nameKey]).sort());
+		for (const call of channels) expect(call.parent, call.name).toBe(HEADQUARTERS_PARENT);
+		expect(HEADQUARTERS_SPECS.map((spec) => spec.configField).sort()).toEqual(
+			["adminChannelId", "adminLogChannelId", "arcadeControlChannelId", "deroConfigChannelId", "onboardingConfigChannelId", "serverConfigChannelId"].sort()
+		);
+	});
+
+	it("stores both unbuilt category ids as null, the six Headquarters ids, and the arcade off", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(null);
+		const guild = makeInstallGuild();
+
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" });
+
+		expect(guildConfigMock.create).toHaveBeenCalledOnce();
+		const [payload] = guildConfigMock.create.mock.calls[0] as [Record<string, unknown>];
+		expect(payload.categoryId).toBeNull();
+		expect(payload.gamesCategoryId).toBeNull();
+		expect(payload.headquartersCategoryId).toBe(HEADQUARTERS_PARENT);
+		for (const spec of HEADQUARTERS_SPECS) expect(payload[spec.configField], spec.configField).toBe(`new-${packChannels[spec.nameKey]}`);
+		for (const field of [...NOTICE_BOARD_FIELDS, ...ARCADE_FIELDS]) expect(payload[field], field).toBeUndefined();
+		// Off exactly as turnArcadeOff leaves it, so the boot sweep never builds it and
+		// /arcade on can bring it back; no arcade switch is written for an unbuilt arcade.
+		expect(payload.userRemovedChannels).toEqual(ARCADE_FIELDS);
+		expect(payload).not.toHaveProperty("chipEconomyEnabled");
+		expect(payload.setupComplete).toBe(false);
+	});
+
+	it("never adopts or builds an arcade, even when one is left from an earlier install", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(null);
+		const oldArcade = { id: "old-games-cat", type: ChannelType.GuildCategory, name: rokCommanderCopy.setup.gamesCategoryName, children: { cache: new Map() } };
+		const guild = makeInstallGuild([oldArcade]);
+
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" });
+
+		const [payload] = guildConfigMock.create.mock.calls[0] as [Record<string, unknown>];
+		expect(payload.gamesCategoryId).toBeNull();
+		expect(callsOf(guild).some((call) => call.parent === "old-games-cat")).toBe(false);
+	});
+
+	it("leaves a legacy row alone without force, exactly as before", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig());
+		const guild = makeInstallGuild();
+
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" });
+
+		expect(createMockOf(guild)).not.toHaveBeenCalled();
+		expect(guildConfigMock.update).not.toHaveBeenCalled();
+	});
+
+	it("leaves a Headquarters only row alone without force, so a re-invite never builds the notice board", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeHeadquartersOnlyRow());
+		const guild = makeInstallGuild();
+
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" });
+
+		expect(createMockOf(guild)).not.toHaveBeenCalled();
+		expect(guildConfigMock.update).not.toHaveBeenCalled();
+	});
+
+	it("reads a row as Headquarters only by its ids alone", () => {
+		expect(isHeadquartersOnly(makeHeadquartersOnlyRow())).toBe(true);
+		expect(isHeadquartersOnly(makeStoredConfig())).toBe(false);
+		// A legacy row from before Headquarters existed is still legacy.
+		expect(isHeadquartersOnly(makeStoredConfig({ headquartersCategoryId: null }))).toBe(false);
+		expect(isHeadquartersOnly(null)).toBe(false);
+	});
+
+	// ── the boot sweep ─────────────────────────────────────────────────
+
+	// Every Headquarters channel answers a fetch, so the sweep can only build what a
+	// test removes; the notice board and arcade ids are null and must stay unbuilt.
+	const LIVE_HEADQUARTERS = { "ch-admin": { id: "ch-admin" } };
+
+	it("skips a Headquarters only guild with nothing missing: no fetch of a null id, no build", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeHeadquartersOnlyRow());
+		const guild = makeGuild({ channelFetchMap: LIVE_HEADQUARTERS });
+
+		const result = await GuildSetupManager.ensureHomebase(makeClient({ selfId: "bot-1" }), guild);
+
+		expect(result).toEqual({ action: "skipped", repairedChannels: [] });
+		expect(createMockOf(guild)).not.toHaveBeenCalled();
+		const fetched = (guild.channels.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0] as unknown);
+		expect(fetched.every((id) => typeof id === "string" && id.length > 0)).toBe(true);
+	});
+
+	it("repairs a deleted Headquarters channel under Headquarters, and builds no notice board or arcade", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeHeadquartersOnlyRow());
+		const guild = makeGuild({ channelFetchMap: { ...LIVE_HEADQUARTERS, "ch-deroconfig": null } });
+		const adminChannel = makeAdminChannel();
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => (id === "ch-admin" ? adminChannel : null) });
+
+		const result = await GuildSetupManager.ensureHomebase(client, guild);
+
+		expect(result.action).toBe("repaired");
+		const calls = callsOf(guild);
+		expect(calls.map((call) => call.name)).toEqual([packChannels.deroConfig]);
+		expect(calls[0]!.parent).toBe("hq-cat-1");
+	});
+
+	it("still runs the legacy sweep, notice board included, on a row that holds categoryId", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig());
+		const category = { id: "cat-1", type: ChannelType.GuildCategory, name: rokCommanderCopy.setup.categoryName };
+		const guild = makeGuild({ categoryId: category, channelFetchMap: { ...LIVE_HEADQUARTERS, "ch-intro": null } });
+		const adminChannel = makeAdminChannel();
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => (id === "ch-admin" ? adminChannel : null) });
+
+		const result = await GuildSetupManager.ensureHomebase(client, guild);
+
+		expect(result.action).toBe("repaired");
+		expect(callsOf(guild).find((call) => call.name === packChannels.intro)?.parent).toBe("cat-1");
 	});
 });

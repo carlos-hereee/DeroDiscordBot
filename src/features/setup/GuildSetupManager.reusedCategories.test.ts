@@ -399,20 +399,23 @@ describe("GuildSetupManager.autoSetup keeps a reused category's live channels (2
 		expect(syncAllHeadquarters).toHaveBeenCalledTimes(1);
 	});
 
-	it("adopts the Dero named channels of a category found by name on a fresh row, instead of building a second set (D4)", async () => {
+	// A fresh install builds only 🏰 DERO HEADQUARTERS (2026-11 item 285 Phase 2) and never
+	// looks for an arcade, so D4's name adoption is pinned on the full build that still
+	// runs with no stored arcade id: the /setup that rebuilds a self destructed server.
+	it("adopts the Dero named channels of a category found by name on a row with no stored id, instead of building a second set (D4)", async () => {
 		const arcadeChannels = Object.keys(ARCADE_SLOTS).map((field) =>
 			makeChannel(`old-${field}`, specFor(field).displayName, field === "arcadeVoiceChannelId" ? "voice" : "text", "old-games-cat")
 		);
 		const oldArcade = makeCategory("old-games-cat", gamesCategoryName, arcadeChannels);
-		const rig = makeRig({ stored: null, cachedCategories: [oldArcade] });
+		const rig = makeRig({ stored: { guildId: GUILD_ID, homebaseDestroyed: true, setupComplete: false }, cachedCategories: [oldArcade] });
 
-		await GuildSetupManager.autoSetup(rig.guild, { guildId: GUILD_ID, ownerId: OWNER_ID });
+		await GuildSetupManager.autoSetup(rig.guild, { guildId: GUILD_ID, ownerId: OWNER_ID }, { force: true });
 
 		expect(rig.childCreatesUnder("old-games-cat")).toEqual([]);
 		const row = rig.row()!;
 		expect(row.gamesCategoryId).toBe("old-games-cat");
 		for (const field of Object.keys(ARCADE_SLOTS)) expect(row[field], field).toBe(`old-${field}`);
-		// Headquarters had no category, so it was built whole, as on any fresh install.
+		// Headquarters had no category, so it was built whole.
 		expect(rig.childCreatesUnder(`new-cat-${headquartersCategoryName}`)).toHaveLength(Object.keys(HEADQUARTERS_SLOTS).length);
 		expect(syncAllHeadquarters).toHaveBeenCalledTimes(1);
 	});

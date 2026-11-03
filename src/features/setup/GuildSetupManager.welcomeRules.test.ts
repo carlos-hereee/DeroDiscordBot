@@ -16,8 +16,8 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { RULES_EDIT_CUSTOM_ID } from "./rulesContent.js";
 
 // ── 👋welcome and 📘rules through GuildSetupManager (2026-10 item 247 Phase 2) ──
-// What:  every build path for the two new channels: a fresh install that builds
-//        both, a fresh install and a boot that ADOPT the server's own channels
+// What:  every build path for the two new channels: a full build that builds
+//        both, a full build and a boot that ADOPT the server's own channels
 //        instead, the intro sweep that must not post over the owner's content, and
 //        the drift rename that must leave an adopted channel's name alone.
 // Why:   adoption is the one place setup reaches outside its own categories, so a
@@ -69,9 +69,20 @@ beforeEach(() => {
 	store.update.mockResolvedValue(undefined);
 });
 
-// ── the fresh install ───────────────────────────────────────────────────────
+// ── the full build ──────────────────────────────────────────────────────────
+// A fresh install builds only 🏰 DERO HEADQUARTERS (2026-11 item 285 Phase 2), so the
+// notice board's welcome and rules adoption runs on the full build that remains: the
+// /setup that rebuilds a self destructed server, a row with no managed id left, built
+// with force and persisted through update (path B).
 
-describe("a fresh install", () => {
+const FULL_BUILD_ROW = { guildId: "guild-1", homebaseDestroyed: true, setupComplete: false };
+
+// The build's own persist write, told apart from any other update by its intro anchors.
+function persistIndex(): number {
+	return store.update.mock.calls.findIndex((call) => "introMessageIds" in (call[1] as object));
+}
+
+describe("a full build", () => {
 	function installGuild(own: unknown[] = []) {
 		const created = new Map<string, ReturnType<typeof textChannel>>();
 		const create = vi.fn(async (opts: { name: string; type: number }) => {
@@ -95,10 +106,10 @@ describe("a fresh install", () => {
 	}
 
 	async function install(own: unknown[] = []) {
-		store.findByGuildId.mockResolvedValue(null);
+		store.findByGuildId.mockResolvedValue(FULL_BUILD_ROW);
 		const rig = installGuild(own);
-		await GuildSetupManager.autoSetup(rig.guild, { guildId: "guild-1", ownerId: "owner-1" });
-		const payload = store.create.mock.calls[0]![0] as Record<string, unknown> & { introMessageIds: Record<string, string | null> };
+		await GuildSetupManager.autoSetup(rig.guild, { guildId: "guild-1", ownerId: "owner-1" }, { force: true });
+		const payload = store.update.mock.calls[persistIndex()]![1] as Record<string, unknown> & { introMessageIds: Record<string, string | null> };
 		return { ...rig, payload };
 	}
 
@@ -152,7 +163,7 @@ describe("a fresh install", () => {
 
 // ── post-launch plan item 2: #spawn-point and the system channel ─────────────
 
-describe("a fresh install on a server with its own arrivals channel", () => {
+describe("a full build on a server with its own arrivals channel", () => {
 	function installGuild(own: TextChannel[], systemChannelId: string | null) {
 		const create = vi.fn(async (opts: { name: string; type: number }) => {
 			if (opts.type === ChannelType.GuildCategory) return { id: `cat-${opts.name}` };
@@ -170,10 +181,10 @@ describe("a fresh install on a server with its own arrivals channel", () => {
 	}
 
 	async function install(own: TextChannel[], systemChannelId: string | null = null) {
-		store.findByGuildId.mockResolvedValue(null);
+		store.findByGuildId.mockResolvedValue(FULL_BUILD_ROW);
 		const rig = installGuild(own, systemChannelId);
-		await GuildSetupManager.autoSetup(rig.guild, { guildId: "guild-1", ownerId: "owner-1" });
-		return { ...rig, payload: store.create.mock.calls[0]![0] as Record<string, unknown> };
+		await GuildSetupManager.autoSetup(rig.guild, { guildId: "guild-1", ownerId: "owner-1" }, { force: true });
+		return { ...rig, payload: store.update.mock.calls[persistIndex()]![1] as Record<string, unknown> };
 	}
 
 	it("adopts #spawn-point as the welcome log in place, and logs the decision once the row holds the admin log channel", async () => {
@@ -189,9 +200,9 @@ describe("a fresh install on a server with its own arrivals channel", () => {
 		);
 		// adminLog reads the admin log channel from the stored row, so on a first setup
 		// the line can only post AFTER the row holding that id is written (2026-10 item
-		// 257, decision 3): emitted before the create, it found no channel and posted nothing.
+		// 257, decision 3): emitted before the write, it found no channel and posted nothing.
 		expect(payload.adminLogChannelId).toBeTruthy();
-		expect(vi.mocked(adminLog.emit).mock.invocationCallOrder[0]!).toBeGreaterThan(store.create.mock.invocationCallOrder[0]!);
+		expect(vi.mocked(adminLog.emit).mock.invocationCallOrder[0]!).toBeGreaterThan(store.update.mock.invocationCallOrder[persistIndex()]!);
 
 		// R3-19 (2026-10 item 263 Phase 4b): the choice is 🧭onboarding's step 2, so no
 		// channel Dero built, 🔒inner-sanctum among them, gets a "your own channels" card.

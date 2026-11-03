@@ -122,6 +122,25 @@ function copyConfigOf(row: unknown): ICopyConfig | null {
 	return (row ?? null) as ICopyConfig | null;
 }
 
+/** Which managed categories a stored row records, read loosely because the arcade and Headquarters ids sit outside the inferred row type. */
+type IManagedCategoryIds = Partial<Record<ManagedCategoryField, string | null>>;
+
+/** True when the row records any managed category, which is what "Dero already built here" means. */
+function hasManagedCategory(row: unknown): boolean {
+	const ids = (row ?? {}) as IManagedCategoryIds;
+	return Boolean(ids.categoryId || ids.gamesCategoryId || ids.headquartersCategoryId);
+}
+
+/**
+ * True for a row a fresh install built with 🏰 DERO HEADQUARTERS alone (2026-11 item 285
+ * Phase 2): no 🪧 NOTICE BOARD id, a Headquarters id. Every legacy row holds categoryId,
+ * so none reads as Headquarters only.
+ */
+export function isHeadquartersOnly(row: unknown): boolean {
+	const ids = (row ?? {}) as IManagedCategoryIds;
+	return !ids.categoryId && Boolean(ids.headquartersCategoryId);
+}
+
 // Every managed category a forced rebuild may settle slot by slot instead of building:
 // the two secondary ones when they survive (2026-10 item 273), and 🪧 NOTICE BOARD when
 // its channels survive their deleted category (2026-10 item 275).
@@ -256,7 +275,20 @@ export class GuildSetupManager {
 		// bypass. A "stale" row means the category or channels were deleted
 		// in Discord but the row in our DB still points at those dead ids,
 		// we want to refresh the ids on THAT row, not insert a second one.
-		if (existing?.categoryId && !options.force) return;
+		// ANY stored category id counts as built, because a Headquarters only row (below)
+		// stores no notice board id: reading only categoryId would full build it on the next
+		// call. Every legacy row holds categoryId, so this widening changes nothing for them.
+		if (hasManagedCategory(existing) && !options.force) return;
+
+		// ⚠️ A FRESH INSTALL BUILDS ONLY 🏰 DERO HEADQUARTERS (2026-11 item 285 Phase 2).
+		// No row means Dero never built here, so 🪧 NOTICE BOARD and 🎮 ARCADE GAMES are
+		// left out and their ids stay null; the onboarding tutorial (Phase 3) builds the
+		// notice board on demand, and the arcade is stored off exactly as turnArcadeOff
+		// leaves it, so the boot sweep never builds it until /arcade on lifts the opt out.
+		// Any existing row (every forced rebuild, a self destruct's /setup) is a legacy
+		// build and takes the full path below, byte for byte as before. This flag is the
+		// one branch; every step it touches reads it rather than deciding again.
+		const headquartersOnly = existing === null;
 
 		// The SECOND category is LOOKED UP before the homebase category is built, and
 		// only CREATED after it, so the sidebar order stays NOTICE BOARD then ARCADE
@@ -277,7 +309,9 @@ export class GuildSetupManager {
 		// /self-destruct could not reach them either). repairMissingChannels passes
 		// the stored id for exactly this reason; this is the same call.
 		const storedArcadeId = (existing as unknown as { gamesCategoryId?: string | null } | null)?.gamesCategoryId ?? null;
-		const existingArcade = await GuildSetupManager.findExistingManagedCategory(guild, "gamesCategoryId", storedArcadeId, copyConfigOf(existing));
+		const existingArcade = headquartersOnly
+			? null
+			: await GuildSetupManager.findExistingManagedCategory(guild, "gamesCategoryId", storedArcadeId, copyConfigOf(existing));
 		if (existingArcade === "unreachable") return;
 		// 🏰 DERO HEADQUARTERS (2026-10 item 257 Phase 2a), looked up first and created
 		// third for the same two reasons: the sidebar reads NOTICE BOARD, ARCADE GAMES,
@@ -309,30 +343,37 @@ export class GuildSetupManager {
 		// bot can track guilds it cannot serve and eventually leave them
 		// after the grace period. Other Discord errors keep their existing
 		// throw-through behavior so legitimate failures still surface.
-		let category;
-		try {
-			category = await guild.channels.create({
-				name: resolveCategoryName("categoryId", copyConfigOf(existing)),
-				type: ChannelType.GuildCategory,
-				permissionOverwrites: [
-					{
-						id: config.ownerId,
-						allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
-					},
-				],
-			});
-		} catch (error) {
-			if (error instanceof DiscordAPIError && error.code === 50013) {
-				await GuildSetupManager.handlePermissionFailure(guild);
-				return;
+		// A Headquarters only build makes no notice board, so its 50013 is caught by
+		// createManagedCategory on the Headquarters create below instead.
+		let category: CategoryChannel | null = null;
+		if (!headquartersOnly) {
+			try {
+				category = await guild.channels.create({
+					name: resolveCategoryName("categoryId", copyConfigOf(existing)),
+					type: ChannelType.GuildCategory,
+					permissionOverwrites: [
+						{
+							id: config.ownerId,
+							allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+						},
+					],
+				});
+			} catch (error) {
+				if (error instanceof DiscordAPIError && error.code === 50013) {
+					await GuildSetupManager.handlePermissionFailure(guild);
+					return;
+				}
+				throw error;
 			}
-			throw error;
 		}
 
 		// A null return means a 50013 already routed through handlePermissionFailure,
 		// so bail exactly as the homebase category create above does.
-		const gamesCategory = existingArcade ?? (await GuildSetupManager.createManagedCategory(guild, "gamesCategoryId", config.ownerId, null, copyConfigOf(existing)));
-		if (!gamesCategory) return;
+		let gamesCategory: CategoryChannel | null = null;
+		if (!headquartersOnly) {
+			gamesCategory = existingArcade ?? (await GuildSetupManager.createManagedCategory(guild, "gamesCategoryId", config.ownerId, null, copyConfigOf(existing)));
+			if (!gamesCategory) return;
+		}
 		// The stored admin role rides along so a forced rebuild's category opens to
 		// admins at once; null on a fresh install, where /setup grants it later.
 		const headquartersCategory =
@@ -369,10 +410,10 @@ export class GuildSetupManager {
 		// reused category (first, so its slots settle before the arcade's), and the
 		// survivors are moved into the new category. When every one is confirmed gone (a
 		// self destruct, a fresh install) the group is built in bulk exactly as before (D2).
-		if (existing && !options.foreignHomebase && (await GuildSetupManager.mayHaveNoticeBoardSurvivors(guild, existing))) {
+		if (category && existing && !options.foreignHomebase && (await GuildSetupManager.mayHaveNoticeBoardSurvivors(guild, existing))) {
 			reusedCategories.push({ field: "categoryId", category });
 		}
-		if (existingArcade && !options.foreignHomebase) reusedCategories.push({ field: "gamesCategoryId", category: gamesCategory });
+		if (existingArcade && gamesCategory && !options.foreignHomebase) reusedCategories.push({ field: "gamesCategoryId", category: gamesCategory });
 		if (existingHeadquarters && !options.foreignHomebase) reusedCategories.push({ field: "headquartersCategoryId", category: headquartersCategory });
 		const keepsChildrenOf = (field: SettledCategoryField): boolean => reusedCategories.some((entry) => entry.field === field);
 
@@ -432,15 +473,19 @@ export class GuildSetupManager {
 			// A settled or reused category writes only its own id (the notice board's is new,
 			// and a reused one may have been adopted by name under a new id); its channel
 			// slots stay as stored, and the settle step writes any it rebuilds.
-			...(built.homebase?.ids ?? { categoryId: category.id }),
-			...(built.arcade?.ids ?? { gamesCategoryId: gamesCategory.id }),
+			// A Headquarters only build stores both unbuilt category ids as null.
+			...(built.homebase?.ids ?? { categoryId: category?.id ?? null }),
+			...(built.arcade?.ids ?? { gamesCategoryId: gamesCategory?.id ?? null }),
 			...(built.headquarters?.ids ?? { headquartersCategoryId: headquartersCategory.id }),
 			// A settled notice board leaves the adopted list as stored: repairOneChannel
 			// writes it for any 👋welcome or 📘rules slot it settles.
 			...(built.homebase ? { adoptedChannelIds } : {}),
 			// The arcade is built, so its switches are written on (2026-10 item 257,
-			// owner item 11), except one this server already turned off.
-			...arcadeSwitchesToWrite(existing),
+			// owner item 11), except one this server already turned off. A Headquarters
+			// only build stores it off instead, every arcade slot opted out the way
+			// turnArcadeOff leaves it, which is what keeps repairMissingChannels from
+			// building it on the next boot and what lets /arcade on bring it back.
+			...(headquartersOnly ? { userRemovedChannels: GuildSetupManager.specFieldsUnder("gamesCategoryId") } : arcadeSwitchesToWrite(existing)),
 			// v1.5.1 item 9: clear any previously-tracked permission failure
 			// so a guild that recovered from missing-permissions state stops
 			// being on the auto-leave countdown. Safe to set unconditionally
@@ -862,9 +907,25 @@ export class GuildSetupManager {
 			return { action: "built", repairedChannels: [] };
 		}
 
+		// ①.5 a Headquarters only install (2026-11 item 285 Phase 2) has no notice board to
+		//      fetch, probe or rename, and a null categoryId must never read as "the
+		//      category is gone", which would full build it in step ②. So only the sweep
+		//      runs, with no notice board: Headquarters and its six channels are resolved
+		//      and repaired as on any guild, the notice board's specs are skipped, and the
+		//      arcade's stay off through the userRemovedChannels opt out the build stored.
+		if (isHeadquartersOnly(stored)) {
+			const repairedChannels = await GuildSetupManager.repairMissingChannels(client, guild, null);
+			await GuildSetupManager.reconcileCommunityGating(client, guild);
+			const action = repairedChannels.length > 0 ? "repaired" : "skipped";
+			console.log(LOG_MESSAGES.setup.ensureHomebaseDone(guild.id, action));
+			return { action, repairedChannels };
+		}
+
 		// ② category gone? null from fetch catch, or a Discord 10003 on the
 		//    direct fetch path. Either way the stored homebase doesn't exist.
-		const category = await guild.channels.fetch(stored.categoryId).catch(() => null);
+		// A null categoryId here is a row with no category at all, which step ① let
+		// through; the missing category branch rebuilds it exactly as before.
+		const category = stored.categoryId ? await guild.channels.fetch(stored.categoryId).catch(() => null) : null;
 		if (!category) {
 			console.warn(LOG_MESSAGES.setup.homebaseCategoryMissing(stored.categoryId, guild.id));
 			await GuildSetupManager.rebuildFromStaleConfig(guild);
@@ -1195,6 +1256,11 @@ export class GuildSetupManager {
 		// run their commands here (owner decision 7).
 		{ configField: "commandOutputChannelId", nameKey: "commandOutput", kind: "public", categoryField: "categoryId" },
 	]);
+
+	/** The config field of every managed channel parented under the given category. */
+	static specFieldsUnder(categoryField: IChannelSpec["categoryField"]): string[] {
+		return GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.categoryField === categoryField).map((spec) => spec.configField);
+	}
 
 	// ── intro content resolver ────────────────────────────────
 	// What: pick the right ChannelContent embed for a given spec, reading
@@ -2096,7 +2162,10 @@ export class GuildSetupManager {
 	//       delegate rebuilds to repairOneChannel, accumulate display names,
 	//       post notices at the end. Errors on a single spec do not stop
 	//       the others.
-	static async repairMissingChannels(client: Client, guild: Guild, category: CategoryChannel): Promise<string[]> {
+	// A null category is a Headquarters only guild (2026-11 item 285 Phase 2): there is
+	// no 🪧 NOTICE BOARD to build under, so its specs are skipped rather than built
+	// anywhere else, and the arcade and Headquarters groups sweep as on any guild.
+	static async repairMissingChannels(client: Client, guild: Guild, category: CategoryChannel | null): Promise<string[]> {
 		// re read the config here so we pick up the freshest admin role /
 		// owner / channel ids. the caller only passed us the initial state. Read
 		// plain, like the repairs it chains (2026-10 item 274).
@@ -2114,6 +2183,7 @@ export class GuildSetupManager {
 		if (stored.autoHealEnabled === false) {
 			let wouldRepairCount = 0;
 			for (const spec of GuildSetupManager.CHANNEL_SPECS) {
+				if (!category && spec.categoryField === "categoryId") continue;
 				const storedId = stored[spec.configField] as string | null | undefined;
 				if (!storedId) {
 					wouldRepairCount += 1;
@@ -2235,7 +2305,7 @@ export class GuildSetupManager {
 			// persisted IMMEDIATELY rather than at the end of the sweep, which is
 			// what makes the second arcade spec in this same loop fetch the one we
 			// just made instead of creating a second one.
-			let parent = category;
+			let parent: CategoryChannel | null = category;
 			if (spec.categoryField !== "categoryId") {
 				// null means a 50013 already routed through handlePermissionFailure (or,
 				// for Headquarters, no Manage Channels, already logged). Skip that
@@ -2245,6 +2315,8 @@ export class GuildSetupManager {
 				if (!secondary) continue;
 				parent = secondary;
 			}
+			// A notice board spec on a Headquarters only guild: nothing to build it under.
+			if (!parent) continue;
 
 			try {
 				const result = await GuildSetupManager.repairOneChannel(guild, parent, spec, stored);
@@ -2531,13 +2603,14 @@ export class GuildSetupManager {
 	static async isHomebaseOwnedByThisBot(
 		client: Client,
 		guildId: string,
-		stored: { scheduleChannelId: string; scheduleMessageId?: string | null }
+		stored: { scheduleChannelId?: string | null; scheduleMessageId?: string | null }
 	): Promise<"owned" | "foreign" | "unknown"> {
 		const selfId = client.user?.id;
 		// No self id or no stored anchor → cannot disprove ownership. "unknown" so
-		// the caller repairs in place instead of doing a destructive rebuild.
+		// the caller repairs in place instead of doing a destructive rebuild. A
+		// Headquarters only guild has no 📅event-schedule yet, so it lands here too.
 		if (!selfId) return "unknown";
-		if (!stored.scheduleMessageId) return "unknown";
+		if (!stored.scheduleMessageId || !stored.scheduleChannelId) return "unknown";
 
 		const channel = await client.channels.fetch(stored.scheduleChannelId).catch(() => null);
 		if (!channel || !(channel instanceof TextChannel)) return "unknown";

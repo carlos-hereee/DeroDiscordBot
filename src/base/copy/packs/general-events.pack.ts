@@ -272,7 +272,7 @@ export const generalEventsCopy: IPluginCopy = {
 			`I have joined **${guildName}**.\n\n` +
 			"Before I can do anything useful, I need one thing from you:\n\n" +
 			"**Run `/setup` and pick an admin role.**\n\n" +
-			"Once that is done I will build the home channels and start posting reminders for any events you configure.",
+			"Once that is done your admins get into 🏰 DERO HEADQUARTERS, where I walk you through the rest.",
 	},
 
 	// ── pairing claim code DM (FUTURE_PLANS item 63) ──

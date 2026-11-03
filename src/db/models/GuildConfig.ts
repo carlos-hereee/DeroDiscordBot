@@ -10,20 +10,20 @@ const guildConfigSchema = new Schema(
 		guildId: { type: String, required: true, unique: true },
 		adminRoleId: { type: String, required: false, default: null }, // role that can configure the bot
 
-		// category
-		categoryId: { type: String, required: true },
+		// 🪧 NOTICE BOARD and five of its channels are nullable because a fresh install
+		// builds only 🏰 DERO HEADQUARTERS (2026-11 item 285 Phase 2), so its row stores
+		// null here until the notice board is built. Every legacy row already holds an id,
+		// so loosening the validator changes nothing for them.
+		categoryId: { type: String, required: false, default: null },
 		// member role assigned to verified users during onboarding, stored here for easy access when assigning during onboarding
 		memberRoleId: { type: String, required: false, default: null },
-		// channel IDs, stored so bot always knows where to post.
-		// All channels stay required because v1.5.1 ships the visibility-
-		// toggle approach (channels always exist, /setup hide/show controls
-		// @everyone ViewChannel overwrites). A future create-or-delete
-		// redesign would re-revisit nullability.
-		introChannelId: { type: String, required: true },
-		commandsChannelId: { type: String, required: true },
-		leaderboardChannelId: { type: String, required: true },
-		scheduleChannelId: { type: String, required: true },
-		announcementsChannelId: { type: String, required: true },
+		// channel IDs, stored so bot always knows where to post. The inner sanctum stays
+		// required: Headquarters is the one group every install builds.
+		introChannelId: { type: String, required: false, default: null },
+		commandsChannelId: { type: String, required: false, default: null },
+		leaderboardChannelId: { type: String, required: false, default: null },
+		scheduleChannelId: { type: String, required: false, default: null },
+		announcementsChannelId: { type: String, required: false, default: null },
 		adminChannelId: { type: String, required: true },
 		// ── next decree channel ───────────────────────────────────────
 		// What:  id of the 🛡️next-decree channel where NextUpBoard posts
