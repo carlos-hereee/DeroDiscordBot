@@ -814,6 +814,21 @@ export const generalEventsCopy: IPluginCopy = {
 				body:
 					"A voice room for your community. Until Dero's voice is switched on in ⚙️dero-config it is an ordinary voice channel and nothing listens; once it is on, members on Dero's task list can bring Dero in with its Join button.",
 			},
+			commandOutput: {
+				title: "💬 Dero Commands",
+				body:
+					"The channel every member can post in, built for running Dero's commands. When a member asks Dero something, the answer lands here with a ping for that member alone. Without this channel those answers stay private, seen only by the member who asked.",
+			},
+			leaderboard: {
+				title: "🏆 Leaderboard",
+				body:
+					"Two boards Dero keeps current, side by side: the participation rankings from your events, and the levels your members earn over time. Dero updates both in place, so members only read here. Without this channel neither board has a place to post.",
+			},
+			nextDecree: {
+				title: "🔜 Upcoming Events",
+				body:
+					"As each event moves within the next day, Dero posts it here with its time and any prep notes. Every post stays, so members can scroll back to what was announced, and its Edit button changes that one occurrence. Without this channel those posts wait until you add it.",
+			},
 		},
 	},
 

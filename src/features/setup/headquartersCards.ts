@@ -18,7 +18,7 @@ import { readAdoptionChoice } from "./adoption.js";
 import { isMemberRoleGated } from "./communityOverwrites.js";
 import { setupCopy } from "./setupCopy.js";
 import { buildButtons as buildArcadeControlButtons } from "./arcadeControlCards.js";
-import { buildCards as buildTutorialCards, type TutorialRow } from "./tutorialCards.js";
+import { buildCards as buildTutorialCards, stepIdOf, type StepProgress, type TutorialRow } from "./tutorialCards.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { DEFAULT_SERVER_TIMEZONE, resolveServerTimezone } from "@utils/tzParser.js";
 
@@ -129,11 +129,20 @@ export interface HeadquartersRow extends IAdoptionChoiceRow, TutorialRow {
 
 /** One numbered step of a steps card. A step with no customId shows its mark only. */
 export interface SetupStep {
+	// With its domain, the step's id (tutorialCards.stepIdOf) and its card's key.
+	key: string;
+	// A channel step builds a notice board channel; a flow step opens an existing flow.
+	kind: "channel" | "flow";
 	label: string;
 	done: boolean;
+	// True when `done` can read true with nobody acting on it, so the step waits for Continue.
+	needsContinue: boolean;
+	teaching: string;
 	optional?: boolean;
 	note?: string;
 	customId: string | null;
+	// Filled in by readDomainView, the one place the skip list meets a view, so views stay pure.
+	progress?: StepProgress;
 }
 
 /** One message of buttons kept between a domain's steps card and its chart. */
@@ -158,9 +167,33 @@ export interface DomainView {
 	extraButtons?: ButtonBuilder[];
 }
 
+// The steps whose done mark can read true with nobody acting on it (2026-11 item 289): a
+// saved voice row, nothing adopted, a gate that follows on its own, the arcade switches, a
+// template, leveling, and the rename step, which has nothing to finish. Each waits for a
+// Continue, or the walk would jump past a card nobody saw.
+const CONTINUE_STEPS: ReadonlySet<string> = new Set([
+	"deroConfig:priority",
+	"onboarding:adopted",
+	"onboarding:gating",
+	"arcadeControl:chips",
+	"serverConfig:template",
+	"serverConfig:leveling",
+	"serverConfig:rename",
+]);
+
+/** The fields of a flow step a view decides; the rest follow from its domain and key. */
+type FlowStepFields = Pick<SetupStep, "label" | "done" | "customId" | "optional" | "note">;
+
+function flowStep(domain: HeadquartersDomain, key: string, fields: FlowStepFields): SetupStep {
+	const teaching = (copy.stepTeaching[domain] as Record<string, string>)[key] ?? "";
+	return { ...fields, key, kind: "flow", needsContinue: CONTINUE_STEPS.has(stepIdOf(domain, key)), teaching };
+}
+
 const onOff = { onLabel: copy.on, offLabel: copy.off };
 const toggle = (label: string, on: boolean): SettingsChartRow => ({ label, kind: "switch", on });
 const value = (label: string, text: string): SettingsChartRow => ({ label, kind: "value", value: text });
+
+const DERO_CONFIG_STEP_KEYS = ["voice", "priority"] as const;
 
 /** ⚙️dero-config: Dero's voice row, or its defaults when no admin saved one yet. */
 export function deroConfigView(voice: IDeroVoiceConfig | null): DomainView {
@@ -174,7 +207,7 @@ export function deroConfigView(voice: IDeroVoiceConfig | null): DomainView {
 	const done = [voice?.enabled === true && voice.allowedVoiceChannelIds.length > 0, voice !== null];
 	return {
 		title: domain.title,
-		steps: domain.steps.map((label, index) => ({ label, done: done[index] ?? false, customId: stepCustomId("deroConfig", index + 1) })),
+		steps: domain.steps.map((label, index) => flowStep("deroConfig", DERO_CONFIG_STEP_KEYS[index] ?? "", { label, done: done[index] ?? false, customId: stepCustomId("deroConfig", index + 1) })),
 		chart: {
 			title: domain.chartTitle,
 			subtitle: domain.chartSubtitle,
@@ -217,10 +250,10 @@ export function onboardingView(facts: OnboardingFacts): DomainView {
 	return {
 		title: domain.title,
 		steps: [
-			{ label: community, done: facts.communityOn, customId: COMMUNITY_CUSTOM_IDS.enable },
-			{ label: adopted, done: facts.adoptedPlaced, note: facts.adoptedLines.length > 0 ? facts.adoptedLines.join("\n") : domain.nothingAdopted, customId: CHOOSE_BUTTON_ID },
-			{ label: onboarding, done: facts.onboardingOn === true, customId: COMMUNITY_CUSTOM_IDS.configure },
-			{ label: gating, done: facts.gated, note: domain.gatingNote, customId: null },
+			flowStep("onboarding", "community", { label: community, done: facts.communityOn, customId: COMMUNITY_CUSTOM_IDS.enable }),
+			flowStep("onboarding", "adopted", { label: adopted, done: facts.adoptedPlaced, note: facts.adoptedLines.length > 0 ? facts.adoptedLines.join("\n") : domain.nothingAdopted, customId: CHOOSE_BUTTON_ID }),
+			flowStep("onboarding", "discordOnboarding", { label: onboarding, done: facts.onboardingOn === true, customId: COMMUNITY_CUSTOM_IDS.configure }),
+			flowStep("onboarding", "gating", { label: gating, done: facts.gated, note: domain.gatingNote, customId: null }),
 		],
 		chart: {
 			title: domain.chartTitle,
@@ -237,6 +270,8 @@ export function onboardingView(facts: OnboardingFacts): DomainView {
 	};
 }
 
+const ARCADE_CONTROL_STEP_KEYS = ["enable", "chips", "reach", "block"] as const;
+
 /** 🎰arcade-control, read from the row alone. The daily claim rides the chip switch. */
 export function arcadeControlView(row: HeadquartersRow): DomainView {
 	const domain = copy.arcadeControl;
@@ -251,13 +286,15 @@ export function arcadeControlView(row: HeadquartersRow): DomainView {
 	// Chips, the monthly post and the bots are one step since they share the /arcade panel
 	// (2026-10 item 263 Phase 4b, owner decision 15); marks, labels and routes stay index based.
 	const done = [arcadeOn, chipsOn && monthlyPost && bots, reach === "network", blocked > 0];
-	const steps = domain.steps.map((label, index) => ({
-		label,
-		done: done[index] ?? false,
-		// Blocking a server is never required, so its step says so rather than nagging.
-		optional: index === domain.steps.length - 1,
-		customId: stepCustomId("arcadeControl", index + 1),
-	}));
+	const steps = domain.steps.map((label, index) =>
+		flowStep("arcadeControl", ARCADE_CONTROL_STEP_KEYS[index] ?? "", {
+			label,
+			done: done[index] ?? false,
+			// Blocking a server is never required, so its step says so rather than nagging.
+			optional: index === domain.steps.length - 1,
+			customId: stepCustomId("arcadeControl", index + 1),
+		})
+	);
 	// While the arcade is off the channel shows one card, the enable step alone, with no
 	// chart and no Dismantle (2026-11 item 285 debug pass, owner ruling). Once it is on that
 	// card is replaced by the rest of the steps, which keep their routes (step 2 is still
@@ -339,12 +376,9 @@ export function serverConfigView(row: HeadquartersRow, facts: ServerConfigFacts)
 	const optional: Record<ServerConfigStep, boolean> = { timezone: false, template: false, kvkSeason: true, streams: true, events: false, channels: true, leveling: false, rename: true };
 	return {
 		title: domain.title,
-		steps: SERVER_CONFIG_STEPS.map((key, index) => ({
-			label: domain.steps[key],
-			done: done[key],
-			optional: optional[key],
-			customId: stepCustomId("serverConfig", index + 1),
-		})),
+		steps: SERVER_CONFIG_STEPS.map((key, index) =>
+			flowStep("serverConfig", key, { label: domain.steps[key], done: done[key], optional: optional[key], customId: stepCustomId("serverConfig", index + 1) })
+		),
 		chart: {
 			title: domain.chartTitle,
 			subtitle: domain.chartSubtitle,

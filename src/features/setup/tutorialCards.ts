@@ -2,6 +2,7 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type Button
 import { COLORS } from "@base/copy/brand.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import type { IPluginCopy } from "@base/copy/types.js";
+import type { HeadquartersDomain, SetupStep } from "./headquartersCards.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
@@ -34,6 +35,9 @@ export const TUTORIAL_CHANNELS = {
 	rules: "rulesChannelId",
 	commands: "commandsChannelId",
 	meetingVoice: "meetingVoiceChannelId",
+	commandOutput: "commandOutputChannelId",
+	leaderboard: "leaderboardChannelId",
+	nextDecree: "nextDecreeChannelId",
 } as const satisfies Record<string, OnDemandField>;
 
 export type TutorialChannelKey = keyof typeof TUTORIAL_CHANNELS;
@@ -54,8 +58,10 @@ export function tutorialKeyOf(step: string): TutorialChannelKey | null {
 	return Object.hasOwn(TUTORIAL_CHANNELS, key) ? (key as TutorialChannelKey) : null;
 }
 
-/** The slots buildCards reads off the row. */
-export type TutorialRow = Partial<Record<TutorialChannelField, string | null>>;
+/** The slots buildCards reads off the row, and the steps an admin moved past. */
+export type TutorialRow = Partial<Record<TutorialChannelField, string | null>> & {
+	setupStepsSkipped?: readonly string[] | null;
+};
 
 /** One kept card: the slot it builds (which keys its stored message id), its title and its message. */
 export interface TutorialCard {
@@ -66,6 +72,76 @@ export interface TutorialCard {
 }
 
 const copy = setupCopy.headquarters.onboarding.tutorial;
+
+// ── the step model (2026-11 item 289) ────────────────────────────────────────
+// A step id is domain:key, the one word setupStepsSkipped stores. Two pure reads answer
+// everything a card or a sync needs from that list: progressOf is what a step shows, and
+// revealedSteps is which steps keep a card. One rule serves every server, because both read
+// only the row: a new server and an old one differ in what they already hold, never in a flag.
+
+/** What a step shows: its ✅, its ⬜ or its ⏭️. */
+export type StepProgress = "done" | "skipped" | "open";
+
+/** The steps that keep a card, and whether the domain has no step left to resolve. */
+export interface RevealedSteps {
+	kept: SetupStep[];
+	finished: boolean;
+}
+
+/** The id setupStepsSkipped stores for one step. */
+export function stepIdOf(domain: HeadquartersDomain, key: string): string {
+	return `${domain}:${key}`;
+}
+
+/**
+ * What a step shows. A pressed Continue reads done, never skipped, because a step that needs
+ * Continue has nothing to skip: it only waits for an admin to see it.
+ */
+export function progressOf(step: SetupStep, domain: HeadquartersDomain, skipped: readonly string[]): StepProgress {
+	const listed = skipped.includes(stepIdOf(domain, step.key));
+	if (step.done || (step.needsContinue && listed)) return "done";
+	return listed ? "skipped" : "open";
+}
+
+/**
+ * True once the walk may move past a step. A needsContinue step wants its press even when it
+ * already reads done, because that mark can read true with nobody having looked at it.
+ */
+export function isResolved(step: SetupStep, domain: HeadquartersDomain, skipped: readonly string[]): boolean {
+	return skipped.includes(stepIdOf(domain, step.key)) || (step.done && !step.needsContinue);
+}
+
+/** The key one step's card is stored under: the channel slot, or <domain>-<key> for a flow step. */
+export function cardKeyOf(step: Pick<SetupStep, "key" | "kind">, domain: HeadquartersDomain): string {
+	if (step.kind === "channel") return TUTORIAL_CHANNELS[step.key as TutorialChannelKey];
+	return `${domain}-${step.key}`;
+}
+
+/**
+ * Which steps keep a card, walking in step order. A stored card always stays, even past the
+ * frontier, because a posted card is never deleted. The frontier, the first unresolved step,
+ * is the one new card a walk reveals. A resolved channel step before the frontier keeps a
+ * card so its Remove has a home, while a resolved flow step with no card stays cardless, or
+ * a fully set up server would be handed every step at once.
+ */
+export function revealedSteps(
+	steps: readonly SetupStep[],
+	domain: HeadquartersDomain,
+	skipped: readonly string[],
+	storedIds: Partial<Record<string, string | null>> | null | undefined
+): RevealedSteps {
+	const kept: SetupStep[] = [];
+	let frontierPassed = false;
+	for (const step of steps) {
+		const resolved = isResolved(step, domain, skipped);
+		const hasStoredCard = Boolean(storedIds?.[cardKeyOf(step, domain)]);
+		const isFrontier = !resolved && !frontierPassed;
+		const isChannelBeforeFrontier = resolved && step.kind === "channel" && !frontierPassed;
+		if (hasStoredCard || isFrontier || isChannelBeforeFrontier) kept.push(step);
+		if (isFrontier) frontierPassed = true;
+	}
+	return { kept, finished: !frontierPassed };
+}
 
 // ── the cards ────────────────────────────────────────────────────────────────
 

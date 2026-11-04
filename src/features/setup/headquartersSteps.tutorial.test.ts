@@ -38,7 +38,7 @@ describe("stepTarget for the tutorial cards", () => {
 
 	it("routes nothing else on 🧭onboarding, and no tutorial tail on another domain", () => {
 		expect(stepTarget("hqstep:onboarding:1")).toBeNull();
-		expect(stepTarget("hqstep:onboarding:tutorial-leaderboard")).toBeNull();
+		expect(stepTarget("hqstep:onboarding:tutorial-arcade")).toBeNull();
 		expect(stepTarget("hqstep:onboarding:tutorial-toString")).toBeNull();
 		expect(stepTarget("hqstep:arcadeControl:tutorial-intro")).toBeNull();
 	});

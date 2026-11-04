@@ -513,14 +513,14 @@ describe("syncHeadquartersChannel in 🧭onboarding", () => {
 		return rigged;
 	}
 
-	it("posts the seven tutorial cards after the steps card and the chart, and stores each by slot", async () => {
+	it("posts the ten tutorial cards after the steps card and the chart, and stores each by slot", async () => {
 		const { guild, send, messages, stored } = onboardingRig();
 		await syncHeadquartersChannel(guild, "onboarding");
 
-		expect(send).toHaveBeenCalledTimes(9);
+		expect(send).toHaveBeenCalledTimes(12);
 		const titles = [...messages.values()].map((message) => message.embeds[0]!.title);
 		expect(titles.slice(0, 2)).toEqual([copy.onboarding.title, copy.onboarding.chartTitle]);
-		expect(titles.slice(2)).toEqual(["📜 Introductions", "📢 Announcements", "📅 Event Schedule", "👋 Welcome", "📘 Rules", "📖 Command Center", "🏛️ Meeting Hall"]);
+		expect(titles.slice(2)).toEqual(["📜 Introductions", "📢 Announcements", "📅 Event Schedule", "👋 Welcome", "📘 Rules", "📖 Command Center", "🏛️ Meeting Hall", "💬 Dero Commands", "🏆 Leaderboard", "🔜 Upcoming Events"]);
 		expect(Object.keys(stored.tutorialCardMessageIds ?? {})).toEqual([
 			"introChannelId",
 			"announcementsChannelId",
@@ -529,6 +529,9 @@ describe("syncHeadquartersChannel in 🧭onboarding", () => {
 			"rulesChannelId",
 			"commandsChannelId",
 			"meetingVoiceChannelId",
+			"commandOutputChannelId",
+			"leaderboardChannelId",
+			"nextDecreeChannelId",
 		]);
 	});
 
@@ -541,7 +544,7 @@ describe("syncHeadquartersChannel in 🧭onboarding", () => {
 		stored.introChannelId = "c-intro";
 		await syncHeadquartersChannel(guild, "onboarding");
 
-		expect(send).toHaveBeenCalledTimes(9);
+		expect(send).toHaveBeenCalledTimes(12);
 		expect(introCard.edit).toHaveBeenCalledOnce();
 		expect(introCard.embeds[0]!.data.description).toContain("<#c-intro>");
 		expect(welcomeCard.edit).not.toHaveBeenCalled();
@@ -551,5 +554,35 @@ describe("syncHeadquartersChannel in 🧭onboarding", () => {
 		const { guild, send } = rig({});
 		await syncHeadquartersChannel(guild, "arcadeControl");
 		expect(send).toHaveBeenCalledTimes(2);
+	});
+});
+
+// ── the step model at its views (2026-11 item 289) ──
+// A step that can read done with nobody acting on it waits for a Continue; every other step
+// reads not done on a fresh row, which is what lets the walk start at one card.
+describe("the steps of a fresh row", () => {
+	const facts = { communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: true, adoptedLines: [] };
+	const fresh = { now: 0, activeEvents: 0, pausedEvents: 0, weeklySchedules: 0 };
+
+	it("mark exactly the seven steps that need a Continue", () => {
+		const views = { deroConfig: deroConfigView(null), onboarding: onboardingView(facts), arcadeControl: arcadeControlView({ gamesCategoryId: "cat" }), serverConfig: serverConfigView({}, fresh) };
+		const continued = Object.entries(views).flatMap(([domain, view]) => view.steps.filter((step) => step.needsContinue).map((step) => `${domain}:${step.key}`));
+		expect(continued).toEqual(["deroConfig:priority", "onboarding:adopted", "onboarding:gating", "arcadeControl:chips", "serverConfig:template", "serverConfig:leveling", "serverConfig:rename"]);
+	});
+
+	it("read done only on a step that needs a Continue, so no walk jumps two cards", () => {
+		const views = [deroConfigView(null), onboardingView(facts), arcadeControlView({ gamesCategoryId: "cat" }), serverConfigView({}, fresh)];
+		for (const view of views) expect(view.steps.filter((step) => step.done && !step.needsContinue).map((step) => step.key)).toEqual([]);
+	});
+
+	it("teach every flow step from setupCopy in one or two sentences, and say nothing the flows do not", () => {
+		const views = [deroConfigView(null), onboardingView(facts), arcadeControlView({ gamesCategoryId: "cat" }), serverConfigView({}, fresh)];
+		const steps = views.flatMap((view) => view.steps);
+		expect(steps).toHaveLength(17);
+		for (const step of steps) {
+			expect(step.teaching.length, step.key).toBeGreaterThan(30);
+			expect(step.teaching.split(/[.!?](?:\s|$)/).filter(Boolean).length, step.key).toBeLessThanOrEqual(2);
+			expect(step.teaching, step.key).not.toMatch(/always on|brain/i);
+		}
 	});
 });

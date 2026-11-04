@@ -1085,6 +1085,21 @@ export const rokCommanderCopy = {
 				body:
 					"A voice room for your council. Until you switch my voice on in ⚙️dero-config it is an ordinary voice channel and nothing listens; once it is on, members on my task list can bring me in with its Join button.",
 			},
+			commandOutput: {
+				title: "💬 Dero Commands",
+				body:
+					"The one hall every member may speak in, built for running my commands. When a warrior asks me something, my answer lands here with a ping for that warrior alone. Without this hall my answers stay private, seen only by the one who asked.",
+			},
+			leaderboard: {
+				title: "🏆 Leaderboard",
+				body:
+					"Two boards I keep true, side by side: the participation rankings from your events, and the levels your members earn over time. I rewrite both in place, so members only read here. Without this hall neither board has a place to stand.",
+			},
+			nextDecree: {
+				title: "🔜 Upcoming Events",
+				body:
+					"As each event moves within the next day, I post it here with its time and any prep notes. Every post stays, so your people can scroll back to what was announced, and its Edit button changes that one occurrence. Without this hall those posts wait until you raise it.",
+			},
 		},
 	},
 

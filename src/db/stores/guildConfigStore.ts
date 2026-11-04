@@ -26,6 +26,12 @@ export const guildConfigStore = {
 		return GuildConfigModel.findOneAndUpdate({ guildId }, { $pull: pull }, { new: true });
 	},
 
+	// Put one value into one named array field, once, in one atomic write, so two presses
+	// of one button list it a single time (2026-11 item 289).
+	async addToList(guildId: string, list: string, value: string) {
+		return GuildConfigModel.findOneAndUpdate({ guildId }, { $addToSet: { [list]: value } }, { new: true });
+	},
+
 	// ── network tables (2026-10 item 244 Phase 5b) ──
 	// Every config the network board has business with: the servers on the network,
 	// and any server that still holds a board message from before it left, so the
