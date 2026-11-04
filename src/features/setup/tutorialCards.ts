@@ -58,6 +58,14 @@ export function tutorialKeyOf(step: string): TutorialChannelKey | null {
 	return Object.hasOwn(TUTORIAL_CHANNELS, key) ? (key as TutorialChannelKey) : null;
 }
 
+/** The step tail a Skip or Continue button's customId carries after `hqstep:<domain>:`. */
+export const SKIP_STEP_TAIL = "skip-";
+
+/** The customId of a Skip or Continue button: `hqstep:<domain>:skip-<key>`. */
+export function skipCustomId(domain: HeadquartersDomain, key: string): string {
+	return `hqstep:${domain}:${SKIP_STEP_TAIL}${key}`;
+}
+
 /** The slots buildCards reads off the row, and the steps an admin moved past. */
 export type TutorialRow = Partial<Record<TutorialChannelField, string | null>> & {
 	setupStepsSkipped?: readonly string[] | null;
@@ -72,6 +80,7 @@ export interface TutorialCard {
 }
 
 const copy = setupCopy.headquarters.onboarding.tutorial;
+const cardCopy = setupCopy.headquarters.stepCards;
 
 // ── the step model (2026-11 item 289) ────────────────────────────────────────
 // A step id is domain:key, the one word setupStepsSkipped stores. Two pure reads answer
@@ -144,6 +153,19 @@ export function revealedSteps(
 }
 
 // ── the cards ────────────────────────────────────────────────────────────────
+
+/** The ten channel steps as the row stands, each teaching from the guild's pack. */
+export function channelSteps(row: TutorialRow | null, pack: IPluginCopy): SetupStep[] {
+	return (Object.keys(TUTORIAL_CHANNELS) as TutorialChannelKey[]).map((key) => {
+		const teaching = pack.channelContent.tutorial[key];
+		return { key, kind: "channel", label: teaching.title, done: Boolean(row?.[TUTORIAL_CHANNELS[key]]), needsContinue: false, teaching: teaching.body, customId: tutorialCustomId(key) };
+	});
+}
+
+/** A step's Skip button. Grey, because a step's own action is the one to press. */
+export function buildSkipButton(domain: HeadquartersDomain, key: string): ButtonBuilder {
+	return new ButtonBuilder().setCustomId(skipCustomId(domain, key)).setLabel(cardCopy.skipButton).setStyle(ButtonStyle.Secondary);
+}
 
 /**
  * Every tutorial card as the row stands. The title never carries the mark, because the

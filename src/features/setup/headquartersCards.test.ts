@@ -47,6 +47,8 @@ const voiceStore = deroVoiceConfigStore as unknown as { findByGuildId: ReturnTyp
 const render = renderSettingsChart as unknown as ReturnType<typeof vi.fn>;
 const copy = setupCopy.headquarters;
 
+const onboardingFlowSteps = (view: ReturnType<typeof onboardingView>) => view.steps.filter((step) => step.kind === "flow");
+
 const marks = (description: string | undefined): string[] => (description ?? "").split("\n").filter((line) => line.includes("**Step")).map((line) => line.slice(0, 1));
 
 function voiceRow(overrides: Record<string, unknown> = {}) {
@@ -89,17 +91,53 @@ describe("the step marks, read from a fixture config", () => {
 		expect(rows.at(-1)).toMatchObject({ kind: "value", value: expect.stringMatching(/^Arcade Lounge › Meeting Hall/) });
 	});
 
-	it("🧭onboarding: step 4 carries no button and its /setup note; the others carry their own flow's customId", () => {
-		const view = onboardingView({ communityOn: true, onboardingOn: false, gated: true, memberRoleName: "Members", adoptedPlaced: true, adoptedLines: [] });
-		expect(view.steps.map((step) => step.done)).toEqual([true, true, false, true]);
-		expect(view.steps.map((step) => step.customId)).toEqual([COMMUNITY_CUSTOM_IDS.enable, CHOOSE_BUTTON_ID, COMMUNITY_CUSTOM_IDS.configure, null]);
+	it("🧭onboarding: gating carries no button and its /setup note; the other flows carry their own customId", () => {
+		const view = onboardingView({ communityOn: true, onboardingOn: false, gated: true, memberRoleName: "Members", adoptedPlaced: true, adoptedLines: [] }, {});
+		const flows = onboardingFlowSteps(view);
+		expect(flows.map((step) => step.done)).toEqual([true, true, false, true]);
+		expect(flows.map((step) => step.customId)).toEqual([COMMUNITY_CUSTOM_IDS.enable, CHOOSE_BUTTON_ID, COMMUNITY_CUSTOM_IDS.configure, null]);
 		const card = buildStepsCard(view);
 		expect(card.embeds[0]!.data.description).toContain(copy.onboarding.gatingNote);
-		expect(card.components.flatMap((row) => row.components)).toHaveLength(3);
+		expect(card.components.flatMap((row) => row.components)).toHaveLength(13);
+	});
+
+	// 2026-11 item 289: the owner's order, the channels first, each read from the row.
+	it("🧭onboarding: lists the ten channels first, then the four flows, each channel marked from its slot", () => {
+		const facts = { communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: false, adoptedLines: [] };
+		const view = onboardingView(facts, { introChannelId: "c-intro" });
+		expect(view.steps.map((step) => step.key)).toEqual([
+			"intro",
+			"announcements",
+			"schedule",
+			"welcome",
+			"rules",
+			"commands",
+			"meetingVoice",
+			"commandOutput",
+			"leaderboard",
+			"nextDecree",
+			"community",
+			"adopted",
+			"discordOnboarding",
+			"gating",
+		]);
+		expect(view.steps.slice(0, 10).every((step) => step.kind === "channel")).toBe(true);
+		expect(view.steps.slice(0, 2).map((step) => [step.done, step.customId])).toEqual([
+			[true, "hqstep:onboarding:tutorial-intro"],
+			[false, "hqstep:onboarding:tutorial-announcements"],
+		]);
+	});
+
+	it("🧭onboarding: three rows of step buttons hold all 13, and every other channel stays at two", () => {
+		const facts = { communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: false, adoptedLines: [] };
+		const rows = buildStepsCard(onboardingView(facts, {})).components;
+		expect(rows.map((row) => row.components.length)).toEqual([5, 5, 3]);
+		expect(serverConfigView({}, noEvents).stepRows).toBeUndefined();
+		expect(buildStepsCard(serverConfigView({}, noEvents)).components).toHaveLength(2);
 	});
 
 	it("🧭onboarding's chart says unknown, not off, when Onboarding could not be read", () => {
-		const rows = onboardingView({ communityOn: true, onboardingOn: null, gated: false, memberRoleName: null, adoptedPlaced: false, adoptedLines: [] }).chart.rows;
+		const rows = onboardingView({ communityOn: true, onboardingOn: null, gated: false, memberRoleName: null, adoptedPlaced: false, adoptedLines: [] }, {}).chart!.rows;
 		expect(rows[1]).toEqual({ label: copy.onboarding.rows.onboarding, kind: "value", value: copy.unknown });
 		expect(rows[2]).toMatchObject({ value: copy.notSet });
 	});
@@ -108,12 +146,19 @@ describe("the step marks, read from a fixture config", () => {
 	// (2026-10 item 263 Phase 4b, owner decision 15).
 	// 2026-11 item 285 debug pass, owner ruling: while the arcade is off the channel shows the
 	// enable step alone, with no chart and no Dismantle.
-	it("🎰arcade-control while the arcade is off: one Turn the arcade on step, no chart and no other button", () => {
+	it("🎰arcade-control while the arcade is off: one Turn the arcade on step, no chart, and only its Skip beside it", () => {
 		const off = arcadeControlView({ gamesCategoryId: null } as HeadquartersRow);
 		expect(off.title).toBe(copy.arcadeControl.enableTitle);
-		expect(off.steps.map((step) => [step.label, step.done, step.customId])).toEqual([[copy.arcadeControl.steps[0], false, "hqstep:arcadeControl:1"]]);
+		expect(off.steps.map((step) => [step.key, step.label, step.done, step.customId])).toEqual([["enable", copy.arcadeControl.steps[0], false, "hqstep:arcadeControl:1"]]);
 		expect(off.chart).toBeNull();
-		expect(off.extraButtons ?? []).toEqual([]);
+		expect(off.ownCardOnly).toBe(true);
+		const rows = buildStepsCard(off).components.map((row) => row.toJSON().components.map((button) => (button as { custom_id: string }).custom_id));
+		expect(rows).toEqual([["hqstep:arcadeControl:1"], ["hqstep:arcadeControl:skip-enable"]]);
+	});
+
+	it("🎰arcade-control while the arcade is off: its Skip goes once the step is skipped", () => {
+		const off = arcadeControlView({ gamesCategoryId: null, setupStepsSkipped: ["arcadeControl:enable"] } as HeadquartersRow);
+		expect(off.extraButtons).toEqual([]);
 		const rows = buildStepsCard(off).components.map((row) => row.toJSON().components.map((button) => (button as { custom_id: string }).custom_id));
 		expect(rows).toEqual([["hqstep:arcadeControl:1"]]);
 	});
@@ -145,11 +190,11 @@ describe("the step marks, read from a fixture config", () => {
 	// names each adopted channel and its slot, or says there is nothing to choose.
 	it("🧭onboarding: step 2 names the channels Dero adopted, or says there is nothing to choose and shows done", () => {
 		const lines = ["• <#c-welcome> as the welcome log"];
-		const adopted = onboardingView({ communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: false, adoptedLines: lines });
-		expect(adopted.steps[1]).toMatchObject({ done: false, note: lines[0], customId: CHOOSE_BUTTON_ID });
+		const adopted = onboardingView({ communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: false, adoptedLines: lines }, {});
+		expect(onboardingFlowSteps(adopted)[1]).toMatchObject({ done: false, note: lines[0], customId: CHOOSE_BUTTON_ID });
 		expect(buildStepsCard(adopted).embeds[0]!.data.description).toContain("<#c-welcome> as the welcome log");
-		const none = onboardingView({ communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: true, adoptedLines: [] });
-		expect(none.steps[1]).toMatchObject({ done: true, note: copy.onboarding.nothingAdopted, customId: CHOOSE_BUTTON_ID });
+		const none = onboardingView({ communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: true, adoptedLines: [] }, {});
+		expect(onboardingFlowSteps(none)[1]).toMatchObject({ done: true, note: copy.onboarding.nothingAdopted, customId: CHOOSE_BUTTON_ID });
 	});
 });
 
@@ -263,6 +308,35 @@ describe("readDomainView", () => {
 		const view = await readDomainView(guild, {}, domain);
 		expect(view.title).toBe(titles[domain]);
 		expect(new Set(Object.values(titles)).size).toBe(HEADQUARTERS_DOMAINS.length);
+	});
+
+	// 2026-11 item 289: the steps card is the table of contents, and its marks are the one
+	// place the skip list meets a view.
+	it("marks a skipped step ⏭️ with the word skipped, a pressed Continue ✅ and an open step ⬜", async () => {
+		const view = await readDomainView(guild, { setupStepsSkipped: ["serverConfig:timezone", "serverConfig:rename"] }, "serverConfig");
+		expect(view.steps.map((step) => step.progress)).toEqual(["skipped", "done", "open", "open", "open", "open", "done", "done"]);
+		const lines = buildStepsCard(view).embeds[0]!.data.description!.split("\n");
+		expect(lines[0]).toContain(`${copy.skippedMark} **Step 1** ${copy.serverConfig.steps.timezone} ${copy.skippedWord}`);
+		expect(lines[2]).toContain(`${copy.todo} **Step 3**`);
+		expect(lines[7]).toContain(`${copy.done} **Step 8**`);
+		expect(lines[7]).not.toContain(copy.skippedWord);
+		const styles = buildStepsCard(view).components.flatMap((row) => row.components.map((button) => (button.toJSON() as { style: ButtonStyle }).style));
+		expect(styles[0]).toBe(ButtonStyle.Secondary);
+		expect(styles[7]).toBe(ButtonStyle.Success);
+	});
+
+	it("says a skipped Turn the arcade on step can be revisited on its own card, the steps card", async () => {
+		const view = await readDomainView(guild, { setupStepsSkipped: ["arcadeControl:enable"] }, "arcadeControl");
+		const description = buildStepsCard(view).embeds[0]!.data.description!;
+		expect(description).toContain(copy.skippedWord);
+		expect(description).toContain(copy.stepCards.skippedLine);
+	});
+
+	it("leaves the views' own steps alone", async () => {
+		const row = { setupStepsSkipped: ["deroConfig:voice"] };
+		const view = await readDomainView(guild, row, "deroConfig");
+		expect(view.steps[0]).toMatchObject({ done: false, progress: "skipped" });
+		expect(deroConfigView(null).steps[0]?.progress).toBeUndefined();
 	});
 
 	it("counts the server's events for 🛠️server-config, a weekly stream among them", async () => {
@@ -565,18 +639,18 @@ describe("the steps of a fresh row", () => {
 	const fresh = { now: 0, activeEvents: 0, pausedEvents: 0, weeklySchedules: 0 };
 
 	it("mark exactly the seven steps that need a Continue", () => {
-		const views = { deroConfig: deroConfigView(null), onboarding: onboardingView(facts), arcadeControl: arcadeControlView({ gamesCategoryId: "cat" }), serverConfig: serverConfigView({}, fresh) };
+		const views = { deroConfig: deroConfigView(null), onboarding: onboardingView(facts, {}), arcadeControl: arcadeControlView({ gamesCategoryId: "cat" }), serverConfig: serverConfigView({}, fresh) };
 		const continued = Object.entries(views).flatMap(([domain, view]) => view.steps.filter((step) => step.needsContinue).map((step) => `${domain}:${step.key}`));
 		expect(continued).toEqual(["deroConfig:priority", "onboarding:adopted", "onboarding:gating", "arcadeControl:chips", "serverConfig:template", "serverConfig:leveling", "serverConfig:rename"]);
 	});
 
 	it("read done only on a step that needs a Continue, so no walk jumps two cards", () => {
-		const views = [deroConfigView(null), onboardingView(facts), arcadeControlView({ gamesCategoryId: "cat" }), serverConfigView({}, fresh)];
+		const views = [deroConfigView(null), onboardingView(facts, {}), arcadeControlView({ gamesCategoryId: "cat" }), serverConfigView({}, fresh)];
 		for (const view of views) expect(view.steps.filter((step) => step.done && !step.needsContinue).map((step) => step.key)).toEqual([]);
 	});
 
 	it("teach every flow step from setupCopy in one or two sentences, and say nothing the flows do not", () => {
-		const views = [deroConfigView(null), onboardingView(facts), arcadeControlView({ gamesCategoryId: "cat" }), serverConfigView({}, fresh)];
+		const views = [deroConfigView(null), { steps: onboardingFlowSteps(onboardingView(facts, {})) }, arcadeControlView({ gamesCategoryId: "cat" }), serverConfigView({}, fresh)];
 		const steps = views.flatMap((view) => view.steps);
 		expect(steps).toHaveLength(17);
 		for (const step of steps) {

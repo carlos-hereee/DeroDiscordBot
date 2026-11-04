@@ -365,6 +365,8 @@ export const setupCopy = {
 	headquarters: {
 		done: "✅",
 		todo: "⬜",
+		skippedMark: "⏭️",
+		skippedWord: "(skipped)",
 		stepLine: (mark: string, step: number, label: string): string => `${mark} **Step ${step}** ${label}`,
 		optional: "(optional)",
 		buttonLabel: (step: number): string => `Step ${step}`,
@@ -378,6 +380,17 @@ export const setupCopy = {
 		dollars: (usd: number): string => `$${usd} a month`,
 		stepUnavailable: "That step could not open just now. Try again in a moment.",
 		staleStep: "This step is no longer available. The card refreshes on the next change.",
+		// What a step card says and carries (2026-11 item 289). The channel cards' own lines and
+		// their Add this channel button are onboarding.tutorial's.
+		stepCards: {
+			openButton: "Open",
+			skipButton: "Skip",
+			continueButton: "Continue",
+			removeButton: "Remove",
+			skippedLine: "⏭️ Skipped. You can always come back and make edits.",
+			continuedLine: "✅ Noted. You can always come back and make edits.",
+			notAdmin: "Only the server owner or an admin can move a setup step along.",
+		},
 		// The step cards of the four config channels (2026-11 item 289). The 17 flow steps teach
 		// here, keyed by domain and step, each written from what its flow does; a channel step
 		// teaches from the guild's pack instead (channelContent.tutorial). tutorialCards reads

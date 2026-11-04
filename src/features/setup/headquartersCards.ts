@@ -18,15 +18,15 @@ import { readAdoptionChoice } from "./adoption.js";
 import { isMemberRoleGated } from "./communityOverwrites.js";
 import { setupCopy } from "./setupCopy.js";
 import { buildButtons as buildArcadeControlButtons } from "./arcadeControlCards.js";
-import { buildCards as buildTutorialCards, stepIdOf, type StepProgress, type TutorialRow } from "./tutorialCards.js";
+import { buildCards as buildTutorialCards, buildSkipButton, channelSteps, progressOf, stepIdOf, type StepProgress, type TutorialRow } from "./tutorialCards.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { DEFAULT_SERVER_TIMEZONE, resolveServerTimezone } from "@utils/tzParser.js";
 
 // ── headquartersCards ───────────────────────────────────────────────────────
 // What:  the messages each 🏰 DERO HEADQUARTERS config channel holds under its
-//        intro (2026-10 item 257 Phase 2b, owner item 7): the pinned steps card, a
-//        numbered checklist whose marks are read from the server as it stands and
-//        whose buttons open each step's existing flow, and the drawn settings chart of
+//        intro (2026-10 item 257 Phase 2b, owner item 7): the pinned steps card, the
+//        table of contents, whose marks are read from the server as it stands and
+//        whose buttons jump to each step's existing flow, and the drawn settings chart of
 //        every switch in that channel's domain. 🛠️server-config (2026-10 item 263
 //        Phase 4a) keeps a third, the server switches, between its card and chart, and
 //        🧭onboarding keeps the notice board tutorial cards beneath its chart (2026-11
@@ -165,6 +165,10 @@ export interface DomainView {
 	chart: SettingsChartView | null;
 	switches?: SwitchesView;
 	extraButtons?: ButtonBuilder[];
+	// How many rows the step buttons may fill, when it is not MAX_STEP_ROWS.
+	stepRows?: number;
+	// The steps card is the one step's own card, so no step card posts beneath it.
+	ownCardOnly?: boolean;
 }
 
 // The steps whose done mark can read true with nobody acting on it (2026-11 item 289): a
@@ -239,17 +243,22 @@ export interface OnboardingFacts {
 }
 
 /**
- * 🧭onboarding. Step 2 names the channels Dero adopted, so the choice lives here and no
- * card posts in 🔒inner-sanctum (2026-10 item 263 Phase 4b, R3-19); with none adopted it
- * stays in place as done, its line saying there is nothing to choose, because the marks
- * are index based. Step 4 carries no button: /setup names the member role (option A).
+ * 🧭onboarding: the ten channel steps first, then Community, the server's own channels,
+ * Discord Onboarding and gating (2026-11 item 289). The own channels step names the channels
+ * Dero adopted, so the choice lives here and no card posts in 🔒inner-sanctum (2026-10 item
+ * 263 Phase 4b, R3-19); with none adopted it stays in place as done, its line saying there is
+ * nothing to choose. Gating carries no button: /setup names the member role (option A).
  */
-export function onboardingView(facts: OnboardingFacts): DomainView {
+export function onboardingView(facts: OnboardingFacts, row: HeadquartersRow): DomainView {
 	const domain = copy.onboarding;
 	const [community, adopted, onboarding, gating] = domain.steps;
 	return {
 		title: domain.title,
+		// Past the owner's two row limit on this one channel: its 13 buttons, one per channel it
+		// can build and one per flow, cannot fit in two rows of five.
+		stepRows: 3,
 		steps: [
+			...channelSteps(row, getPluginCopy(row as unknown as ICopyConfig)),
 			flowStep("onboarding", "community", { label: community, done: facts.communityOn, customId: COMMUNITY_CUSTOM_IDS.enable }),
 			flowStep("onboarding", "adopted", { label: adopted, done: facts.adoptedPlaced, note: facts.adoptedLines.length > 0 ? facts.adoptedLines.join("\n") : domain.nothingAdopted, customId: CHOOSE_BUTTON_ID }),
 			flowStep("onboarding", "discordOnboarding", { label: onboarding, done: facts.onboardingOn === true, customId: COMMUNITY_CUSTOM_IDS.configure }),
@@ -296,10 +305,14 @@ export function arcadeControlView(row: HeadquartersRow): DomainView {
 		})
 	);
 	// While the arcade is off the channel shows one card, the enable step alone, with no
-	// chart and no Dismantle (2026-11 item 285 debug pass, owner ruling). Once it is on that
-	// card is replaced by the rest of the steps, which keep their routes (step 2 is still
-	// hqstep:arcadeControl:2) while the card numbers them from 1.
-	if (!arcadeOn) return { title: domain.enableTitle, steps: steps.slice(0, 1), chart: null };
+	// chart and no Dismantle (2026-11 item 285 debug pass, owner ruling). That card is the
+	// step's own, so it carries the step's Skip until the step is skipped (2026-11 item 289).
+	// Once the arcade is on that card is replaced by the rest of the steps, which keep their
+	// routes (step 2 is still hqstep:arcadeControl:2) while the card numbers them from 1.
+	if (!arcadeOn) {
+		const enableSkipped = (row.setupStepsSkipped ?? []).includes(stepIdOf("arcadeControl", "enable"));
+		return { title: domain.enableTitle, steps: steps.slice(0, 1), chart: null, ownCardOnly: true, extraButtons: enableSkipped ? [] : [buildSkipButton("arcadeControl", "enable")] };
+	}
 	return {
 		title: domain.title,
 		steps: steps.slice(1),
@@ -452,16 +465,35 @@ async function readOnboardingFacts(guild: Guild, row: HeadquartersRow): Promise<
 }
 
 /**
- * One domain's view as the server stands now. An exhaustive switch (risk R3 of 2026-10
- * item 263): a domain added without its own branch is a compile error at `never`, never
- * a channel that silently draws another domain's card.
+ * A view with each step's progress read from the skip list, the one place the two meet so
+ * the views stay pure. The enable step has no card beneath the steps card, so the line a
+ * skipped step's own card carries sits on its step there instead.
  */
+function withProgress(view: DomainView, domain: HeadquartersDomain, skipped: readonly string[]): DomainView {
+	const steps = view.steps.map((step) => {
+		const progress = progressOf(step, domain, skipped);
+		const note = view.ownCardOnly && progress === "skipped" ? copy.stepCards.skippedLine : step.note;
+		return { ...step, progress, note };
+	});
+	return { ...view, steps };
+}
+
+/** One domain's view as the server stands now, each step carrying its progress. */
 export async function readDomainView(guild: Guild, row: HeadquartersRow, domain: HeadquartersDomain): Promise<DomainView> {
+	return withProgress(await readPlainView(guild, row, domain), domain, row.setupStepsSkipped ?? []);
+}
+
+/**
+ * One domain's view before the skip list. An exhaustive switch (risk R3 of 2026-10 item
+ * 263): a domain added without its own branch is a compile error at `never`, never a
+ * channel that silently draws another domain's card.
+ */
+async function readPlainView(guild: Guild, row: HeadquartersRow, domain: HeadquartersDomain): Promise<DomainView> {
 	switch (domain) {
 		case "deroConfig":
 			return deroConfigView(await deroVoiceConfigStore.findByGuildId(guild.id));
 		case "onboarding":
-			return onboardingView(await readOnboardingFacts(guild, row));
+			return onboardingView(await readOnboardingFacts(guild, row), row);
 		case "arcadeControl":
 			return arcadeControlView(row);
 		case "serverConfig":
@@ -475,11 +507,20 @@ export async function readDomainView(guild: Guild, row: HeadquartersRow, domain:
 
 // ── the steps card ───────────────────────────────────────────────────────────
 
+const PROGRESS_MARKS: Record<StepProgress, string> = { done: copy.done, skipped: copy.skippedMark, open: copy.todo };
+
+// A view read straight from a view builder has met no skip list, so its marks are its own.
+function shownProgress(step: SetupStep): StepProgress {
+	return step.progress ?? (step.done ? "done" : "open");
+}
+
 function stepLine(step: SetupStep, number: number): string {
-	const line = copy.stepLine(step.done ? copy.done : copy.todo, number, step.label);
+	const progress = shownProgress(step);
+	const line = copy.stepLine(PROGRESS_MARKS[progress], number, step.label);
+	const skipped = progress === "skipped" ? ` ${copy.skippedWord}` : "";
 	const optional = step.optional ? ` ${copy.optional}` : "";
 	const note = step.note ? `\n${step.note}` : "";
-	return `${line}${optional}${note}`;
+	return `${line}${skipped}${optional}${note}`;
 }
 
 /**
@@ -492,16 +533,17 @@ export function buildStepButton(customId: string, number: number, done: boolean)
 	return done ? button.setEmoji(copy.done) : button;
 }
 
-/** The steps card: every step with its mark, and a button per step that opens a flow. */
+/** The steps card, the table of contents: every step with its mark, and a button per step that jumps straight to it. */
 export function buildStepsCard(view: DomainView): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
 	const embed = new EmbedBuilder()
 		.setTitle(view.title)
 		.setDescription(view.steps.map((step, index) => stepLine(step, index + 1)).join("\n"))
 		.setColor(COLORS.ADMIN)
 		.setFooter({ text: copy.footer });
-	const buttons = view.steps.flatMap((step, index) => (step.customId ? [buildStepButton(step.customId, index + 1, step.done)] : []));
+	const buttons = view.steps.flatMap((step, index) => (step.customId ? [buildStepButton(step.customId, index + 1, shownProgress(step) === "done")] : []));
 	const components: ActionRowBuilder<ButtonBuilder>[] = [];
-	for (let start = 0; start < buttons.length && components.length < MAX_STEP_ROWS; start += BUTTONS_PER_ROW) {
+	const maxRows = view.stepRows ?? MAX_STEP_ROWS;
+	for (let start = 0; start < buttons.length && components.length < maxRows; start += BUTTONS_PER_ROW) {
 		components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(buttons.slice(start, start + BUTTONS_PER_ROW)));
 	}
 	// Beside the steps, never among them, so a button that is no step keeps its own row and
