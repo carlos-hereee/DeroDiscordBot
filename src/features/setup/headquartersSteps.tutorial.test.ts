@@ -7,6 +7,7 @@ import type { ButtonInteraction } from "discord.js";
 
 const mocks = vi.hoisted(() => ({
 	handleAddChannel: vi.fn(),
+	handleRemove: vi.fn(),
 	openAdminLaunch: vi.fn(),
 	buttons: new Map<string, (interaction: ButtonInteraction) => Promise<void>>(),
 }));
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./tutorialCards.js", async (importOriginal) => ({
 	...(await importOriginal<typeof import("./tutorialCards.js")>()),
 	handleAddChannel: mocks.handleAddChannel,
+	handleRemove: mocks.handleRemove,
 }));
 vi.mock("@features/command-buttons/adminCommandLauncher.js", () => ({ openAdminLaunch: mocks.openAdminLaunch, openAdminLeaf: vi.fn() }));
 vi.mock("@handlers/interactionRegistry.js", () => ({
@@ -22,13 +24,14 @@ vi.mock("@handlers/interactionRegistry.js", () => ({
 }));
 
 import { registerHeadquartersStepHandlers, stepTarget } from "./headquartersSteps.js";
-import { TUTORIAL_CHANNELS, tutorialCustomId, type TutorialChannelKey } from "./tutorialCards.js";
+import { TUTORIAL_CHANNELS, removeCustomId, tutorialCustomId, type TutorialChannelKey } from "./tutorialCards.js";
 
 const KEYS = Object.keys(TUTORIAL_CHANNELS) as TutorialChannelKey[];
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	mocks.handleAddChannel.mockResolvedValue(undefined);
+	mocks.handleRemove.mockResolvedValue(undefined);
 });
 
 describe("stepTarget for the tutorial cards", () => {
@@ -78,5 +81,15 @@ describe("a tutorial card's press", () => {
 
 		expect(mocks.handleAddChannel).toHaveBeenCalledWith(press, "welcome");
 		expect(mocks.openAdminLaunch).not.toHaveBeenCalled();
+	});
+
+	it("goes to handleRemove with the card's key from its Remove", async () => {
+		registerHeadquartersStepHandlers();
+		const press = { customId: removeCustomId("meetingVoice") } as unknown as ButtonInteraction;
+
+		await mocks.buttons.get("hqstep")!(press);
+
+		expect(mocks.handleRemove).toHaveBeenCalledWith(press, "meetingVoice");
+		expect(mocks.handleAddChannel).not.toHaveBeenCalled();
 	});
 });

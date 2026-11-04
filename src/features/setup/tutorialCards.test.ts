@@ -16,14 +16,21 @@ const mocks = vi.hoisted(() => ({
 	send: vi.fn(),
 	beginChannelAnswer: vi.fn(),
 	showNotice: vi.fn(),
+	askInChannel: vi.fn(),
+	awaitPress: vi.fn(),
+	edit: vi.fn(),
+	removeNoticeBoardChannel: vi.fn(),
+	emitFor: vi.fn(),
 }));
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, addToList: mocks.addToList } }));
 vi.mock("./headquartersCards.js", () => ({ syncHeadquartersChannel: mocks.syncHeadquartersChannel }));
 vi.mock("@utils/permissions.js", () => ({ gateOwnerOrAdmin: mocks.gateOwnerOrAdmin }));
-vi.mock("@utils/answerInChannel.js", () => ({ beginChannelAnswer: mocks.beginChannelAnswer }));
+vi.mock("@utils/answerInChannel.js", () => ({ beginChannelAnswer: mocks.beginChannelAnswer, askInChannel: mocks.askInChannel }));
 vi.mock("@utils/textModal.js", () => ({ showNotice: mocks.showNotice }));
 vi.mock("./onDemandChannel.js", () => ({ ensureOnDemandChannel: mocks.ensureOnDemandChannel }));
+vi.mock("./removeChannel.js", () => ({ removeNoticeBoardChannel: mocks.removeNoticeBoardChannel }));
+vi.mock("./adminLog.js", () => ({ adminLog: { emitFor: mocks.emitFor } }));
 
 import {
 	TUTORIAL_CHANNELS,
@@ -31,6 +38,7 @@ import {
 	cardKeyOf,
 	channelSteps,
 	handleAddChannel,
+	handleRemove,
 	handleSkip,
 	isResolved,
 	parseStepId,
@@ -67,6 +75,11 @@ beforeEach(() => {
 	mocks.send.mockReset().mockResolvedValue({ channelId: "c-onboarding" });
 	mocks.beginChannelAnswer.mockReset().mockResolvedValue({ channelId: "c-onboarding", send: mocks.send });
 	mocks.showNotice.mockReset().mockResolvedValue(undefined);
+	mocks.awaitPress.mockReset();
+	mocks.edit.mockReset().mockResolvedValue(undefined);
+	mocks.askInChannel.mockReset().mockResolvedValue({ channelId: "c-onboarding", awaitPress: mocks.awaitPress, edit: mocks.edit });
+	mocks.removeNoticeBoardChannel.mockReset().mockResolvedValue("deleted");
+	mocks.emitFor.mockReset();
 });
 
 describe("the cards", () => {
@@ -388,5 +401,147 @@ describe("Add this channel", () => {
 		await handleAddChannel(interaction(), "welcome");
 		expect(mocks.send).toHaveBeenCalledTimes(2);
 		for (const call of mocks.send.mock.calls) expect(JSON.stringify(call[0])).toContain("could not build");
+	});
+});
+
+// 2026-11 item 289. The slot's own work is removeChannel.test.ts; these pin the press around it.
+describe("Remove", () => {
+	const removeCopy = setupCopy.headquarters.onboarding.tutorial.remove;
+	const LABEL = rokCommanderCopy.channelContent.tutorial.intro.title;
+	const confirmPress = (customId = "confirm_remove_channel") => ({ customId, update: vi.fn().mockResolvedValue(undefined), deferUpdate: vi.fn().mockResolvedValue(undefined) });
+	const promptOf = (call: unknown[]) => JSON.stringify((call[2] as { embeds: unknown[] }).embeds);
+	const answerOf = (call: unknown[]) => JSON.stringify((call[0] as { embeds: unknown[] }).embeds);
+
+	beforeEach(() => {
+		mocks.findByGuildId.mockResolvedValue({ guildId: GUILD_ID, introChannelId: "c-intro" });
+		mocks.awaitPress.mockResolvedValue(confirmPress());
+	});
+
+	it("refuses a member who is neither the owner nor an admin, asking nothing and removing nothing", async () => {
+		mocks.gateOwnerOrAdmin.mockResolvedValue(false);
+
+		await handleRemove(interaction(), "intro");
+
+		expect(mocks.showNotice).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sections: [removeCopy.notAdmin] }));
+		expect(mocks.askInChannel).not.toHaveBeenCalled();
+		expect(mocks.removeNoticeBoardChannel).not.toHaveBeenCalled();
+	});
+
+	it("redraws and answers that it is already gone when the slot is empty", async () => {
+		mocks.findByGuildId.mockResolvedValue({ guildId: GUILD_ID, introChannelId: null });
+
+		await handleRemove(interaction(), "intro");
+
+		expect(mocks.showNotice).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sections: [removeCopy.alreadyGone] }));
+		expect(mocks.syncHeadquartersChannel).toHaveBeenCalledWith(expect.objectContaining({ id: GUILD_ID }), "onboarding");
+		expect(mocks.askInChannel).not.toHaveBeenCalled();
+	});
+
+	it("asks in 🧭onboarding for 60 seconds, saying a built channel and its messages are deleted", async () => {
+		await handleRemove(interaction(), "intro");
+
+		const call = mocks.askInChannel.mock.calls[0]!;
+		expect(call[1]).toBe("onboarding");
+		expect(promptOf(call)).toContain(removeCopy.confirmBuilt("c-intro"));
+		expect(mocks.awaitPress).toHaveBeenCalledWith(60_000);
+	});
+
+	it("says an adopted channel stays, read from the adopted list", async () => {
+		mocks.findByGuildId.mockResolvedValue({ guildId: GUILD_ID, introChannelId: "c-intro", adoptedChannelIds: ["c-intro"] });
+
+		await handleRemove(interaction(), "intro");
+
+		expect(promptOf(mocks.askInChannel.mock.calls[0]!)).toContain(removeCopy.confirmAdopted("c-intro"));
+	});
+
+	it("offers Cancel and a red Remove", async () => {
+		await handleRemove(interaction(), "intro");
+
+		const [row] = (mocks.askInChannel.mock.calls[0]![2] as { components: Array<{ toJSON(): { components: Array<{ label: string; style: number }> } }> }).components;
+		expect(row!.toJSON().components.map((button) => [button.label, button.style])).toEqual([
+			[removeCopy.cancelButton, ButtonStyle.Secondary],
+			[removeCopy.confirmButton, ButtonStyle.Danger],
+		]);
+	});
+
+	it("changes nothing on a cancel, and says so", async () => {
+		const cancel = confirmPress("cancel_remove_channel");
+		mocks.awaitPress.mockResolvedValue(cancel);
+
+		await handleRemove(interaction(), "intro");
+
+		expect(answerOf(cancel.update.mock.calls[0]!)).toContain(removeCopy.cancelled);
+		expect(mocks.removeNoticeBoardChannel).not.toHaveBeenCalled();
+		expect(mocks.syncHeadquartersChannel).not.toHaveBeenCalled();
+		expect(mocks.emitFor).not.toHaveBeenCalled();
+	});
+
+	it("changes nothing on a timeout, and rewrites the prompt", async () => {
+		mocks.awaitPress.mockResolvedValue(null);
+
+		await handleRemove(interaction(), "intro");
+
+		expect(answerOf(mocks.edit.mock.calls[0]!)).toContain(removeCopy.timedOut);
+		expect(mocks.removeNoticeBoardChannel).not.toHaveBeenCalled();
+		expect(mocks.syncHeadquartersChannel).not.toHaveBeenCalled();
+	});
+
+	it("acknowledges, removes, logs, redraws, then rewrites the prompt, in that order", async () => {
+		const press = confirmPress();
+		mocks.awaitPress.mockResolvedValue(press);
+		const order: string[] = [];
+		press.deferUpdate.mockImplementation(async () => void order.push("acknowledge"));
+		mocks.removeNoticeBoardChannel.mockImplementation(async () => {
+			order.push("remove");
+			return "deleted";
+		});
+		mocks.emitFor.mockImplementation(() => void order.push("log"));
+		mocks.syncHeadquartersChannel.mockImplementation(async () => void order.push("redraw"));
+		mocks.edit.mockImplementation(async () => void order.push("rewrite"));
+
+		await handleRemove(interaction(), "intro");
+
+		expect(order).toEqual(["acknowledge", "remove", "log", "redraw", "rewrite"]);
+		expect(mocks.removeNoticeBoardChannel).toHaveBeenCalledWith(expect.objectContaining({ id: GUILD_ID }), "introChannelId", "onboarding:intro");
+		expect(answerOf(mocks.edit.mock.calls[0]!)).toContain(removeCopy.deleted(LABEL));
+	});
+
+	it("logs a release as a release", async () => {
+		mocks.removeNoticeBoardChannel.mockResolvedValue("released");
+
+		await handleRemove(interaction(), "intro");
+
+		expect(mocks.emitFor).toHaveBeenCalledWith(expect.anything(), GUILD_ID, "config.change", expect.objectContaining({ detail: setupCopy.adminLog.releasedFromCard }));
+		expect(answerOf(mocks.edit.mock.calls[0]!)).toContain(removeCopy.released(LABEL));
+	});
+
+	it("logs nothing for a refusal, and says how to swap a Community channel", async () => {
+		mocks.removeNoticeBoardChannel.mockResolvedValue("refused");
+
+		await handleRemove(interaction(), "intro");
+
+		expect(mocks.emitFor).not.toHaveBeenCalled();
+		const answer = answerOf(mocks.edit.mock.calls[0]!);
+		expect(answer).toContain("Discord refused");
+		expect(answer).toContain("Server Settings");
+		expect(answer).toContain("50074");
+	});
+
+	it("logs nothing for a slot another prompt already emptied", async () => {
+		mocks.removeNoticeBoardChannel.mockResolvedValue("gone");
+
+		await handleRemove(interaction(), "intro");
+
+		expect(mocks.emitFor).not.toHaveBeenCalled();
+		expect(answerOf(mocks.edit.mock.calls[0]!)).toContain(removeCopy.gone(LABEL));
+	});
+
+	it("never throws, and answers the failure, when the removal fails", async () => {
+		mocks.removeNoticeBoardChannel.mockRejectedValue(new Error("write failed"));
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+		await expect(handleRemove(interaction(), "intro")).resolves.toBeUndefined();
+
+		expect(answerOf(mocks.edit.mock.calls[0]!)).toContain(removeCopy.failed);
 	});
 });

@@ -311,6 +311,48 @@ describe("what it refuses", () => {
 	});
 });
 
+// 2026-11 item 289: the rows removeChannel.ts leaves behind, and the card's Add this channel.
+describe("Add this channel after a Remove", () => {
+	const askByName = { explicitRequest: true };
+
+	it("brings an empty channel back under the standing notice board", async () => {
+		mocks.row = headquartersOnlyRow({ categoryId: CATEGORY_ID, userRemovedChannels: ["scheduleChannelId"] });
+
+		const channel = await ensureOnDemandChannel(guildWith(live), "scheduleChannelId", askByName);
+
+		expect(channel).not.toBeNull();
+		expect(mocks.createManagedCategory).not.toHaveBeenCalled();
+		expect(mocks.row!.userRemovedChannels).toEqual([]);
+	});
+
+	it("re-adopts a released channel where it stands, logging no build", async () => {
+		const theirs = textChannel("c-theirs", "their-category");
+		live.set("c-theirs", theirs);
+		mocks.row = headquartersOnlyRow({ categoryId: CATEGORY_ID, userRemovedChannels: ["welcomeChannelId"], adoptedChannelIds: [] });
+		mocks.repairOneChannel.mockImplementationOnce(async (_guild: Guild, _parent: unknown, spec: { configField: string }, stored: Record<string, unknown>) => {
+			mocks.row = { ...mocks.row, [spec.configField]: "c-theirs", adoptedChannelIds: ["c-theirs"] };
+			return { newChannel: theirs, stored: { ...stored, [spec.configField]: "c-theirs" } };
+		});
+
+		await expect(ensureOnDemandChannel(guildWith(live), "welcomeChannelId", askByName)).resolves.toBe(theirs);
+
+		expect(mocks.row!.adoptedChannelIds).toEqual(["c-theirs"]);
+		expect(mocks.row!.userRemovedChannels).toEqual([]);
+		expect(mocks.adminLogEmit).not.toHaveBeenCalled();
+	});
+
+	it("builds a new category after the last Remove and lists the other empty slots as waiting", async () => {
+		mocks.row = headquartersOnlyRow({ categoryId: null, onDemandChannels: [], userRemovedChannels: ["introChannelId", "rulesChannelId"] });
+
+		await ensureOnDemandChannel(guildWith(live), "introChannelId", askByName);
+
+		expect(mocks.createManagedCategory).toHaveBeenCalledTimes(1);
+		expect(mocks.row!.categoryId).toBe(CATEGORY_ID);
+		expect(mocks.row!.onDemandChannels).toEqual(NOTICE_BOARD_FIELDS.filter((field) => field !== "introChannelId"));
+		expect(mocks.row!.userRemovedChannels).toEqual(["rulesChannelId"]);
+	});
+});
+
 describe("on a legacy server", () => {
 	it("returns the live stored channel and creates nothing", async () => {
 		const existing = textChannel("legacy-leaderboard");

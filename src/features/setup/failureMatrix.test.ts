@@ -260,6 +260,7 @@ describe("R9: a new copy line carries an em or en dash", () => {
 		for (const file of [
 			"features/setup/setupInvitation.ts",
 			"features/setup/onDemandChannel.ts",
+			"features/setup/removeChannel.ts",
 			"features/setup/tutorialCards.ts",
 			"features/setup/arcadeControlCards.ts",
 			"features/setup/renameInfoStep.ts",

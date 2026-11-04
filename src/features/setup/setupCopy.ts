@@ -172,6 +172,9 @@ export const setupCopy = {
 		// A notice board channel built on its first use (2026-11 item 285 Phase 3).
 		noticeBoardChannel: (channelName: string): string => `${channelName} channel`,
 		builtOnFirstUse: (channelId: string): string => `built <#${channelId}> in the notice board`,
+		// A notice board channel taken away by its setup card's Remove (2026-11 item 289).
+		removedFromCard: "deleted from its setup card",
+		releasedFromCard: "released from its setup card, the channel stays",
 		capSet: (usd: number): string => `$${usd} a month`,
 		set: (value: string): string => `set to ${value}`,
 		blocked: (serverId: string): string => `blocked ${serverId}`,
@@ -469,6 +472,25 @@ export const setupCopy = {
 				alreadyBuilt: (channelId: string): string => `<#${channelId}> is already there, so nothing new was built.`,
 				notBuilt: "Dero could not build that channel just now. Check that Dero may manage channels, then press the button again.",
 				notAdmin: "Only the server owner or an admin can add notice board channels.",
+				// A ready channel card's Remove (2026-11 item 289). The confirm says which of the two
+				// removes this is, because a built channel goes and an adopted one stays.
+				remove: {
+					title: "🪧 Remove this channel?",
+					confirmBuilt: (channelId: string): string => `This deletes <#${channelId}> and every message in it. Add this channel on its card brings an empty one back.`,
+					confirmAdopted: (channelId: string): string => `Dero stops using <#${channelId}>. The channel and its messages stay as they are.`,
+					confirmButton: "Remove",
+					cancelButton: "Cancel",
+					cancelled: "Nothing changed. The channel stays as it is.",
+					timedOut: "No answer came in time, so nothing changed. Press Remove again to ask once more.",
+					alreadyGone: "That channel is already gone, so there is nothing to remove.",
+					deleted: (label: string): string => `${label} is gone. Add this channel on its card brings an empty one back.`,
+					released: (label: string): string => `Dero no longer uses ${label}. The channel and its messages stay as they are.`,
+					gone: (label: string): string => `${label} was already gone, so nothing changed.`,
+					refused: (label: string): string =>
+						`Discord refused to delete ${label}, so nothing changed. A channel Discord Community requires, such as the rules or community updates channel, must be swapped in Server Settings first (Discord error 50074).`,
+					failed: "Dero could not finish removing that channel. Check that Dero may manage channels, then press Remove again.",
+					notAdmin: "Only the server owner or an admin can remove notice board channels.",
+				},
 			},
 		},
 		arcadeControl: {

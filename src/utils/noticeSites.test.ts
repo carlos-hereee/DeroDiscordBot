@@ -646,6 +646,7 @@ const INVENTORY: readonly NoticeEntry[] = [
 	// ── setup/tutorialCards.ts ──
 	{ file: "features/setup/tutorialCards.ts", within: "handleAddChannel", kind: "state" },
 	{ file: "features/setup/tutorialCards.ts", within: "handleSkip", count: 2, kind: "state" },
+	{ file: "features/setup/tutorialCards.ts", within: "handleRemove", count: 2, kind: "state" },
 
 	// ── setup/rulesEdit.ts ──
 	{ file: "features/setup/rulesEdit.ts", within: "handleRulesEditButton", count: 2, kind: "state" },

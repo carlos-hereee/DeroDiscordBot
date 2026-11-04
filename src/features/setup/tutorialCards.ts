@@ -1,4 +1,5 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type ButtonInteraction } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type ButtonInteraction, type Guild } from "discord.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { COLORS } from "@base/copy/brand.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import type { IPluginCopy } from "@base/copy/types.js";
@@ -6,9 +7,12 @@ import type { HeadquartersDomain, SetupStep } from "./headquartersCards.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
-import { beginChannelAnswer } from "@utils/answerInChannel.js";
+import { askInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showNotice } from "@utils/textModal.js";
+import { readAdoptedChannelIds } from "./adoption.js";
+import { adminLog } from "./adminLog.js";
 import { ensureOnDemandChannel, type OnDemandField } from "./onDemandChannel.js";
+import { removeNoticeBoardChannel, type RemoveOutcome } from "./removeChannel.js";
 import { setupCopy } from "./setupCopy.js";
 
 // ── tutorialCards ───────────────────────────────────────────────────────────
@@ -107,7 +111,11 @@ export interface StepCard {
 }
 
 const copy = setupCopy.headquarters.onboarding.tutorial;
+const removeCopy = copy.remove;
 const cardCopy = setupCopy.headquarters.stepCards;
+
+const REMOVE_CONFIRM_ID = "confirm_remove_channel";
+const REMOVE_CANCEL_ID = "cancel_remove_channel";
 
 // ── the step model (2026-11 item 289) ────────────────────────────────────────
 // A step id is domain:key, the one word setupStepsSkipped stores. Two pure reads answer
@@ -262,7 +270,13 @@ export function buildCards(steps: readonly SetupStep[], domain: HeadquartersDoma
 	return steps.map((step) => (step.kind === "channel" ? channelCard(step, domain, row, skipped) : flowCard(step, domain, skipped)));
 }
 
-// ── the button ───────────────────────────────────────────────────────────────
+// ── the buttons ──────────────────────────────────────────────────────────────
+
+// Loaded on use: headquartersCards imports this file for the cards.
+async function redrawDomain(guild: Guild, domain: HeadquartersDomain): Promise<void> {
+	const { syncHeadquartersChannel } = await import("./headquartersCards.js");
+	await syncHeadquartersChannel(guild, domain);
+}
 
 /**
  * Skip or Continue: re-check the presser, list the step and redraw its channel, which reveals
@@ -288,9 +302,7 @@ export async function handleSkip(interaction: ButtonInteraction, stepId: string)
 		// Acknowledged first: the redraw can draw a chart, past the press's three second window.
 		await interaction.deferUpdate();
 		await guildConfigStore.addToList(guild.id, "setupStepsSkipped", stepId);
-		// Loaded on use: headquartersCards imports this file for the cards.
-		const { syncHeadquartersChannel } = await import("./headquartersCards.js");
-		await syncHeadquartersChannel(guild, step.domain);
+		await redrawDomain(guild, step.domain);
 	} catch (error) {
 		console.error(`[tutorial] guild ${guild.id}: moving past step ${stepId} failed`, error);
 	}
@@ -327,5 +339,80 @@ export async function handleAddChannel(interaction: ButtonInteraction, channelKe
 	} catch (error) {
 		console.error(`[tutorial] guild ${guild.id}: building ${field} from its tutorial card failed`, error);
 		await answer.send({ embeds: [errorEmbed(copy.notBuilt, copyConfig)] });
+	}
+}
+
+function buildRemoveConfirmRow(): ActionRowBuilder<ButtonBuilder> {
+	return new ActionRowBuilder<ButtonBuilder>().addComponents(
+		new ButtonBuilder().setCustomId(REMOVE_CANCEL_ID).setLabel(removeCopy.cancelButton).setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder().setCustomId(REMOVE_CONFIRM_ID).setLabel(removeCopy.confirmButton).setStyle(ButtonStyle.Danger)
+	);
+}
+
+function removeOutcomeEmbed(outcome: RemoveOutcome, label: string, copyConfig: ICopyConfig | null): EmbedBuilder {
+	if (outcome === "refused") return errorEmbed(removeCopy.refused(label), copyConfig);
+	return infoEmbed(copy.answerTitle, removeCopy[outcome](label), COLORS.ADMIN, copyConfig);
+}
+
+// The confirmed half of a Remove. Only a change to the server earns a log line: a refusal and
+// an already empty slot changed nothing.
+async function runRemove(press: ButtonInteraction, guild: Guild, channelKey: TutorialChannelKey, label: string): Promise<RemoveOutcome> {
+	const outcome = await removeNoticeBoardChannel(guild, TUTORIAL_CHANNELS[channelKey], stepIdOf("onboarding", channelKey));
+	if (outcome === "deleted" || outcome === "released") {
+		const detail = outcome === "deleted" ? setupCopy.adminLog.removedFromCard : setupCopy.adminLog.releasedFromCard;
+		adminLog.emitFor(press, guild.id, "config.change", { subject: setupCopy.adminLog.noticeBoardChannel(label), detail });
+	}
+	await redrawDomain(guild, "onboarding");
+	return outcome;
+}
+
+/**
+ * Remove on a ready channel's card: re-check the presser, ask Remove or Cancel in 🧭onboarding,
+ * saying whether the channel goes or stays, and only on Remove hand the slot to
+ * removeChannel.ts, then rewrite the prompt with the outcome. A cancel and a timeout change
+ * nothing. Never throws.
+ */
+export async function handleRemove(interaction: ButtonInteraction, channelKey: TutorialChannelKey): Promise<void> {
+	const guild = interaction.guild;
+	if (!guild) return;
+	const config = await guildConfigStore.findByGuildId(guild.id);
+	const copyConfig = config as unknown as ICopyConfig | null;
+	const pack = getPluginCopy(copyConfig);
+	if (!(await gateOwnerOrAdmin(interaction, config))) {
+		await showNotice(interaction, { title: pack.notice.setup, sections: [removeCopy.notAdmin] });
+		return;
+	}
+
+	const channelId = (config as unknown as TutorialRow | null)?.[TUTORIAL_CHANNELS[channelKey]] ?? null;
+	if (!channelId) {
+		await showNotice(interaction, { title: pack.notice.setup, sections: [removeCopy.alreadyGone] });
+		await redrawDomain(guild, "onboarding");
+		return;
+	}
+
+	const body = readAdoptedChannelIds(config).includes(channelId) ? removeCopy.confirmAdopted(channelId) : removeCopy.confirmBuilt(channelId);
+	// Only the asker's press resolves the wait; anyone else is turned away with a notice.
+	const prompt = await askInChannel(interaction, "onboarding", { embeds: [infoEmbed(removeCopy.title, body, COLORS.ERROR, copyConfig)], components: [buildRemoveConfirmRow()] }, { config });
+
+	const press = await prompt.awaitPress(BOT_CONSTANTS.CONFIRM_PROMPT_MS);
+	if (!press) {
+		await prompt.edit({ embeds: [infoEmbed(removeCopy.title, removeCopy.timedOut, COLORS.ADMIN, copyConfig)], components: [] });
+		return;
+	}
+	if (press.customId !== REMOVE_CONFIRM_ID) {
+		await press.update({ embeds: [infoEmbed(removeCopy.title, removeCopy.cancelled, COLORS.ADMIN, copyConfig)], components: [] });
+		return;
+	}
+
+	// Deleting a channel and its category can outrun the press's three second window, so it is
+	// acknowledged first and the prompt rewritten after.
+	await press.deferUpdate();
+	try {
+		const label = pack.channelContent.tutorial[channelKey].title;
+		const outcome = await runRemove(press, guild, channelKey, label);
+		await prompt.edit({ embeds: [removeOutcomeEmbed(outcome, label, copyConfig)], components: [] });
+	} catch (error) {
+		console.error(`[tutorial] guild ${guild.id}: removing ${channelKey} from its card failed`, error);
+		await prompt.edit({ embeds: [errorEmbed(removeCopy.failed, copyConfig)], components: [] });
 	}
 }

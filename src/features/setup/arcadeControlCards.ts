@@ -1,4 +1,5 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, type ButtonInteraction } from "discord.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { COLORS } from "@base/copy/brand.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -29,10 +30,6 @@ import { setupCopy } from "./setupCopy.js";
 const copy = setupCopy.headquarters.arcadeControl;
 
 const DOMAIN = "arcadeControl";
-
-// The same window /events delete gives its confirm; past it the prompt is rewritten so a
-// stale Dismantle can never be pressed into a teardown later.
-const DISMANTLE_CONFIRM_MS = 60_000;
 
 const DISMANTLE_CONFIRM_ID = "confirm_dismantle_arcade";
 const DISMANTLE_CANCEL_ID = "cancel_dismantle_arcade";
@@ -99,7 +96,7 @@ export async function handleDismantle(interaction: ButtonInteraction): Promise<v
 		{ config }
 	);
 
-	const press = await prompt.awaitPress(DISMANTLE_CONFIRM_MS);
+	const press = await prompt.awaitPress(BOT_CONSTANTS.CONFIRM_PROMPT_MS);
 	if (!press) {
 		await prompt.edit({ embeds: [infoEmbed(copy.dismantleConfirm.title, copy.dismantleConfirm.timedOut, COLORS.ADMIN, copyConfig)], components: [] });
 		return;

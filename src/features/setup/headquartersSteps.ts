@@ -28,7 +28,7 @@ import {
 	type ServerSwitch,
 } from "./headquartersCards.js";
 import { setupCopy } from "./setupCopy.js";
-import { REMOVE_STEP_TAIL, SKIP_STEP_TAIL, channelKeyOf, handleAddChannel, handleSkip, parseStepId, stepIdOf, tutorialKeyOf, type TutorialChannelKey } from "./tutorialCards.js";
+import { REMOVE_STEP_TAIL, SKIP_STEP_TAIL, channelKeyOf, handleAddChannel, handleRemove, handleSkip, parseStepId, stepIdOf, tutorialKeyOf, type TutorialChannelKey } from "./tutorialCards.js";
 import { arcadeControlActionOf, handleDismantle, RETIRED_ENABLE_STUB_TAIL, type ArcadeControlAction } from "./arcadeControlCards.js";
 import { handleOpen as handleRenameInfo } from "./renameInfoStep.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
@@ -149,7 +149,7 @@ export function stepTarget(customId: string): StepTarget | null {
 // static import from here risks a cycle with the table half built.
 async function handleStepButton(interaction: ButtonInteraction): Promise<void> {
 	const target = stepTarget(interaction.customId);
-	if (!target || target.kind === "remove") {
+	if (!target) {
 		await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [setupCopy.headquarters.staleStep] });
 		return;
 	}
@@ -171,6 +171,10 @@ async function handleStepButton(interaction: ButtonInteraction): Promise<void> {
 	}
 	if (target.kind === "skip") {
 		await handleSkip(interaction, target.stepId);
+		return;
+	}
+	if (target.kind === "remove") {
+		await handleRemove(interaction, target.key);
 		return;
 	}
 	if (target.kind === "arcadeControl") {

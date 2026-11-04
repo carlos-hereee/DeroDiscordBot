@@ -109,6 +109,9 @@ export const BOT_CONSTANTS = {
 	// channel and the canvas renderer (bot audit 2026-10-30). The guild's own burst cap still
 	// applies on top through the greeter's throttle.
 	GREETING_BUTTON_COOLDOWN_MS: 60_000,
+	// How long a confirm prompt waits for its asker's press. Past it the prompt is rewritten, so a
+	// stale Dismantle or Remove can never be pressed into a delete later.
+	CONFIRM_PROMPT_MS: 60_000,
 	// How long gracefulShutdown may run before the process exits anyway. Railway sends SIGTERM on
 	// every deploy and kills a container that lingers; a hung Mongo close must not outlive it.
 	SHUTDOWN_DEADLINE_MS: 15_000,
