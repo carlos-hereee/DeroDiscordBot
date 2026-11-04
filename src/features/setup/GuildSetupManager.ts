@@ -771,13 +771,25 @@ export class GuildSetupManager {
 		return spec.kind === "voice" ? roles.voice : roles.text;
 	}
 
-	// Whether the row holds any notice board slot back from a build: removed by an admin, or
-	// waiting for its step card (2026-11 item 289). A legacy row with neither list reads false,
-	// so its forced rebuild takes the same path it always did.
-	private static holdsNoticeBoardSlot(stored: unknown): boolean {
+	// The notice board slots a row holds back from a build: removed by an admin, or waiting for
+	// their step card (2026-11 item 289). A legacy row with neither list holds none, so its
+	// forced rebuild takes the same path it always did.
+	private static heldNoticeBoardSlots(stored: unknown): string[] {
 		const row = stored as { onDemandChannels?: readonly string[] | null; userRemovedChannels?: readonly string[] | null };
 		const held = new Set([...(row.onDemandChannels ?? []), ...(row.userRemovedChannels ?? [])]);
-		return GuildSetupManager.specFieldsUnder("categoryId").some((field) => held.has(field));
+		return GuildSetupManager.specFieldsUnder("categoryId").filter((field) => held.has(field));
+	}
+
+	private static holdsNoticeBoardSlot(stored: unknown): boolean {
+		return GuildSetupManager.heldNoticeBoardSlots(stored).length > 0;
+	}
+
+	// True when no notice board channel is owed at all: every slot is held back and empty. A
+	// slot that holds an id is a channel somebody built, which a rebuild may still move back.
+	private static holdsEveryNoticeBoardSlot(stored: unknown): boolean {
+		const row = stored as Record<string, unknown>;
+		const held = new Set(GuildSetupManager.heldNoticeBoardSlots(stored));
+		return GuildSetupManager.specFieldsUnder("categoryId").every((field) => held.has(field) && !row[field]);
 	}
 
 	// Whether any of Dero's own stored notice board channels may still exist (2026-10 item
@@ -1020,13 +1032,7 @@ export class GuildSetupManager {
 		//      runs, with no notice board: Headquarters and its six channels are resolved
 		//      and repaired as on any guild, the notice board's specs are skipped, and the
 		//      arcade's stay off through the userRemovedChannels opt out the build stored.
-		if (isHeadquartersOnly(stored)) {
-			const repairedChannels = await GuildSetupManager.repairMissingChannels(client, guild, null);
-			await GuildSetupManager.reconcileCommunityGating(client, guild);
-			const action = repairedChannels.length > 0 ? "repaired" : "skipped";
-			console.log(LOG_MESSAGES.setup.ensureHomebaseDone(guild.id, action));
-			return { action, repairedChannels };
-		}
+		if (isHeadquartersOnly(stored)) return GuildSetupManager.sweepWithoutNoticeBoard(client, guild);
 
 		// ② category gone? null from fetch catch, or a Discord 10003 on the
 		//    direct fetch path. Either way the stored homebase doesn't exist.
@@ -1034,6 +1040,14 @@ export class GuildSetupManager {
 		// through; the missing category branch rebuilds it exactly as before.
 		const category = stored.categoryId ? await guild.channels.fetch(stored.categoryId).catch(() => null) : null;
 		if (!category) {
+			// ②.5 a notice board that held nothing owed (2026-11 item 289): every slot is empty and
+			//      held back, so a rebuild would only put an empty category back, and tell the
+			//      server its homebase was rebuilt. The dead id goes, the same two fields the
+			//      last Remove clears, and the row is Headquarters only from here on.
+			if (GuildSetupManager.holdsEveryNoticeBoardSlot(stored)) {
+				await guildConfigStore.update(guild.id, { categoryId: null, onDemandChannels: [] });
+				return GuildSetupManager.sweepWithoutNoticeBoard(client, guild);
+			}
 			console.warn(LOG_MESSAGES.setup.homebaseCategoryMissing(stored.categoryId, guild.id));
 			await GuildSetupManager.rebuildFromStaleConfig(guild);
 			await GuildSetupManager.postCastleRebuiltNotice(client, guild.id);
@@ -2792,6 +2806,16 @@ export class GuildSetupManager {
 	//        the reused categories' channels (2026-10 item 273, D1).
 	private static async rebuildFromStaleConfig(guild: Guild, options: Pick<IAutoSetupOptions, "foreignHomebase"> = {}): Promise<void> {
 		await GuildSetupManager.autoSetup(guild, { guildId: guild.id, ownerId: guild.ownerId }, { force: true, ...options });
+	}
+
+	// The boot sweep of a row with no notice board: Headquarters and any arcade are resolved
+	// and repaired as on any guild, and the notice board's specs are skipped.
+	private static async sweepWithoutNoticeBoard(client: Client, guild: Guild): Promise<IEnsureHomebaseResult> {
+		const repairedChannels = await GuildSetupManager.repairMissingChannels(client, guild, null);
+		await GuildSetupManager.reconcileCommunityGating(client, guild);
+		const action = repairedChannels.length > 0 ? "repaired" : "skipped";
+		console.log(LOG_MESSAGES.setup.ensureHomebaseDone(guild.id, action));
+		return { action, repairedChannels };
 	}
 
 	/**
