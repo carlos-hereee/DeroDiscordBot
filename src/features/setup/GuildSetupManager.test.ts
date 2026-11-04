@@ -15,6 +15,12 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({
 	},
 }));
 
+// A card sync reads the voice row and the server's events. Unmocked, either read waits on
+// Mongoose's 10 second buffer, and every test here shares one guild id, so that one read
+// would hold the guild's sync queue past the next test's limit (2026-11 item 289).
+vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({ deroVoiceConfigStore: { findByGuildId: vi.fn().mockResolvedValue(null) } }));
+vi.mock("@db/stores/eventStore.js", () => ({ eventStore: { findByGuildId: vi.fn().mockResolvedValue([]) } }));
+
 // Dero's own voice rooms on his voice allow list (2026-10 item 257 Phase 2b): spied
 // here so no setup test reaches the DeroVoiceConfig model.
 vi.mock("@features/voice/deroVoiceRooms.js", () => ({

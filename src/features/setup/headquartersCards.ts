@@ -21,6 +21,7 @@ import { buildButtons as buildArcadeControlButtons } from "./arcadeControlCards.
 import { buildCards as buildStepCards, buildSkipButton, cardKeyOf, channelSteps, progressOf, revealedSteps, stepIdOf, type StepProgress, type TutorialRow } from "./tutorialCards.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { DEFAULT_SERVER_TIMEZONE, resolveServerTimezone } from "@utils/tzParser.js";
+import { createGuildQueue } from "@utils/guildQueue.js";
 
 // ── headquartersCards ───────────────────────────────────────────────────────
 // What:  the messages each 🏰 DERO HEADQUARTERS config channel holds under its
@@ -704,16 +705,25 @@ async function dropArcadeStepCards(channel: TextChannel, row: HeadquartersRow): 
 /** Options for one sync. `forcePost` posts every message fresh beneath an intro that was just posted. */
 export interface SyncOptions {
 	forcePost?: boolean;
-	row?: HeadquartersRow | null;
 }
 
+// One press at a time now moves a walk, so syncs run far more often than boot ever did. Two
+// at once would each read a row with no stored card and post that card twice, so a guild's
+// syncs queue. This queue is the sync's own: a build awaiting a sync on a shared one would
+// wait on itself (utils/guildQueue.ts).
+const syncQueue = createGuildQueue();
+
 /**
- * Bring one config channel's steps card and chart up to date with the server, and
- * store their ids. Never throws.
+ * Bring one config channel's steps card, step cards and chart up to date with the server,
+ * and store their ids. Queued per guild, the row read inside the queue. Never throws.
  */
 export async function syncHeadquartersChannel(guild: Guild, domain: HeadquartersDomain, options: SyncOptions = {}): Promise<void> {
+	await syncQueue.run(guild.id, () => syncChannelNow(guild, domain, options));
+}
+
+async function syncChannelNow(guild: Guild, domain: HeadquartersDomain, options: SyncOptions): Promise<void> {
 	try {
-		const row = options.row ?? ((await guildConfigStore.findByGuildId(guild.id)) as unknown as HeadquartersRow | null);
+		const row = (await guildConfigStore.findByGuildId(guild.id)) as unknown as HeadquartersRow | null;
 		const field = DOMAIN_CHANNEL_FIELDS[domain];
 		const channelId = row?.[field];
 		if (!row || !channelId) return;

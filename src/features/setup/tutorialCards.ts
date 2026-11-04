@@ -265,6 +265,38 @@ export function buildCards(steps: readonly SetupStep[], domain: HeadquartersDoma
 // ── the button ───────────────────────────────────────────────────────────────
 
 /**
+ * Skip or Continue: re-check the presser, list the step and redraw its channel, which reveals
+ * the next card. A double press is harmless, because the list is a set and syncs are queued.
+ * The press writes no admin log line: it changes no setting. Never throws.
+ */
+export async function handleSkip(interaction: ButtonInteraction, stepId: string): Promise<void> {
+	const guild = interaction.guild;
+	if (!guild) return;
+	const config = await guildConfigStore.findByGuildId(guild.id);
+	const title = getPluginCopy(config as unknown as ICopyConfig | null).notice.setup;
+	// A button outlives the role that was allowed to press it.
+	if (!(await gateOwnerOrAdmin(interaction, config))) {
+		await showNotice(interaction, { title, sections: [cardCopy.notAdmin] });
+		return;
+	}
+	const step = parseStepId(stepId);
+	if (!step) {
+		await showNotice(interaction, { title, sections: [setupCopy.headquarters.staleStep] });
+		return;
+	}
+	try {
+		// Acknowledged first: the redraw can draw a chart, past the press's three second window.
+		await interaction.deferUpdate();
+		await guildConfigStore.addToList(guild.id, "setupStepsSkipped", stepId);
+		// Loaded on use: headquartersCards imports this file for the cards.
+		const { syncHeadquartersChannel } = await import("./headquartersCards.js");
+		await syncHeadquartersChannel(guild, step.domain);
+	} catch (error) {
+		console.error(`[tutorial] guild ${guild.id}: moving past step ${stepId} failed`, error);
+	}
+}
+
+/**
  * Add this channel: re-check the presser, then build the card's channel through
  * onDemandChannel and say where it is in 🧭onboarding. The card itself is redrawn by
  * onDemandChannel once the channel exists. Never throws.

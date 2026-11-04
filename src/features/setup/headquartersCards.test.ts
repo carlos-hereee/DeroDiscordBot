@@ -18,6 +18,7 @@ import { COMMUNITY_CUSTOM_IDS } from "@features/community/communityControls.js";
 import { CHOOSE_BUTTON_ID } from "./adoptionChoice.js";
 import { setupCopy } from "./setupCopy.js";
 import GuildConfigModel from "@db/models/GuildConfig.js";
+import { handleSkip } from "./tutorialCards.js";
 import {
 	HEADQUARTERS_DOMAINS,
 	SERVER_CONFIG_STEPS,
@@ -32,6 +33,7 @@ import {
 	serverConfigView,
 	stepCustomId,
 	switchCustomId,
+	syncAllHeadquarters,
 	syncHeadquartersChannel,
 	type HeadquartersRow,
 } from "./headquartersCards.js";
@@ -41,7 +43,7 @@ import {
 // opens; the two messages are posted once, pinned where they should be, edited only
 // when what they show changed, and redrawn after a change.
 
-const store = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
+const store = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn>; addToList: ReturnType<typeof vi.fn> };
 const events = eventStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
 const voiceStore = deroVoiceConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
 const render = renderSettingsChart as unknown as ReturnType<typeof vi.fn>;
@@ -678,6 +680,98 @@ describe("the setup walk", () => {
 			await syncHeadquartersChannel(guild, "serverConfig");
 
 			expect(titlesOf(messages)).toEqual([copy.serverConfig.title, copy.serverConfig.steps.rename, copy.serverConfig.switches.title, copy.serverConfig.chartTitle]);
+		});
+	});
+
+	// The real press, through the real queue: an owner's Skip lists the step and redraws.
+	describe("a press walks the tutorial", () => {
+		const pressBy = (guild: Guild) => {
+			Object.assign(guild, { ownerId: "owner" });
+			return { guild, user: { id: "owner" }, deferUpdate: vi.fn(async () => undefined) } as unknown as Parameters<typeof handleSkip>[0];
+		};
+
+		it("posts the next card once on a Skip, and the skipped card says so and keeps Add this channel", async () => {
+			const { guild, send, messages, stored } = onboardingRig();
+			await syncHeadquartersChannel(guild, "onboarding");
+			const press = pressBy(guild);
+
+			await handleSkip(press, "onboarding:intro");
+
+			expect(press.deferUpdate).toHaveBeenCalledOnce();
+			expect(send).toHaveBeenCalledTimes(3);
+			expect(titlesOf(messages)).toEqual([copy.onboarding.title, "📜 Introductions", "📢 Announcements"]);
+			const introCard = messages.get(stored.tutorialCardMessageIds!.introChannelId!)!;
+			expect(descriptionOf(introCard)).toContain(copy.stepCards.skippedLine);
+			expect(buttonLabels(introCard)).toEqual(["Add this channel"]);
+		});
+
+		it("posts the next card once on a double Skip, pressed in turn or at the same moment", async () => {
+			const { guild, send } = onboardingRig();
+			await syncHeadquartersChannel(guild, "onboarding");
+			const press = pressBy(guild);
+
+			await handleSkip(press, "onboarding:intro");
+			await handleSkip(press, "onboarding:intro");
+			expect(send).toHaveBeenCalledTimes(3);
+
+			await Promise.all([handleSkip(press, "onboarding:announcements"), handleSkip(press, "onboarding:announcements")]);
+			expect(send).toHaveBeenCalledTimes(4);
+		});
+
+		it("survives a redraw with the same state, as a restart would read it", async () => {
+			const { guild, send, messages, stored } = onboardingRig();
+			await syncHeadquartersChannel(guild, "onboarding");
+			await handleSkip(pressBy(guild), "onboarding:intro");
+			const introCard = messages.get(stored.tutorialCardMessageIds!.introChannelId!)!;
+			const edits = introCard.edit.mock.calls.length;
+
+			await syncHeadquartersChannel(guild, "onboarding");
+
+			expect(send).toHaveBeenCalledTimes(3);
+			expect(introCard.edit).toHaveBeenCalledTimes(edits);
+			expect(stored.setupStepsSkipped).toEqual(["onboarding:intro"]);
+		});
+
+		it("moves past a needsContinue step on its Continue, which is the same press", async () => {
+			const { guild, messages, stored } = serverConfigRig({ timezone: "Asia/Tokyo" });
+			await syncHeadquartersChannel(guild, "serverConfig");
+			await handleSkip(pressBy(guild), "serverConfig:template");
+			const templateCard = messages.get(stored.tutorialCardMessageIds!["serverConfig-template"]!)!;
+			expect(descriptionOf(templateCard)).toContain(copy.stepCards.continuedLine);
+			expect(titlesOf(messages).at(-1)).toBe(copy.serverConfig.steps.kvkSeason);
+		});
+
+		it("leaves a skipped step skipped until its flow really finishes", async () => {
+			const { guild, messages, stored } = serverConfigRig();
+			await syncHeadquartersChannel(guild, "serverConfig");
+			await handleSkip(pressBy(guild), "serverConfig:timezone");
+			const timezoneCard = messages.get(stored.tutorialCardMessageIds!["serverConfig-timezone"]!)!;
+			expect(descriptionOf(timezoneCard)).toContain(copy.stepCards.skippedLine);
+
+			stored.timezone = "Asia/Tokyo";
+			await syncHeadquartersChannel(guild, "serverConfig");
+
+			expect(descriptionOf(timezoneCard)).not.toContain(copy.stepCards.skippedLine);
+			expect(stored.setupStepsSkipped).toEqual(["serverConfig:timezone"]);
+		});
+
+		// Set up Dero's order (GuildSetupManager.buildHeadquartersAwaitingSetup): a build queues
+		// its channel's fresh post, then setup awaits a plain sync that finds those cards.
+		it("posts each card once when a fresh sync and a plain sync follow one another", async () => {
+			const { guild, send, messages } = serverConfigRig();
+			await Promise.all([syncHeadquartersChannel(guild, "serverConfig", { forcePost: true }), syncAllHeadquarters(guild)]);
+			expect(send).toHaveBeenCalledTimes(2);
+			expect(titlesOf(messages)).toEqual([copy.serverConfig.title, copy.serverConfig.steps.timezone]);
+		});
+
+		it("takes the arcade's Skip off its card, and arms no step card", async () => {
+			const { guild, send, messages } = rig({ gamesCategoryId: null });
+			await syncHeadquartersChannel(guild, "arcadeControl");
+			await handleSkip(pressBy(guild), "arcadeControl:enable");
+			expect(send).toHaveBeenCalledOnce();
+			const card = [...messages.values()][0]!;
+			expect(buttonLabels(card)).toEqual(["Step 1"]);
+			expect(descriptionOf(card)).toContain(copy.stepCards.skippedLine);
 		});
 	});
 

@@ -387,6 +387,17 @@ describe("GuildSetupManager.autoSetup keeps a reused category's live channels (2
 		expect(Object.values(rig.row()!)).not.toContain("ch-room-1");
 	});
 
+	// 2026-11 item 289: each built channel's fresh post is queued by its own repair, so a fresh
+	// sync here would post a second steps card and a second first card in every config channel.
+	it("finishes Set up Dero with a plain sync, so the cards the repairs posted are not posted again", async () => {
+		const rig = makeRig({ stored: makeStoredRow({ deroConfigChannelId: null, serverConfigChannelId: null }) });
+
+		await GuildSetupManager.buildHeadquartersAwaitingSetup(rig.guild);
+
+		expect(syncAllHeadquarters).toHaveBeenCalledTimes(1);
+		expect(syncAllHeadquarters).toHaveBeenCalledWith(rig.guild);
+	});
+
 	it("builds every channel new on a foreign homebase, keeping none (D1)", async () => {
 		const rig = makeRig({ stored: makeStoredRow() });
 

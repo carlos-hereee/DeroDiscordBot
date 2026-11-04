@@ -9,6 +9,8 @@ import { generalEventsCopy } from "@base/copy/packs/general-events.pack.js";
 
 const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
+	addToList: vi.fn(),
+	syncHeadquartersChannel: vi.fn(),
 	gateOwnerOrAdmin: vi.fn(),
 	ensureOnDemandChannel: vi.fn(),
 	send: vi.fn(),
@@ -16,7 +18,8 @@ const mocks = vi.hoisted(() => ({
 	showNotice: vi.fn(),
 }));
 
-vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId } }));
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, addToList: mocks.addToList } }));
+vi.mock("./headquartersCards.js", () => ({ syncHeadquartersChannel: mocks.syncHeadquartersChannel }));
 vi.mock("@utils/permissions.js", () => ({ gateOwnerOrAdmin: mocks.gateOwnerOrAdmin }));
 vi.mock("@utils/answerInChannel.js", () => ({ beginChannelAnswer: mocks.beginChannelAnswer }));
 vi.mock("@utils/textModal.js", () => ({ showNotice: mocks.showNotice }));
@@ -28,6 +31,7 @@ import {
 	cardKeyOf,
 	channelSteps,
 	handleAddChannel,
+	handleSkip,
 	isResolved,
 	parseStepId,
 	progressOf,
@@ -56,6 +60,8 @@ const buttonsOf = (card: { message: { components: Array<{ toJSON(): { components
 
 beforeEach(() => {
 	mocks.findByGuildId.mockReset().mockResolvedValue({ guildId: GUILD_ID, introChannelId: null });
+	mocks.addToList.mockReset().mockResolvedValue(undefined);
+	mocks.syncHeadquartersChannel.mockReset().mockResolvedValue(undefined);
 	mocks.gateOwnerOrAdmin.mockReset().mockResolvedValue(true);
 	mocks.ensureOnDemandChannel.mockReset().mockResolvedValue({ id: "built-intro" });
 	mocks.send.mockReset().mockResolvedValue({ channelId: "c-onboarding" });
@@ -311,6 +317,45 @@ describe("the customIds", () => {
 	it("name Skip by domain and step, and Remove by channel, within Discord's 100 characters", () => {
 		expect(skipCustomId("serverConfig", "kvkSeason")).toBe("hqstep:serverConfig:skip-kvkSeason");
 		expect(removeCustomId("nextDecree")).toBe("hqstep:onboarding:remove-nextDecree");
+	});
+});
+
+describe("Skip and Continue", () => {
+	const press = () => ({ ...interaction(), deferUpdate: vi.fn(async () => undefined) }) as unknown as ButtonInteraction & { deferUpdate: ReturnType<typeof vi.fn> };
+
+	it("acknowledge, list the step, then redraw its domain, in that order", async () => {
+		const pressed = press();
+		await handleSkip(pressed, "serverConfig:timezone");
+		expect(mocks.addToList).toHaveBeenCalledWith(GUILD_ID, "setupStepsSkipped", "serverConfig:timezone");
+		expect(mocks.syncHeadquartersChannel).toHaveBeenCalledWith({ id: GUILD_ID }, "serverConfig");
+		expect(pressed.deferUpdate.mock.invocationCallOrder[0]!).toBeLessThan(mocks.addToList.mock.invocationCallOrder[0]!);
+		expect(mocks.addToList.mock.invocationCallOrder[0]!).toBeLessThan(mocks.syncHeadquartersChannel.mock.invocationCallOrder[0]!);
+		expect(mocks.showNotice).not.toHaveBeenCalled();
+	});
+
+	it.each(["onboarding:intro", "serverConfig:template"])("refuse a member who is neither the owner nor an admin on %s", async (stepId) => {
+		mocks.gateOwnerOrAdmin.mockResolvedValue(false);
+		const pressed = press();
+		await handleSkip(pressed, stepId);
+		expect(mocks.showNotice).toHaveBeenCalledWith(pressed, expect.objectContaining({ sections: [cardCopy.notAdmin] }));
+		expect(pressed.deferUpdate).not.toHaveBeenCalled();
+		expect(mocks.addToList).not.toHaveBeenCalled();
+		expect(mocks.syncHeadquartersChannel).not.toHaveBeenCalled();
+	});
+
+	it("refuse an unknown step as stale and list nothing", async () => {
+		await handleSkip(press(), "serverConfig:nope");
+		expect(mocks.showNotice).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sections: [setupCopy.headquarters.staleStep] }));
+		expect(mocks.addToList).not.toHaveBeenCalled();
+	});
+
+	it("never throw when the list could not be written", async () => {
+		mocks.addToList.mockRejectedValue(new Error("mongo down"));
+		const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		await expect(handleSkip(press(), "serverConfig:timezone")).resolves.toBeUndefined();
+		expect(logged).toHaveBeenCalledOnce();
+		expect(mocks.syncHeadquartersChannel).not.toHaveBeenCalled();
+		logged.mockRestore();
 	});
 });
 

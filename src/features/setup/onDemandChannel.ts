@@ -6,6 +6,7 @@ import { asPlainRow } from "./plainRow.js";
 import { adminLog } from "./adminLog.js";
 import { setupCopy } from "./setupCopy.js";
 import { refreshHeadquartersCards } from "./headquartersCards.js";
+import { createGuildQueue } from "@utils/guildQueue.js";
 
 // ── onDemandChannel ─────────────────────────────────────────────────────────
 // What:  the one way a 🪧 NOTICE BOARD channel is built after install (2026-11 item 285
@@ -81,8 +82,9 @@ export function isOnDemandField(field: string): field is OnDemandField {
 	return onDemandFields().has(field);
 }
 
-// One promise chain per guild; see the module header for why calls are serialized.
-const guildQueues = new Map<string, Promise<unknown>>();
+// See the module header for why calls are serialized. This queue is the build's own: a card
+// sync has another, because a build awaits nothing on a queue it could be sitting in.
+const buildQueue = createGuildQueue();
 
 /**
  * The live notice board channel for `configField`, built (with the notice board category
@@ -96,14 +98,7 @@ export async function ensureOnDemandChannel(guild: Guild, configField: string, o
 	if (!isOnDemandField(configField)) {
 		throw new Error(`[on-demand] ${configField} is not a notice board channel, so ensureOnDemandChannel cannot build it`);
 	}
-	const previous = guildQueues.get(guild.id) ?? Promise.resolve();
-	const run = previous.catch(() => undefined).then(() => ensureNow(guild, configField, options));
-	guildQueues.set(guild.id, run);
-	try {
-		return await run;
-	} finally {
-		if (guildQueues.get(guild.id) === run) guildQueues.delete(guild.id);
-	}
+	return buildQueue.run(guild.id, () => ensureNow(guild, configField, options));
 }
 
 // ── one call, with the queue held ───────────────────────────────────────────

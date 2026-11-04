@@ -2875,7 +2875,7 @@ export class GuildSetupManager {
 	 * that the admin role is stored. applyAdminRole calls it, so Set up Dero and /setup both
 	 * finish Headquarters before they answer in 🛠️server-config. Each channel goes through
 	 * repairOneChannel, the one single channel build, which grants the stored roles and
-	 * posts the intro; the cards then post fresh beneath the new intros. Never throws: a
+	 * posts the intro and queues that channel's cards fresh beneath it. Never throws: a
 	 * channel it could not build is left to the boot sweep, which no longer skips it once
 	 * the role is set. A slot the admin removed stays removed.
 	 */
@@ -2897,7 +2897,11 @@ export class GuildSetupManager {
 					console.warn(`[headquarters] could not build ${spec.configField} after setup in guild ${guild.id}; the boot sweep builds it later`, error);
 				}
 			}
-			if (built.size > 0) await syncAllHeadquarters(guild, built);
+			// A plain sync, never a fresh one: repairOneChannel already queued each built channel's
+			// fresh post, and a second forcePost would ignore the ids that post stored and hand
+			// every config channel a second steps card and first card (2026-11 item 289). Awaited
+			// because it runs behind those posts, so setup answers once the cards stand.
+			if (built.size > 0) await syncAllHeadquarters(guild);
 		} catch (error) {
 			console.warn(`[headquarters] could not finish Headquarters after setup in guild ${guild.id}; the boot sweep builds what is missing`, error);
 		}
