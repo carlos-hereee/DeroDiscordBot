@@ -16,6 +16,8 @@ import { demolishCategory, demolishChannels } from "./selfDestruct.js";
 //        list, so repairMissingChannels never resolves the arcade category again, and
 //        it stays off across restarts. On takes them off the list and runs the same
 //        boot sweep now, which rebuilds the channels and finds or makes the category.
+//        A press names the arcade to that sweep, so it builds while auto heal is off:
+//        auto heal only stops Dero rebuilding by itself.
 //        The teardown itself is selfDestruct's demolishChannels and demolishCategory,
 //        so the arcade cannot come down differently from a self destruct.
 // How:   off ① writes the opt out and nulls the arcade ids and their intro anchors in
@@ -73,20 +75,22 @@ export async function turnArcadeOff(guild: Guild): Promise<ArcadeOffOutcome> {
 }
 
 /**
- * Bring the arcade back. "pending" means the opt out is lifted but the sweep did not
- * build every channel just now (auto heal is off, the homebase was self destructed,
- * or Discord refused), so the reply can say so honestly.
+ * Bring the arcade back, whatever autoHealEnabled says. "pending" means the opt out is
+ * lifted but the sweep did not build every channel just now (the homebase was self
+ * destructed, or Discord refused), so the reply can say so honestly.
  */
 export async function turnArcadeOn(client: Client, guild: Guild): Promise<ArcadeOnOutcome> {
 	const fields = arcadeFields();
 	const row = await readRow(guild.id);
 	const removed = row.userRemovedChannels ?? [];
-	if (row.gamesCategoryId && !fields.some((field) => removed.includes(field))) return "already-on";
+	// Every channel must be there too: a partly built press has already lifted the opt
+	// out, and with auto heal off nothing but another press finishes it.
+	if (row.gamesCategoryId && fields.every((field) => row[field] && !removed.includes(field))) return "already-on";
 
 	// The rebuilt arcade starts with its switches on, except one this server turned off
 	// (2026-10 item 257, owner item 11).
 	await guildConfigStore.update(guild.id, { userRemovedChannels: removed.filter((field) => !fields.includes(field)), ...arcadeSwitchesToWrite(row) });
-	await GuildSetupManager.ensureHomebase(client, guild);
+	await GuildSetupManager.ensureHomebase(client, guild, { requestedCategory: "gamesCategoryId" });
 	// The intros come back with the channels; this also posts 🕹️games' Challenge Board.
 	await GuildSetupManager.refreshIntroEmbeds(client, guild);
 

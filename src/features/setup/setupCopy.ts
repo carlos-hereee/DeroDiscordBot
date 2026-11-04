@@ -344,7 +344,7 @@ export const setupCopy = {
 		onTitle: "🎮 Arcade on",
 		onBody: "The 🎮 ARCADE GAMES category and its channels are back.",
 		onPending:
-			"The arcade is switched back on, but its channels could not all be built just now. If auto heal is off, `/server auto-heal` turns it back on; otherwise the next restart finishes them.",
+			"The arcade is switched back on, but its channels could not all be built just now. Check that Dero has Manage Channels, then run `/arcade on` again. A self destructed server needs `/setup` first.",
 		offDescription: "Delete the arcade category and every channel in it, matches included",
 		onDescription: "Bring the arcade category and its channels back",
 		alreadyOn: "The arcade is already on.",

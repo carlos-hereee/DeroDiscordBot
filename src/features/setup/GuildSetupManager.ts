@@ -24,6 +24,7 @@ import type {
 	ISetupConfig,
 	IAdminRoleConfig,
 	IEnsureHomebaseResult,
+	IRepairSweepOptions,
 	IBuiltGroup,
 	IHomebaseChannelIds,
 	IHomebaseChannelObjects,
@@ -1005,7 +1006,7 @@ export class GuildSetupManager {
 	//          per channel notices to the (possibly just rebuilt) inner
 	//          sanctum.
 	//       ⑤ Otherwise, skip.
-	static async ensureHomebase(client: Client, guild: Guild): Promise<IEnsureHomebaseResult> {
+	static async ensureHomebase(client: Client, guild: Guild, options: IRepairSweepOptions = {}): Promise<IEnsureHomebaseResult> {
 		// emit a sweep-start marker. without this it is hard to tell from
 		// production logs whether ensureHomebase actually ran for a given
 		// guild or was masked by an earlier error in the ready loop.
@@ -1034,7 +1035,7 @@ export class GuildSetupManager {
 		//      runs, with no notice board: Headquarters and its six channels are resolved
 		//      and repaired as on any guild, the notice board's specs are skipped, and the
 		//      arcade's stay off through the userRemovedChannels opt out the build stored.
-		if (isHeadquartersOnly(stored)) return GuildSetupManager.sweepWithoutNoticeBoard(client, guild);
+		if (isHeadquartersOnly(stored)) return GuildSetupManager.sweepWithoutNoticeBoard(client, guild, options);
 
 		// ② category gone? null from fetch catch, or a Discord 10003 on the
 		//    direct fetch path. Either way the stored homebase doesn't exist.
@@ -1048,7 +1049,7 @@ export class GuildSetupManager {
 			//      last Remove clears, and the row is Headquarters only from here on.
 			if (GuildSetupManager.holdsEveryNoticeBoardSlot(stored)) {
 				await guildConfigStore.update(guild.id, { categoryId: null, onDemandChannels: [] });
-				return GuildSetupManager.sweepWithoutNoticeBoard(client, guild);
+				return GuildSetupManager.sweepWithoutNoticeBoard(client, guild, options);
 			}
 			console.warn(LOG_MESSAGES.setup.homebaseCategoryMissing(stored.categoryId, guild.id));
 			await GuildSetupManager.rebuildFromStaleConfig(guild);
@@ -1108,7 +1109,7 @@ export class GuildSetupManager {
 		//    rebuild any that were deleted while the bot was offline.
 		//    repairMissingChannels also posts the per channel notices so
 		//    this method stays focused on branching logic.
-		const repairedChannels = await GuildSetupManager.repairMissingChannels(client, guild, category as CategoryChannel);
+		const repairedChannels = await GuildSetupManager.repairMissingChannels(client, guild, category as CategoryChannel, options);
 		// ④.5 a guild whose welcome log is still Dero's own 👋welcome moves it to the
 		//      server's own welcome channel when it has one (post-launch plan item 2).
 		await GuildSetupManager.reconcileWelcomeAdoption(guild, category as CategoryChannel);
@@ -2298,7 +2299,7 @@ export class GuildSetupManager {
 	// A null category is a Headquarters only guild (2026-11 item 285 Phase 2): there is
 	// no 🪧 NOTICE BOARD to build under, so its specs are skipped rather than built
 	// anywhere else, and the arcade and Headquarters groups sweep as on any guild.
-	static async repairMissingChannels(client: Client, guild: Guild, category: CategoryChannel | null): Promise<string[]> {
+	static async repairMissingChannels(client: Client, guild: Guild, category: CategoryChannel | null, options: IRepairSweepOptions = {}): Promise<string[]> {
 		// re read the config here so we pick up the freshest admin role /
 		// owner / channel ids. the caller only passed us the initial state. Read
 		// plain, like the repairs it chains (2026-10 item 274).
@@ -2312,8 +2313,12 @@ export class GuildSetupManager {
 		// so we can emit a single summary log line (not one-per-channel) and
 		// then return without doing any repair work. This is the boot-side
 		// counterpart to ChannelDeleteWatcher's realtime gate, so a restart
-		// will not undo the admin's decision.
-		if (stored.autoHealEnabled === false) {
+		// will not undo the admin's decision. A person pressing a category's
+		// switch is not auto heal, so that one case passes the gate and the loop
+		// below holds every other spec back.
+		const { requestedCategory } = options;
+		const autoHealOff = stored.autoHealEnabled === false;
+		if (autoHealOff && !requestedCategory) {
 			let wouldRepairCount = 0;
 			const waitingSlots = ((stored as unknown as { onDemandChannels?: string[] }).onDemandChannels ?? []) as string[];
 			for (const spec of GuildSetupManager.CHANNEL_SPECS) {
@@ -2383,6 +2388,7 @@ export class GuildSetupManager {
 		const movedIntoHeadquarters: string[] = [];
 
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
+			if (autoHealOff && spec.categoryField !== requestedCategory) continue;
 			// Honor per-channel user removal. If the admin removed this slot,
 			// skip it regardless of autoHealEnabled. The slot returns when the
 			// related toggle (eg /server leaderboard tracking enabled:True)
@@ -2812,8 +2818,8 @@ export class GuildSetupManager {
 
 	// The boot sweep of a row with no notice board: Headquarters and any arcade are resolved
 	// and repaired as on any guild, and the notice board's specs are skipped.
-	private static async sweepWithoutNoticeBoard(client: Client, guild: Guild): Promise<IEnsureHomebaseResult> {
-		const repairedChannels = await GuildSetupManager.repairMissingChannels(client, guild, null);
+	private static async sweepWithoutNoticeBoard(client: Client, guild: Guild, options: IRepairSweepOptions): Promise<IEnsureHomebaseResult> {
+		const repairedChannels = await GuildSetupManager.repairMissingChannels(client, guild, null, options);
 		await GuildSetupManager.reconcileCommunityGating(client, guild);
 		const action = repairedChannels.length > 0 ? "repaired" : "skipped";
 		console.log(LOG_MESSAGES.setup.ensureHomebaseDone(guild.id, action));

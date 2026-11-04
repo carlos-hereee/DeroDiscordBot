@@ -2584,6 +2584,51 @@ describe("GuildSetupManager on a Headquarters only install", () => {
 		expect(calls[0]!.parent).toBe("hq-cat-1");
 	});
 
+	// ── a press with auto heal off ────────────────────────────────────────────
+	// The row the press finds: no notice board, Headquarters live, the arcade's opt out
+	// already lifted by turnArcadeOn, and one Headquarters channel deleted so a held spec
+	// is visible. Auto heal off must keep that channel gone either way.
+	const pressedRow = () => makeHeadquartersOnlyRow({ autoHealEnabled: false, userRemovedChannels: [] });
+	const PRESS = { requestedCategory: "gamesCategoryId" } as const;
+
+	it("builds nothing on the boot sweep with auto heal off, the arcade's opt out lifted or not", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(pressedRow());
+		const guild = makeGuild({ channelFetchMap: { ...LIVE_HEADQUARTERS, "ch-deroconfig": null } });
+
+		const result = await GuildSetupManager.ensureHomebase(makeClient({ selfId: "bot-1" }), guild);
+
+		expect(result).toEqual({ action: "skipped", repairedChannels: [] });
+		expect(createMockOf(guild)).not.toHaveBeenCalled();
+	});
+
+	it("builds the arcade category and every arcade channel on a press with auto heal off, and only those", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(pressedRow());
+		const guild = makeGuild({ channelFetchMap: { ...LIVE_HEADQUARTERS, "ch-deroconfig": null } });
+		const adminChannel = makeAdminChannel();
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => (id === "ch-admin" ? adminChannel : null) });
+
+		const result = await GuildSetupManager.ensureHomebase(client, guild, PRESS);
+
+		expect(result.action).toBe("repaired");
+		const calls = callsOf(guild);
+		expect(calls.filter((call) => call.type === ChannelType.GuildCategory).map((call) => call.name)).toEqual([rokCommanderCopy.setup.gamesCategoryName]);
+		expect(calls.filter((call) => call.type !== ChannelType.GuildCategory)).toHaveLength(ARCADE_FIELDS.length);
+		expect(calls.map((call) => call.name)).not.toContain(packChannels.deroConfig);
+		for (const call of guildConfigMock.update.mock.calls) expect(call[1]).not.toHaveProperty("autoHealEnabled");
+	});
+
+	it("stores no arcade on a press Discord refuses, so the switch can answer pending", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(pressedRow());
+		const guild = makeGuild({ channelFetchMap: LIVE_HEADQUARTERS });
+		createMockOf(guild).mockRejectedValue(new Error("Discord refused the create"));
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+		const result = await GuildSetupManager.ensureHomebase(makeClient({ selfId: "bot-1" }), guild, PRESS).catch(() => null);
+
+		expect(result?.repairedChannels ?? []).toEqual([]);
+		for (const call of guildConfigMock.update.mock.calls) expect((call[1] as { gamesCategoryId?: string | null }).gamesCategoryId ?? null).toBeNull();
+	});
+
 	// ── waiting for setup (2026-11 item 285 debug pass, owner ruling) ─────────
 	// A new server and a self destructed one hold 🔒inner-sanctum alone until Set up Dero.
 	const WAITING_FIELDS = HEADQUARTERS_SPECS.map((spec) => spec.configField).filter((field) => field !== "adminChannelId");

@@ -140,3 +140,14 @@ export interface IEnsureHomebaseResult {
 	// structured signal instead of only log strings.
 	repairedChannels: string[];
 }
+
+/** Options for GuildSetupManager.ensureHomebase and repairMissingChannels. */
+export interface IRepairSweepOptions {
+	/**
+	 * The category a person just asked for by pressing its switch. While autoHealEnabled is
+	 * false its specs are built anyway, because auto heal only says Dero must not rebuild by
+	 * itself, and every other spec stays held. The boot sweep and the delete watcher never
+	 * pass it.
+	 */
+	requestedCategory?: "gamesCategoryId" | "headquartersCategoryId";
+}
