@@ -12,6 +12,10 @@ This file starts at v1.4.0. Earlier releases predate the changelog convention; t
 
 **This entry ships as 2.0.0** (owner decision 2026-10-24), a major version rather than the 1.7.0 it was prepared as: Dero's voice, its new look, the arcade, server against server rankings and Community Onboarding land together, and the command names listed under Removed stop working.
 
+### Hotfix, version unchanged at 2.0.0 (2026-11-04)
+
+* **Admin button forms with a dropdown work again.** Set the network reach in `🎰arcade-control`, and the `/events`, `/server` and `/leveling` button forms that offer a dropdown, answered "Something went wrong executing this command" on Submit. Each one saves now. The version stays 2.0.0 on purpose, because any bump reposts the full 2.0.0 announcement in every set up server.
+
 ### Added
 
 * **Game rooms.** A two-player or cooperative match now plays in its own Discord channel under a second managed category, 🎮 ARCADE GAMES. The Challenge Board in `🕹️games` is where a member starts a challenge, which posts to `⚔️challenges`; the host chooses **Invite only** or **Open to all**, gathers who is in, and opens the room. The room's full move list is kept as an append-only transcript that outlives the channel. Each room's channel name starts with its game's emoji. When a match ends, **Rematch** starts the next one in the same channel with the same players, for every game, solo blackjack and solo hangman included: the finished match keeps its transcript and releases the channel to the new one. A room nobody acts in for 30 minutes is closed as abandoned, so it never holds its host's one room; a Monopoly match (its 24 hour seat clock rules it) and a hangman round in play are exempt.

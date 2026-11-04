@@ -1,6 +1,7 @@
 import {
 	ApplicationCommandOptionType,
 	ChannelSelectMenuBuilder,
+	ComponentType,
 	LabelBuilder,
 	ModalBuilder,
 	RoleSelectMenuBuilder,
@@ -254,6 +255,17 @@ function readPick(source: FormFieldsSource, name: string): string | null {
 	return value ?? null;
 }
 
+// A string or number option comes back as typed text or as a select's pick. discord.js's
+// ModalSubmitFields throws ModalSubmitInteractionFieldNotFound when a select is read as a
+// text input, rather than answering null, so trying text first fails the whole Submit
+// (2026-11 item 289). The submitted component decides, never the FormField, because an
+// autocompleted option is a select only when its command provided picks for this form.
+function readTextOrPick(source: FormFieldsSource, name: string): string | null {
+	const submitted = source.fields.get(name);
+	if (!submitted) return null;
+	return submitted.type === ComponentType.StringSelect ? readPick(source, name) : readText(source, name);
+}
+
 function inRange(field: FormField, value: number): boolean {
 	if (field.minValue !== null && value < field.minValue) return false;
 	return field.maxValue === null || value <= field.maxValue;
@@ -292,12 +304,12 @@ function readField(source: FormFieldsSource, field: FormField): { ok: true; valu
 		}
 		case "integer":
 		case "number": {
-			const raw = readText(source, field.name);
+			const raw = readTextOrPick(source, field.name);
 			return raw === null ? { ok: true, value: null } : readNumber(field, raw);
 		}
 		default: {
-			// A string arrives as typed text or as a pick from a select, never both.
-			const value = readText(source, field.name) ?? readPick(source, field.name);
+			// Only a boolean is always a select; a string may be either, so it reads by what came back.
+			const value = readTextOrPick(source, field.name);
 			return { ok: true, value: value === null ? null : { kind: "string", value } };
 		}
 	}

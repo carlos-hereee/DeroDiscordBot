@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
-import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from "discord.js";
+import { Collection, ComponentType, ModalSubmitFields, type ButtonInteraction, type Guild, type ModalSubmitInteraction, type StringSelectMenuInteraction } from "discord.js";
 
 // ── the admin command launcher ───────────────────────────────────────────────
 // What:  the admin guide's buttons, end to end through the registered handlers:
 //        the guide offers exactly the commands the launcher can open and every
 //        admin command among them; every leaf of every admin command builds a form
-//        inside Discord's limits; a member who is neither the owner nor an admin is
+//        inside Discord's limits, and every field on it reads back through the real
+//        ModalSubmitFields; a member who is neither the owner nor an admin is
 //        refused at EVERY step, because a select or a modal is reachable without the
 //        button that opened it; and an admin's submitted form runs the command's own
 //        handler (2026-10 item 245 Phase 4b). Since the regroup by job (2026-10 item
@@ -37,7 +38,7 @@ vi.mock("@handlers/interactionRegistry.js", () => ({
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { LAUNCHABLE_COMMANDS, formCustomId, offerSwitchFix, registerAdminCommandLauncher, resolveLaunchTarget } from "./adminCommandLauncher.js";
-import { buildForm, listLeaves } from "./commandForm.js";
+import { buildForm, listLeaves, readForm, type CommandLeaf, type FormField } from "./commandForm.js";
 import { GuildSetupManager } from "@features/setup/GuildSetupManager.js";
 import { commandButtonsCopy } from "./commandButtonsCopy.js";
 
@@ -156,6 +157,94 @@ const GUIDE_BUTTONS = [
 const GUIDE_IDS = GUIDE_BUTTONS.map((button) => button.id);
 const LEGACY_IDS = ["schedule", "stream", "configure-kvk-season", "configure", "channels", "setup-level-system", "xp", "economy", "dero-config"];
 
+// ── every field of every form, submitted the way Discord submits it ──────────
+// The sweep reads each form through the real ModalSubmitFields, because a reader that
+// asks the wrong component type throws there and nowhere else (2026-11 item 289).
+
+type ModalControl = { type: ComponentType; custom_id: string; options?: Array<{ value: string }> };
+
+// A leaf too big for one form shows its required fields plus the optional ones an admin
+// picks, so its optional fields go through in batches and every one of them is read.
+function formsCoveringEveryField(leaf: CommandLeaf): FormField[][] {
+	const required = leaf.fields.filter((field) => field.required);
+	const optional = leaf.fields.filter((field) => !field.required);
+	const room = LIMITS.MAX_MODAL_FIELDS - required.length;
+	if (optional.length === 0 || room === 0) return [required];
+	const forms: FormField[][] = [];
+	for (let start = 0; start < optional.length; start += room) forms.push([...required, ...optional.slice(start, start + room)]);
+	return forms;
+}
+
+const SWEPT_FORMS = [...LAUNCHABLE_COMMANDS.values()].flatMap((command) =>
+	listLeaves(command.data.toJSON())
+		.filter((leaf) => leaf.fields.length > 0)
+		.flatMap((leaf) =>
+			formsCoveringEveryField(leaf).map((shown) => ({
+				label: `${`/${command.data.name} ${leaf.path}`.trim()} (${shown.map((field) => field.name).join(", ")})`,
+				commandName: command.data.name,
+				leaf,
+				shown,
+			}))
+		)
+);
+
+const onePickPerAutocompletedField = (shown: readonly FormField[]) =>
+	new Map(shown.filter((field) => field.autocomplete && !field.choices).map((field) => [field.name, [{ name: "Only pick", value: "only-pick" }]]));
+
+function typedAnswer(field: FormField): string {
+	if (field.type === "integer" || field.type === "number") return String(field.minValue ?? field.maxValue ?? 1);
+	return "x".repeat(field.minLength ?? 1);
+}
+
+// One modal control answered in the shape discord.js hands ModalSubmitFields.
+function answerControl(control: ModalControl, field: FormField) {
+	const answer = { customId: control.custom_id, type: control.type };
+	const resolved = new Collection([["id-1", { id: "id-1" }]]);
+	switch (control.type) {
+		case ComponentType.StringSelect:
+			return { ...answer, values: [control.options?.[0]?.value] };
+		case ComponentType.UserSelect:
+			return { ...answer, users: resolved };
+		case ComponentType.RoleSelect:
+			return { ...answer, roles: resolved };
+		case ComponentType.ChannelSelect:
+			return { ...answer, channels: resolved };
+		default:
+			return { ...answer, value: typedAnswer(field) };
+	}
+}
+
+function formControls(form: (typeof SWEPT_FORMS)[number]): ModalControl[] {
+	const modal = buildForm({ customId: "id", commandName: form.commandName, leaf: form.leaf, fields: form.shown, picks: onePickPerAutocompletedField(form.shown) }).toJSON();
+	return (modal.components as unknown as Array<{ component: ModalControl }>).map((label) => label.component);
+}
+
+function submittedForm(form: (typeof SWEPT_FORMS)[number]) {
+	const byName = new Map(form.shown.map((field) => [field.name, field]));
+	const labels = formControls(form).map((control) => ({ component: answerControl(control, byName.get(control.custom_id)!) }));
+	// The typings mark this constructor private; only discord.js itself builds one.
+	return new (ModalSubmitFields as unknown as new (components: unknown[]) => ModalSubmitFields)(labels);
+}
+
+// The string and number options that answer through a select, by command path and field.
+// Named so that dropping one from the sweep fails here rather than passing unseen.
+const SELECT_ANSWERED_FIELDS = [
+	"/arcade reach mode",
+	"/events delete event",
+	"/events pause event",
+	"/events resume event",
+	"/events stream soon when",
+	"/events stream weekly day",
+	"/server channels hide channel",
+	"/server channels show channel",
+	"/server channels rename slot",
+	"/server leaderboard week-start start",
+	"/leveling settings rates reaction-awards",
+	"/leveling settings curve milestones",
+	"/leveling settings announce mode",
+	"/leveling settings restrictions mode",
+];
+
 describe("the admin guide's launch ids", () => {
 	it("open exactly the commands the launcher can, each under the path its label named, and every admin command among them", () => {
 		const opened = new Set<string>();
@@ -203,6 +292,26 @@ describe("the admin guide's launch ids", () => {
 				expect(modal.components.length).toBeLessThanOrEqual(LIMITS.MAX_MODAL_FIELDS);
 			}
 		}
+	});
+
+	it.each(SWEPT_FORMS)("read back every answer submitted on $label", (form) => {
+		const read = readForm(submittedForm(form), form.shown);
+		expect(read).toMatchObject({ ok: true });
+		if (!read.ok) return;
+		for (const field of form.shown) expect(read.values.has(field.name), field.name).toBe(true);
+	});
+
+	it("sweep every string and number option that answers through a select", () => {
+		const swept = SWEPT_FORMS.flatMap((form) => {
+			const stringSelects = formControls(form).filter((control) => control.type === ComponentType.StringSelect);
+			return stringSelects.map((control) => `/${form.commandName} ${form.leaf.path} ${control.custom_id}`);
+		});
+		expect(swept).toEqual(expect.arrayContaining(SELECT_ANSWERED_FIELDS));
+	});
+
+	it("keep /events stream weekly's timezone a typed field, since its command provides no picks", async () => {
+		const provided = await LAUNCHABLE_COMMANDS.get("events")?.formChoices?.({ id: GUILD_ID } as unknown as Guild, "stream weekly", "timezone");
+		expect(provided).toBeNull();
 	});
 });
 
