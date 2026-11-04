@@ -2705,4 +2705,24 @@ describe("GuildSetupManager boot sweep with notice board slots waiting for first
 
 		expect(createCalls(guild).map((call) => call.name)).toEqual([packChannels.leaderboard]);
 	});
+
+	// 2026-11 item 289: the row removeChannel.ts leaves on an existing server, where the last
+	// Remove nulled categoryId and the arcade still stands.
+	it("builds no notice board after the last Remove, and keeps a live arcade", async () => {
+		const emptiedNoticeBoard = Object.fromEntries(NOTICE_BOARD_FIELDS.map((field) => [field, null]));
+		guildConfigMock.findByGuildId.mockResolvedValue(
+			makeStoredConfig({ ...emptiedNoticeBoard, categoryId: null, headquartersCategoryId: "hq-cat-1", scheduleMessageId: null, onDemandChannels: [], userRemovedChannels: NOTICE_BOARD_FIELDS })
+		);
+		const guild = makeGuild({
+			channelFetchMap: { "ch-admin": { id: "ch-admin" }, "hq-cat-1": { id: "hq-cat-1", type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } } },
+		});
+
+		const result = await GuildSetupManager.ensureHomebase(makeClient({ selfId: "bot-1" }), guild);
+
+		expect(result.action).not.toBe("rebuilt");
+		const noticeBoardNames = new Set(GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.categoryField === "categoryId").map((spec) => spec.displayName));
+		expect(createCalls(guild).filter((call) => noticeBoardNames.has(call.name))).toEqual([]);
+		expect(createCalls(guild).map((call) => call.name)).not.toContain(rokCommanderCopy.setup.categoryName);
+		for (const [, payload] of guildConfigMock.update.mock.calls as Array<[string, Record<string, unknown>]>) expect(payload).not.toHaveProperty("gamesCategoryId");
+	});
 });

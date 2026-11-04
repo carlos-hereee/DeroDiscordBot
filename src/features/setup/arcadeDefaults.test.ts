@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ARCADE_SWITCH_DEFAULTS, arcadeSwitchesToWrite } from "./arcadeDefaults.js";
+import { ARCADE_SWITCH_DEFAULTS, arcadeSwitchesToWrite, isArcadeOff } from "./arcadeDefaults.js";
 import { CONFIG_DEFAULTS } from "./serverReset.js";
 
 // Owner item 11 of the 2026-10-27 live test: the arcade's switches start on when the
@@ -12,6 +12,20 @@ describe("arcadeSwitchesToWrite", () => {
 
 	it("writes a missing or null switch on, and leaves a stored false alone", () => {
 		expect(arcadeSwitchesToWrite({ chipEconomyEnabled: false, arcadeMonthlyPost: null })).toEqual({ arcadeMonthlyPost: true, botOpponentsEnabled: true });
+	});
+});
+
+describe("isArcadeOff", () => {
+	const FIELDS = ["arcadeRulesChannelId", "partyGamesChannelId"];
+
+	it("reads off only with no category and every arcade slot opted out", () => {
+		expect(isArcadeOff({ gamesCategoryId: null, userRemovedChannels: [...FIELDS, "introChannelId"] }, FIELDS)).toBe(true);
+	});
+
+	it("reads on with a stored category, a slot still in, or no row", () => {
+		expect(isArcadeOff({ gamesCategoryId: "cat", userRemovedChannels: FIELDS }, FIELDS)).toBe(false);
+		expect(isArcadeOff({ gamesCategoryId: null, userRemovedChannels: ["arcadeRulesChannelId"] }, FIELDS)).toBe(false);
+		expect(isArcadeOff(null, FIELDS)).toBe(false);
 	});
 });
 

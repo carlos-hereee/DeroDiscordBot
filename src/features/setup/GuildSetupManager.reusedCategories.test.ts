@@ -596,3 +596,113 @@ describe("GuildSetupManager.autoSetup moves the notice board's surviving channel
 		expect(payload.introChannelId).toBe(`new-${names.intro}`);
 	});
 });
+
+// A row with no opt outs takes the old path, which every test above keeps pinned.
+describe("GuildSetupManager.autoSetup honors the opt outs (2026-11 item 289)", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	const ARCADE_FIELDS = Object.keys(ARCADE_SLOTS);
+	const persistedWrite = () => configMock.update.mock.calls[0]![1] as Record<string, unknown>;
+	const childNames = (rig: ReturnType<typeof makeRig>) => rig.childCreatesUnder(NEW_NOTICE_BOARD_ID).map((call) => call.name);
+
+	// What turnArcadeOff leaves on a row, on a server whose notice board was then deleted by hand.
+	const arcadeOffRow = (overrides: Record<string, unknown> = {}) =>
+		makeNoticeBoardRow({ gamesCategoryId: null, ...Object.fromEntries(ARCADE_FIELDS.map((field) => [field, null])), userRemovedChannels: ARCADE_FIELDS, ...overrides });
+
+	it("builds no arcade with the arcade off, and stores it off as it was", async () => {
+		const rig = makeRig({ stored: arcadeOffRow(), extraLive: makeSurvivors() });
+
+		await forcedRebuild(rig);
+
+		expect(rig.calls().map((call) => call.name)).not.toContain(gamesCategoryName);
+		expect(rig.row()!.gamesCategoryId).toBeNull();
+		expect(rig.row()!.userRemovedChannels).toEqual(ARCADE_FIELDS);
+		expect(persistedWrite()).not.toHaveProperty("gamesCategoryId");
+		expect(persistedWrite()).not.toHaveProperty("userRemovedChannels");
+	});
+
+	it("writes no arcade switch with the arcade off, so a server's own choice is not reset", async () => {
+		const rig = makeRig({ stored: arcadeOffRow(), extraLive: makeSurvivors() });
+
+		await forcedRebuild(rig);
+
+		expect(persistedWrite()).not.toHaveProperty("chipEconomyEnabled");
+	});
+
+	it("reads a hydrated row's opt outs, with no notice board survivor to lean on", async () => {
+		const rig = makeRig({ stored: arcadeOffRow() });
+
+		await forcedRebuild(rig);
+
+		expect(rig.fetch).not.toHaveBeenCalledWith(GAMES_CATEGORY_ID);
+		expect(rig.row()!.gamesCategoryId).toBeNull();
+	});
+
+	it("still builds the arcade on a foreign homebase, whatever the row says", async () => {
+		const rig = makeRig({ stored: arcadeOffRow(), extraLive: makeSurvivors() });
+
+		await forcedRebuild(rig, { foreignHomebase: true });
+
+		expect(rig.calls().map((call) => call.name)).toContain(gamesCategoryName);
+	});
+
+	it("leaves a slot an admin removed empty, and repairs only the slots not held back", async () => {
+		const stored = makeNoticeBoardRow({ leaderboardChannelId: null, userRemovedChannels: ["leaderboardChannelId"] });
+		const rig = makeRig({ stored });
+
+		await forcedRebuild(rig);
+
+		const built = childNames(rig);
+		expect(built).not.toContain(names.leaderboard);
+		expect(built).toContain(names.intro);
+		expect(rig.row()!.leaderboardChannelId).toBeNull();
+	});
+
+	it("leaves an empty slot waiting for its card empty", async () => {
+		const stored = makeNoticeBoardRow({ nextDecreeChannelId: null, onDemandChannels: ["nextDecreeChannelId"] });
+		const rig = makeRig({ stored });
+
+		await forcedRebuild(rig);
+
+		expect(childNames(rig)).not.toContain(names.nextDecree);
+		expect(rig.row()!.nextDecreeChannelId).toBeNull();
+	});
+
+	it("still repairs a listed slot that holds an id, which is a channel somebody built", async () => {
+		const stored = makeNoticeBoardRow({ onDemandChannels: ["nextDecreeChannelId"] });
+		const rig = makeRig({ stored });
+
+		await forcedRebuild(rig);
+
+		expect(childNames(rig)).toContain(names.nextDecree);
+	});
+
+	describe("on a row with no notice board and a live arcade", () => {
+		const emptiedNoticeBoard = { categoryId: null, introChannelId: null, userRemovedChannels: ["introChannelId"], onDemandChannels: [] };
+
+		it("builds no notice board, and leaves the arcade's id and the opt outs untouched", async () => {
+			const rig = makeRig({ stored: makeStoredRow(emptiedNoticeBoard) });
+
+			await forcedRebuild(rig);
+
+			expect(rig.calls().map((call) => call.name)).not.toContain(rokCommanderCopy.setup.categoryName);
+			expect(rig.childCreatesUnder(GAMES_CATEGORY_ID)).toEqual([]);
+			expect(rig.row()!.gamesCategoryId).toBe(GAMES_CATEGORY_ID);
+			expect(rig.row()!.userRemovedChannels).toEqual(["introChannelId"]);
+			expect(persistedWrite()).not.toHaveProperty("gamesCategoryId");
+			expect(persistedWrite()).not.toHaveProperty("userRemovedChannels");
+		});
+
+		it("carries the arcade's intro anchors through the write that replaces the map", async () => {
+			const rig = makeRig({ stored: makeStoredRow(emptiedNoticeBoard) });
+
+			await forcedRebuild(rig);
+
+			const anchors = rig.row()!.introMessageIds as Record<string, string>;
+			for (const field of ARCADE_FIELDS) expect(anchors[field], field).toBe(`anchor-${field}`);
+			expect(anchors.arcadeGamesBoardId).toBe("anchor-arcadeGamesBoardId");
+		});
+	});
+});

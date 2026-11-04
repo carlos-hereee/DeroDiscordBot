@@ -52,6 +52,7 @@ export const CONFIG_DEFAULTS = {
 	autoHealEnabled: true,
 	channelNames: {},
 	userRemovedChannels: [],
+	setupStepsSkipped: [],
 	leaderboardTrackingEnabled: true,
 	weekStart: "sunday",
 	timezone: "UTC",

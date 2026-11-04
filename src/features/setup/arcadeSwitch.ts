@@ -2,7 +2,7 @@ import type { Client, Guild } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { GuildSetupManager } from "./GuildSetupManager.js";
 import { readAdoptedChannelIds } from "./adoption.js";
-import { arcadeSwitchesToWrite } from "./arcadeDefaults.js";
+import { arcadeSwitchesToWrite, isArcadeOff } from "./arcadeDefaults.js";
 import { demolishCategory, demolishChannels } from "./selfDestruct.js";
 
 // ── arcadeSwitch ──────────────────────────────────────────────────────────
@@ -42,12 +42,6 @@ async function readRow(guildId: string): Promise<ArcadeRow> {
 	const row = await guildConfigStore.findByGuildId(guildId);
 	if (!row) throw new Error(`no GuildConfig for guild ${guildId}`);
 	return row as unknown as ArcadeRow;
-}
-
-/** True when every arcade slot is opted out and no category is recorded, which is what off leaves behind. */
-function isArcadeOff(row: ArcadeRow, fields: readonly string[]): boolean {
-	const removed = new Set(row.userRemovedChannels ?? []);
-	return !row.gamesCategoryId && fields.every((field) => removed.has(field));
 }
 
 export type ArcadeOffOutcome = "off" | "already-off";

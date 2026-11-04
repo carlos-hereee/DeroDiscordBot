@@ -67,7 +67,7 @@ import { asPlainRow } from "./plainRow.js";
 import { CommunityGatingAnnouncement } from "./CommunityGatingAnnouncement.js";
 import { fetchAcceptsDeroContent, findRulesChannel, findWelcomeChannel, readAdoptedChannelIds, readAdoptionChoice, type IAdoptionCandidate } from "./adoption.js";
 import { moveChosenChannel } from "./adoptionChoice.js";
-import { arcadeSwitchesToWrite } from "./arcadeDefaults.js";
+import { arcadeSwitchesToWrite, isArcadeOff } from "./arcadeDefaults.js";
 import { mustStayReadable, readOnboardingSafeChannels } from "@features/community/onboardingChannels.js";
 import { adminLog } from "./adminLog.js";
 import { setupCopy } from "./setupCopy.js";
@@ -375,9 +375,18 @@ export class GuildSetupManager {
 		// /self-destruct could not reach them either). repairMissingChannels passes
 		// the stored id for exactly this reason; this is the same call.
 		const storedArcadeId = (existing as unknown as { gamesCategoryId?: string | null } | null)?.gamesCategoryId ?? null;
-		const existingArcade = headquartersOnly
-			? null
-			: await GuildSetupManager.findExistingManagedCategory(guild, "gamesCategoryId", storedArcadeId, copyConfigOf(existing));
+		// ⚠️ A REBUILD LEAVES THE ARCADE AS THE ROW RECORDS IT (2026-11 item 289). An arcade
+		// switched off stays off: no lookup, no create, and its opt outs stay as stored. A row
+		// with no notice board can hold a live arcade once its last notice board channel was
+		// removed from a card, and the Headquarters only write below would write that arcade
+		// off and orphan it, so that row keeps its arcade too. A foreign homebase keeps nothing.
+		const mayKeepArcade = existing !== null && !options.foreignHomebase;
+		const arcadeStaysOff = mayKeepArcade && isArcadeOff(existing, GuildSetupManager.specFieldsUnder("gamesCategoryId"));
+		const keepsLiveArcade = mayKeepArcade && headquartersOnly && storedArcadeId !== null;
+		const buildsArcade = !headquartersOnly && !arcadeStaysOff;
+		const existingArcade = buildsArcade
+			? await GuildSetupManager.findExistingManagedCategory(guild, "gamesCategoryId", storedArcadeId, copyConfigOf(existing))
+			: null;
 		if (existingArcade === "unreachable") return;
 		// 🏰 DERO HEADQUARTERS (2026-10 item 257 Phase 2a), looked up first and created
 		// third for the same two reasons: the sidebar reads NOTICE BOARD, ARCADE GAMES,
@@ -436,7 +445,7 @@ export class GuildSetupManager {
 		// A null return means a 50013 already routed through handlePermissionFailure,
 		// so bail exactly as the homebase category create above does.
 		let gamesCategory: CategoryChannel | null = null;
-		if (!headquartersOnly) {
+		if (buildsArcade) {
 			gamesCategory = existingArcade ?? (await GuildSetupManager.createManagedCategory(guild, "gamesCategoryId", config.ownerId, null, copyConfigOf(existing)));
 			if (!gamesCategory) return;
 		}
@@ -476,7 +485,9 @@ export class GuildSetupManager {
 		// reused category (first, so its slots settle before the arcade's), and the
 		// survivors are moved into the new category. When every one is confirmed gone (a
 		// self destruct, a fresh install) the group is built in bulk exactly as before (D2).
-		if (category && existing && !options.foreignHomebase && (await GuildSetupManager.mayHaveNoticeBoardSurvivors(guild, existing))) {
+		// A row holding any slot back settles too (2026-11 item 289), because a bulk build
+		// would hand an admin every channel they removed or never asked for.
+		if (category && existing && !options.foreignHomebase && (GuildSetupManager.holdsNoticeBoardSlot(existing) || (await GuildSetupManager.mayHaveNoticeBoardSurvivors(guild, existing)))) {
 			reusedCategories.push({ field: "categoryId", category });
 		}
 		if (existingArcade && gamesCategory && !options.foreignHomebase) reusedCategories.push({ field: "gamesCategoryId", category: gamesCategory });
@@ -540,9 +551,10 @@ export class GuildSetupManager {
 			// A settled or reused category writes only its own id (the notice board's is new,
 			// and a reused one may have been adopted by name under a new id); its channel
 			// slots stay as stored, and the settle step writes any it rebuilds.
-			// A Headquarters only build stores both unbuilt category ids as null.
+			// A Headquarters only build stores both unbuilt category ids as null, and an arcade
+			// this build leaves as recorded writes no id at all.
 			...(built.homebase?.ids ?? { categoryId: category?.id ?? null }),
-			...(built.arcade?.ids ?? { gamesCategoryId: gamesCategory?.id ?? null }),
+			...(built.arcade?.ids ?? (arcadeStaysOff || keepsLiveArcade ? {} : { gamesCategoryId: gamesCategory?.id ?? null })),
 			...(built.headquarters?.ids ?? { headquartersCategoryId: headquartersCategory.id }),
 			// A settled notice board leaves the adopted list as stored: repairOneChannel
 			// writes it for any 👋welcome or 📘rules slot it settles.
@@ -551,8 +563,9 @@ export class GuildSetupManager {
 			// owner item 11), except one this server already turned off. A Headquarters
 			// only build stores it off instead, every arcade slot opted out the way
 			// turnArcadeOff leaves it, which is what keeps repairMissingChannels from
-			// building it on the next boot and what lets /arcade on bring it back.
-			...(headquartersOnly ? { userRemovedChannels: GuildSetupManager.specFieldsUnder("gamesCategoryId") } : arcadeSwitchesToWrite(existing)),
+			// building it on the next boot and what lets /arcade on bring it back. An arcade
+			// this build leaves as recorded writes neither (2026-11 item 289).
+			...GuildSetupManager.arcadeStateToWrite(existing, { headquartersOnly, leavesArcadeAlone: arcadeStaysOff || keepsLiveArcade }),
 			// v1.5.1 item 9: clear any previously-tracked permission failure
 			// so a guild that recovered from missing-permissions state stops
 			// being on the auto-leave countdown. Safe to set unconditionally
@@ -570,8 +583,13 @@ export class GuildSetupManager {
 			// when the copy packs (@base/copy/packs) change. This is the field that
 			// makes "rebuild the bot copy without nuking the homebase"
 			// possible. A reused category's stored anchors are carried over, so a kept
-			// channel's intro is edited in place rather than posted a second time.
-			introMessageIds: { ...GuildSetupManager.storedAnchorsUnder(existing, reusedCategories), ...introMessageIds },
+			// channel's intro is edited in place rather than posted a second time. A kept live
+			// arcade is no reused category, because nothing here settles it, but this write
+			// replaces the whole map, so its anchors must ride along or its intros post twice.
+			introMessageIds: {
+				...GuildSetupManager.storedAnchorsUnder(existing, keepsLiveArcade ? [...reusedCategories, { field: "gamesCategoryId" as const }] : reusedCategories),
+				...introMessageIds,
+			},
 		};
 
 		if (existing) {
@@ -620,6 +638,14 @@ export class GuildSetupManager {
 		GuildSetupManager.syncHeadquartersAfterBuild(guild, built.headquarters !== null, keptFields);
 	}
 
+	// What a build writes for the arcade: nothing when it left the arcade as the row records
+	// it, the opt out a Headquarters only build stores, or a built arcade's switches.
+	private static arcadeStateToWrite(existing: unknown, build: { headquartersOnly: boolean; leavesArcadeAlone: boolean }): Record<string, unknown> {
+		if (build.leavesArcadeAlone) return {};
+		if (build.headquartersOnly) return { userRemovedChannels: GuildSetupManager.specFieldsUnder("gamesCategoryId") };
+		return arcadeSwitchesToWrite(existing);
+	}
+
 	// The stored intro anchors of every slot under the given settled categories (and each
 	// category's second message: the 🕹️games Challenge Board, the #command-center invite
 	// card), carried into the rebuilt row so a kept channel keeps the anchor
@@ -659,7 +685,8 @@ export class GuildSetupManager {
 	//        category (item 275), which walks first. Never on a foreign homebase (D1).
 	// How:   ① read the stored row as a plain object (it now holds the new homebase anchors);
 	//        ② walk the reused categories' specs in order, skipping a slot the admin
-	//           removed (an arcade switched off stays off, D3);
+	//           removed (an arcade switched off stays off, D3) and an empty one still
+	//           waiting for its step card, the way repairMissingChannels does;
 	//        ③ keep a live stored channel of the spec's kind wherever it is (D2): the boot
 	//           sweep moves a Headquarters channel found outside Headquarters, and an arcade
 	//           channel an admin moved stays where they put it, as the sweep treats it. A
@@ -684,10 +711,12 @@ export class GuildSetupManager {
 		let row = asPlainRow(await guildConfigStore.findByGuildId(guild.id));
 		if (!row) return { keptFields };
 		const removedSlots = new Set((row.userRemovedChannels as string[] | undefined) ?? []);
+		const onDemandSlots = new Set((row.onDemandChannels as string[] | undefined) ?? []);
 
 		for (const { field, category } of reused) {
 			for (const spec of GuildSetupManager.CHANNEL_SPECS.filter((entry) => entry.categoryField === field)) {
 				if (removedSlots.has(spec.configField)) continue;
+				if (onDemandSlots.has(spec.configField) && !row[spec.configField]) continue;
 				// A reused Headquarters with no admin role keeps its waiting slots for Set up Dero.
 				if (waitsForSetup(spec, row)) continue;
 				const storedId = row[spec.configField];
@@ -740,6 +769,15 @@ export class GuildSetupManager {
 	// voice room, the setupComplete gated admin role for a text channel (item 272).
 	private static rolesFor(spec: (typeof GuildSetupManager.CHANNEL_SPECS)[number], roles: { voice: IOverwriteRoles; text: IOverwriteRoles }): IOverwriteRoles {
 		return spec.kind === "voice" ? roles.voice : roles.text;
+	}
+
+	// Whether the row holds any notice board slot back from a build: removed by an admin, or
+	// waiting for its step card (2026-11 item 289). A legacy row with neither list reads false,
+	// so its forced rebuild takes the same path it always did.
+	private static holdsNoticeBoardSlot(stored: unknown): boolean {
+		const row = stored as { onDemandChannels?: readonly string[] | null; userRemovedChannels?: readonly string[] | null };
+		const held = new Set([...(row.onDemandChannels ?? []), ...(row.userRemovedChannels ?? [])]);
+		return GuildSetupManager.specFieldsUnder("categoryId").some((field) => held.has(field));
 	}
 
 	// Whether any of Dero's own stored notice board channels may still exist (2026-10 item

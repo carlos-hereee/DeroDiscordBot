@@ -216,7 +216,7 @@ describe("Just delete channels", () => {
 		expect(mocks.update.mock.calls[0]).toEqual(["g1", { homebaseDestroyed: true, setupComplete: false, adoptedChannelIds: [] }]);
 		const cleared = mocks.update.mock.calls[1]![1] as Record<string, unknown>;
 		for (const field of [...HOMEBASE_CHANNEL_FIELDS, ...MANAGED_CATEGORY_FIELDS]) expect(cleared[field], field).toBeNull();
-		expect(cleared).toMatchObject({ adminRoleId: null, memberRoleId: null, onDemandChannels: [], tutorialCardMessageIds: {} });
+		expect(cleared).toMatchObject({ adminRoleId: null, memberRoleId: null, onDemandChannels: [], tutorialCardMessageIds: {}, setupStepsSkipped: [] });
 		expect(mocks.resetConfigsToDefault).toHaveBeenCalledWith("g1");
 		expect(mocks.update.mock.invocationCallOrder[1]!).toBeLessThan(mocks.resetConfigsToDefault.mock.invocationCallOrder[0]!);
 		expect(mocks.wipeServerData).not.toHaveBeenCalled();

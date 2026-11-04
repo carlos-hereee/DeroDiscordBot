@@ -508,7 +508,7 @@ async function clearManagedSlots(guildId: string): Promise<void> {
 	try {
 		// The two roles /setup picked go too, so the rebuilt 🔒inner-sanctum starts at step
 		// one with its Set up Dero button, like a new server (isAdminRolePending reads it).
-		await guildConfigStore.update(guildId, { ...cleared, adminRoleId: null, memberRoleId: null, onDemandChannels: [], tutorialCardMessageIds: {} });
+		await guildConfigStore.update(guildId, { ...cleared, adminRoleId: null, memberRoleId: null, onDemandChannels: [], tutorialCardMessageIds: {}, setupStepsSkipped: [] });
 	} catch (error) {
 		console.warn(`[self-destruct] could not clear the stored channel ids in guild ${guildId}; the next /setup rebuilds the old layout`, error);
 	}
