@@ -12,6 +12,13 @@ This file starts at v1.4.0. Earlier releases predate the changelog convention; t
 
 **This entry ships as 2.0.0** (owner decision 2026-10-24), a major version rather than the 1.7.0 it was prepared as: Dero's voice, its new look, the arcade, server against server rankings and Community Onboarding land together, and the command names listed under Removed stop working.
 
+### Hotfix, version unchanged at 2.0.0 (2026-11-04, setup one card at a time)
+
+* **Setup walks you through one card at a time.** `⚙️dero-config`, `🧭onboarding`, `🎰arcade-control` and `🛠️server-config` each show the next step on its own card, with the steps card as a table of contents that jumps to any step. The settings chart and the switches appear once a channel's steps are finished, and a server that already has them keeps them.
+* **Every step can be skipped.** A skipped step says so on its own card, and you can always come back and make edits.
+* **A ready channel can be removed.** A notice board channel's card offers Remove behind a confirm. A channel Dero built is deleted, and Add this channel brings an empty one back. A channel that was already yours stays with its messages, and Dero stops using it.
+* **Nothing is built unless an admin asks.** A level up, an upcoming event and a member's command no longer create a channel, and a rebuild leaves alone the channels an admin left out and an arcade that is switched off.
+
 ### Hotfix, version unchanged at 2.0.0 (2026-11-04)
 
 * **Admin button forms with a dropdown work again.** Set the network reach in `🎰arcade-control`, and the `/events`, `/server` and `/leveling` button forms that offer a dropdown, answered "Something went wrong executing this command" on Submit. Each one saves now. The version stays 2.0.0 on purpose, because any bump reposts the full 2.0.0 announcement in every set up server.
