@@ -107,7 +107,7 @@ describe("fortuneSceneRenderer", () => {
 describe("challengeCardRenderer", () => {
 	it("draws a full open table, more joiners than faces, as a 960 by 380 PNG", async () => {
 		const card = await renderChallengeCard({
-			game: "monopoly",
+			game: "holdem",
 			status: "open",
 			badge: "rated",
 			host: face("Host"),
