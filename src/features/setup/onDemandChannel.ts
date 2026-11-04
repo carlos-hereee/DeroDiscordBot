@@ -147,21 +147,27 @@ async function ensureNow(guild: Guild, configField: OnDemandField, options: Ensu
 
 /**
  * The notice board category and the row as it stands once the category is stored. The
- * category is built only on a row that never had one; a row whose stored category is gone
- * is the boot sweep's (ensureHomebase rebuilds it whole), so nothing is built here then.
+ * category is built only on a row that holds none. A row whose stored category is gone is
+ * the boot sweep's (ensureHomebase rebuilds it whole), so nothing is built here then, unless
+ * every slot is held back: no rebuild is owed on that row, so waiting for one would only
+ * refuse an admin's press until the next restart, and the dead id is forgotten here instead.
  */
 async function resolveNoticeBoard(guild: Guild, row: OnDemandRow, configField: OnDemandField): Promise<{ category: CategoryChannel; row: OnDemandRow } | null> {
 	const storedCategoryId = row.categoryId ?? null;
 	const found = await GuildSetupManager.findExistingManagedCategory(guild, "categoryId", storedCategoryId, row);
 	if (found === "unreachable") return null;
 	if (found && found.id === storedCategoryId) return { category: found, row };
-	if (storedCategoryId) {
+	const isDeadIdHeldBack = storedCategoryId !== null && GuildSetupManager.holdsEveryNoticeBoardSlot(row);
+	if (storedCategoryId && !isDeadIdHeldBack) {
 		console.warn(`[on-demand] guild ${guild.id}: the stored notice board ${storedCategoryId} is gone; the boot sweep rebuilds it, so ${configField} waits`);
 		return null;
 	}
 
 	const category = found ?? (await GuildSetupManager.createManagedCategory(guild, "categoryId", guild.ownerId, row.adminRoleId ?? null, row));
 	if (!category) return null;
+	// Forgotten only once a category stands, so a refused build leaves the row as it was. The
+	// claim below lands only on a null categoryId, which is why this write comes first.
+	if (isDeadIdHeldBack) await guildConfigStore.update(guild.id, { categoryId: null, onDemandChannels: [] });
 	const waiting = GuildSetupManager.specFieldsUnder("categoryId").filter((field) => field !== configField && !row[field]);
 	const claimed = await guildConfigStore.claimEmptySlot(guild.id, "categoryId", category.id, { onDemandChannels: waiting });
 	if (claimed) return { category, row: asPlainRow(claimed) as OnDemandRow };

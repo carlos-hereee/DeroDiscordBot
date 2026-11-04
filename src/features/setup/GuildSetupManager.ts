@@ -786,7 +786,9 @@ export class GuildSetupManager {
 
 	// True when no notice board channel is owed at all: every slot is held back and empty. A
 	// slot that holds an id is a channel somebody built, which a rebuild may still move back.
-	private static holdsEveryNoticeBoardSlot(stored: unknown): boolean {
+	// ensureHomebase and onDemandChannel both read it, so a dead category id is forgotten by
+	// the same test whichever reaches it first.
+	static holdsEveryNoticeBoardSlot(stored: unknown): boolean {
 		const row = stored as Record<string, unknown>;
 		const held = new Set(GuildSetupManager.heldNoticeBoardSlots(stored));
 		return GuildSetupManager.specFieldsUnder("categoryId").every((field) => held.has(field) && !row[field]);

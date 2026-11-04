@@ -29,6 +29,8 @@ const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
 	claimEmptySlot: vi.fn(),
 	pullFromLists: vi.fn(),
+	update: vi.fn(),
+	holdsEveryNoticeBoardSlot: vi.fn(),
 	findExistingManagedCategory: vi.fn(),
 	createManagedCategory: vi.fn(),
 	repairOneChannel: vi.fn(),
@@ -37,12 +39,13 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({
-	guildConfigStore: { findByGuildId: mocks.findByGuildId, claimEmptySlot: mocks.claimEmptySlot, pullFromLists: mocks.pullFromLists },
+	guildConfigStore: { findByGuildId: mocks.findByGuildId, claimEmptySlot: mocks.claimEmptySlot, pullFromLists: mocks.pullFromLists, update: mocks.update },
 }));
 vi.mock("./GuildSetupManager.js", () => ({
 	GuildSetupManager: {
 		CHANNEL_SPECS: NOTICE_BOARD_FIELDS.map((configField) => ({ configField, categoryField: "categoryId", kind: configField === "meetingVoiceChannelId" ? "voice" : "public" })),
 		specFieldsUnder: (categoryField: string) => (categoryField === "categoryId" ? [...NOTICE_BOARD_FIELDS] : []),
+		holdsEveryNoticeBoardSlot: mocks.holdsEveryNoticeBoardSlot,
 		findExistingManagedCategory: mocks.findExistingManagedCategory,
 		createManagedCategory: mocks.createManagedCategory,
 		repairOneChannel: mocks.repairOneChannel,
@@ -124,6 +127,12 @@ beforeEach(() => {
 		live.set(id, channel);
 		mocks.row = { ...mocks.row, [spec.configField]: id };
 		return { newChannel: channel, stored: { ...stored, [spec.configField]: id } };
+	});
+	// A real read of the row is GuildSetupManager's, pinned through ensureHomebase in its tests.
+	mocks.holdsEveryNoticeBoardSlot.mockReset().mockReturnValue(false);
+	mocks.update.mockReset().mockImplementation(async (_guildId: string, data: Record<string, unknown>) => {
+		mocks.row = { ...mocks.row, ...data };
+		return { ...mocks.row };
 	});
 	mocks.adminLogEmit.mockReset();
 	mocks.refreshHeadquartersCards.mockReset();
@@ -350,6 +359,43 @@ describe("Add this channel after a Remove", () => {
 		expect(mocks.row!.categoryId).toBe(CATEGORY_ID);
 		expect(mocks.row!.onDemandChannels).toEqual(NOTICE_BOARD_FIELDS.filter((field) => field !== "introChannelId"));
 		expect(mocks.row!.userRemovedChannels).toEqual(["rulesChannelId"]);
+	});
+
+	describe("when the stored notice board is gone and every slot is held back", () => {
+		const DEAD_CATEGORY_ID = "cat-deleted-by-hand";
+
+		beforeEach(() => {
+			mocks.row = headquartersOnlyRow({ categoryId: DEAD_CATEGORY_ID, onDemandChannels: NOTICE_BOARD_FIELDS.slice(1), userRemovedChannels: [NOTICE_BOARD_FIELDS[0]] });
+			mocks.holdsEveryNoticeBoardSlot.mockReturnValue(true);
+		});
+
+		it("forgets the dead id and builds the channel under a new category", async () => {
+			const channel = await ensureOnDemandChannel(guildWith(live), "scheduleChannelId", askByName);
+
+			expect(channel).not.toBeNull();
+			expect(mocks.update).toHaveBeenCalledWith(GUILD_ID, { categoryId: null, onDemandChannels: [] });
+			expect(mocks.update.mock.invocationCallOrder[0]!).toBeLessThan(mocks.claimEmptySlot.mock.invocationCallOrder[0]!);
+			expect(mocks.row!.categoryId).toBe(CATEGORY_ID);
+			expect(mocks.row!.onDemandChannels).toEqual(NOTICE_BOARD_FIELDS.filter((field) => field !== "scheduleChannelId"));
+		});
+
+		it("leaves the row as it was when Discord refuses the category", async () => {
+			mocks.createManagedCategory.mockResolvedValue(null);
+
+			await expect(ensureOnDemandChannel(guildWith(live), "scheduleChannelId", askByName)).resolves.toBeNull();
+
+			expect(mocks.update).not.toHaveBeenCalled();
+			expect(mocks.row!.categoryId).toBe(DEAD_CATEGORY_ID);
+		});
+
+		it("still waits for the boot sweep when a channel is owed, writing nothing", async () => {
+			mocks.holdsEveryNoticeBoardSlot.mockReturnValue(false);
+
+			await expect(ensureOnDemandChannel(guildWith(live), "scheduleChannelId", askByName)).resolves.toBeNull();
+
+			expect(mocks.update).not.toHaveBeenCalled();
+			expect(mocks.createManagedCategory).not.toHaveBeenCalled();
+		});
 	});
 });
 
