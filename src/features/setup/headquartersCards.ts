@@ -18,7 +18,7 @@ import { readAdoptionChoice } from "./adoption.js";
 import { isMemberRoleGated } from "./communityOverwrites.js";
 import { setupCopy } from "./setupCopy.js";
 import { buildButtons as buildArcadeControlButtons } from "./arcadeControlCards.js";
-import { buildCards as buildTutorialCards, buildSkipButton, channelSteps, progressOf, stepIdOf, type StepProgress, type TutorialRow } from "./tutorialCards.js";
+import { buildCards as buildStepCards, buildSkipButton, cardKeyOf, channelSteps, progressOf, revealedSteps, stepIdOf, type StepProgress, type TutorialRow } from "./tutorialCards.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { DEFAULT_SERVER_TIMEZONE, resolveServerTimezone } from "@utils/tzParser.js";
 
@@ -28,9 +28,9 @@ import { DEFAULT_SERVER_TIMEZONE, resolveServerTimezone } from "@utils/tzParser.
 //        table of contents, whose marks are read from the server as it stands and
 //        whose buttons jump to each step's existing flow, and the drawn settings chart of
 //        every switch in that channel's domain. 🛠️server-config (2026-10 item 263
-//        Phase 4a) keeps a third, the server switches, between its card and chart, and
-//        🧭onboarding keeps the notice board tutorial cards beneath its chart (2026-11
-//        item 285 Phase 3, tutorialCards.ts), one message per channel an admin builds.
+//        Phase 4a) keeps a third, the server switches. Beneath the steps card sit the step
+//        cards (2026-11 item 289, tutorialCards.ts), revealed one at a time, and the chart
+//        and the switches wait below them until every step is resolved.
 // Who:   GuildSetupManager after a full build and on every boot (refreshIntroEmbeds);
 //        after every change in a domain, fire and forget: the /dero-config and /arcade
 //        commands (the settings panels run them), the voice priority step, the
@@ -43,8 +43,10 @@ import { DEFAULT_SERVER_TIMEZONE, resolveServerTimezone } from "@utils/tzParser.
 // How:   each message is kept like 🕹️games' Challenge Board (maintainGamesBoard): the
 //        stored id first, then adopted by its embed title among Dero's recent
 //        messages, edited in place only when what it shows changed, and posted fresh
-//        beneath a freshly posted intro so the order stays intro, steps, chart. Every
-//        failure logs one line and never throws (rulebook convention 7).
+//        beneath a freshly posted intro so the order stays intro, steps, cards, chart. One
+//        guild's syncs run one after another, each reading the row inside the queue, so a
+//        double press cannot post a card twice. Every failure logs one line and never
+//        throws (rulebook convention 7).
 
 /** The four Headquarters config channels, by the domain each one sets up. */
 export const HEADQUARTERS_DOMAINS = ["deroConfig", "onboarding", "arcadeControl", "serverConfig"] as const;
@@ -653,7 +655,53 @@ async function dropMessage(channel: TextChannel, storedId: string | null | undef
 	}
 }
 
-/** Options for one sync. `forcePost` posts both messages fresh beneath an intro that was just posted. */
+/**
+ * Keep every revealed step card, in step order, beneath whatever the channel already holds.
+ * Answers the card ids to store: the channel slot for a channel card, <domain>-<key> for a flow.
+ */
+async function keepStepCards(
+	channel: TextChannel,
+	row: HeadquartersRow,
+	steps: readonly SetupStep[],
+	domain: HeadquartersDomain,
+	placement: { selfId: string | undefined; forcePost: boolean }
+): Promise<Record<string, string | null>> {
+	const writes: Record<string, string | null> = {};
+	for (const card of buildStepCards(steps, domain, row)) {
+		const storedCardId = row.tutorialCardMessageIds?.[card.key];
+		const cardId = await keepMessage({
+			channel,
+			storedId: storedCardId,
+			title: card.title,
+			...placement,
+			pin: false,
+			shape: { ...shapeOfEmbed(card.message.embeds[0]?.data), buttons: shapeOfRows(card.message.components) },
+			send: () => channel.send(card.message),
+			edit: (message) => message.edit(card.message),
+		});
+		if (cardId && cardId !== storedCardId) writes[`tutorialCardMessageIds.${card.key}`] = cardId;
+	}
+	return writes;
+}
+
+/**
+ * The one case a posted step card is deleted (2026-11 item 289): the arcade's cards have no
+ * flow to open while the arcade is off. The skip list stays, so turning the arcade on again
+ * resumes the walk where it stood. A card whose delete failed keeps its id for the next sync.
+ */
+async function dropArcadeStepCards(channel: TextChannel, row: HeadquartersRow): Promise<Record<string, string | null>> {
+	const writes: Record<string, string | null> = {};
+	for (const key of Object.keys(copy.stepTeaching.arcadeControl)) {
+		const cardKey = cardKeyOf({ key, kind: "flow" }, "arcadeControl");
+		const storedCardId = row.tutorialCardMessageIds?.[cardKey];
+		if (!storedCardId) continue;
+		const remainingId = await dropMessage(channel, storedCardId);
+		if (remainingId !== storedCardId) writes[`tutorialCardMessageIds.${cardKey}`] = remainingId;
+	}
+	return writes;
+}
+
+/** Options for one sync. `forcePost` posts every message fresh beneath an intro that was just posted. */
 export interface SyncOptions {
 	forcePost?: boolean;
 	row?: HeadquartersRow | null;
@@ -690,12 +738,21 @@ export async function syncHeadquartersChannel(guild: Guild, domain: Headquarters
 			edit: (message) => message.edit(steps),
 		});
 
-		// Between the card and the chart, so a fresh post reads intro, steps, switches, chart.
+		const { kept, finished } = revealedSteps(view.steps, domain, row.setupStepsSkipped ?? [], row.tutorialCardMessageIds);
+		// Before the switches and the chart, so a server that finishes its last step reads
+		// its held messages below the cards.
+		const writes = view.ownCardOnly ? await dropArcadeStepCards(channel, row) : await keepStepCards(channel, row, kept, domain, { selfId, forcePost });
+
+		// A held message is neither posted nor dropped: it waits for the domain to finish
+		// (2026-11 item 289). One already posted stays and keeps updating, which is what leaves
+		// an existing server its chart and switches. Only the arcade's off view drops a chart.
 		const switchesView = view.switches;
-		const switchesId = switchesView
+		const storedSwitchesId = row.settingsSwitchesMessageIds?.[field];
+		const holdSwitches = !finished && !storedSwitchesId;
+		const switchesId = switchesView && !holdSwitches
 			? await keepMessage({
 					channel,
-					storedId: row.settingsSwitchesMessageIds?.[field],
+					storedId: storedSwitchesId,
 					title: switchesView.title,
 					selfId,
 					forcePost,
@@ -711,8 +768,9 @@ export async function syncHeadquartersChannel(guild: Guild, domain: Headquarters
 
 		const chart = view.chart;
 		const storedChartId = row.settingsChartMessageIds?.[field];
-		let chartId: string | null;
-		if (chart) {
+		const holdChart = chart !== null && !finished && !storedChartId;
+		let chartId: string | null = null;
+		if (chart && !holdChart) {
 			const chartEmbed = settingsChartEmbed(chart);
 			const chartShape = { ...shapeOfEmbed(chartEmbed.data), buttons: shapeOfRows([]) };
 			// Drawn only when the chart must be written: an unchanged chart costs no render.
@@ -736,29 +794,10 @@ export async function syncHeadquartersChannel(guild: Guild, domain: Headquarters
 				// `attachments: []` drops the old drawing, or every redraw would stack another file.
 				edit: async (message) => message.edit(await chartPayload()),
 			});
-		} else {
+		} else if (!chart) {
 			chartId = await dropMessage(channel, storedChartId);
 		}
 
-		const writes: Record<string, string | null> = {};
-		// The tutorial cards come last, so a fresh post reads intro, steps, chart, cards.
-		if (domain === "onboarding") {
-			for (const card of buildTutorialCards(row, getPluginCopy(row as unknown as ICopyConfig))) {
-				const storedCardId = row.tutorialCardMessageIds?.[card.field];
-				const cardId = await keepMessage({
-					channel,
-					storedId: storedCardId,
-					title: card.title,
-					selfId,
-					forcePost,
-					pin: false,
-					shape: { ...shapeOfEmbed(card.message.embeds[0]?.data), buttons: shapeOfRows(card.message.components) },
-					send: () => channel.send(card.message),
-					edit: (message) => message.edit(card.message),
-				});
-				if (cardId && cardId !== storedCardId) writes[`tutorialCardMessageIds.${card.field}`] = cardId;
-			}
-		}
 		if (stepsId && stepsId !== row.setupStepsMessageIds?.[field]) writes[`setupStepsMessageIds.${field}`] = stepsId;
 		if (chartId !== (storedChartId ?? null) && (chartId || storedChartId)) writes[`settingsChartMessageIds.${field}`] = chartId;
 		if (switchesId && switchesId !== row.settingsSwitchesMessageIds?.[field]) writes[`settingsSwitchesMessageIds.${field}`] = switchesId;

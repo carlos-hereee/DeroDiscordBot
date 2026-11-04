@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { AttachmentBuilder, ButtonStyle, TextChannel, type Guild } from "discord.js";
+import { AttachmentBuilder, ButtonStyle, EmbedBuilder, TextChannel, type Guild } from "discord.js";
 
-vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn(), update: vi.fn() } }));
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn(), update: vi.fn(), addToList: vi.fn() } }));
 vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({ deroVoiceConfigStore: { findByGuildId: vi.fn() } }));
 vi.mock("@db/stores/eventStore.js", () => ({ eventStore: { findByGuildId: vi.fn(async () => []) } }));
 vi.mock("@features/renderer/settingsChartRenderer.js", async (importOriginal) => ({
@@ -46,6 +46,10 @@ const events = eventStore as unknown as { findByGuildId: ReturnType<typeof vi.fn
 const voiceStore = deroVoiceConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
 const render = renderSettingsChart as unknown as ReturnType<typeof vi.fn>;
 const copy = setupCopy.headquarters;
+
+// Every step of a domain listed, so the domain has finished and its chart and switches post.
+const ARCADE_FINISHED = { setupStepsSkipped: ["arcadeControl:chips", "arcadeControl:reach", "arcadeControl:block"] };
+const SERVER_FINISHED = { setupStepsSkipped: SERVER_CONFIG_STEPS.map((key) => `serverConfig:${key}`) };
 
 const onboardingFlowSteps = (view: ReturnType<typeof onboardingView>) => view.steps.filter((step) => step.kind === "flow");
 
@@ -433,9 +437,12 @@ function rig(row: Partial<HeadquartersRow>) {
 	store.findByGuildId.mockImplementation(async () => stored);
 	store.update.mockImplementation(async (_guildId: string, writes: Record<string, string | null>) => {
 		for (const [path, value] of Object.entries(writes)) {
-			const [group, key] = path.split(".") as ["setupStepsMessageIds" | "settingsChartMessageIds" | "settingsSwitchesMessageIds", string];
+			const [group, key] = path.split(".") as ["setupStepsMessageIds" | "settingsChartMessageIds" | "settingsSwitchesMessageIds" | "tutorialCardMessageIds", string];
 			stored[group] = { ...(stored[group] ?? {}), [key]: value };
 		}
+	});
+	store.addToList.mockImplementation(async (_guildId: string, list: "setupStepsSkipped", value: string) => {
+		stored[list] = [...new Set([...(stored[list] ?? []), value])];
 	});
 	return { guild, send, messages, stored };
 }
@@ -449,7 +456,7 @@ beforeEach(() => {
 
 describe("syncHeadquartersChannel", () => {
 	it("posts the pinned steps card then the chart, and stores both ids", async () => {
-		const { guild, send, messages, stored } = rig({});
+		const { guild, send, messages, stored } = rig(ARCADE_FINISHED);
 		await syncHeadquartersChannel(guild, "arcadeControl");
 
 		expect(send).toHaveBeenCalledTimes(2);
@@ -465,7 +472,7 @@ describe("syncHeadquartersChannel", () => {
 	it("attaches the drawn chart when the canvas draws it", async () => {
 		const attachment = new AttachmentBuilder(Buffer.from("png"), { name: "settings-chart-x.png" });
 		render.mockResolvedValue({ attachment, ref: "attachment://settings-chart-x.png" });
-		const { guild, send } = rig({});
+		const { guild, send } = rig(ARCADE_FINISHED);
 		await syncHeadquartersChannel(guild, "arcadeControl");
 		const chartPayload = send.mock.calls[1]![0] as { files: unknown[]; embeds: Array<{ toJSON(): { image?: { url: string } } }> };
 		expect(chartPayload.files).toEqual([attachment]);
@@ -473,7 +480,7 @@ describe("syncHeadquartersChannel", () => {
 	});
 
 	it("writes nothing when nothing changed, and redraws after a change", async () => {
-		const { guild, send, messages, stored } = rig({});
+		const { guild, send, messages, stored } = rig(ARCADE_FINISHED);
 		await syncHeadquartersChannel(guild, "arcadeControl");
 		await syncHeadquartersChannel(guild, "arcadeControl");
 		const [steps, chart] = [...messages.values()];
@@ -482,7 +489,7 @@ describe("syncHeadquartersChannel", () => {
 		expect(chart!.edit).not.toHaveBeenCalled();
 		expect(render).not.toHaveBeenCalledTimes(2);
 
-		stored.chipEconomyEnabled = false;
+		stored.blockedNetworkGuildIds = ["x"];
 		refreshHeadquartersCards(guild, "arcadeControl");
 		await vi.waitFor(() => expect(chart!.edit).toHaveBeenCalledOnce());
 		expect(steps!.edit).toHaveBeenCalledOnce();
@@ -490,7 +497,7 @@ describe("syncHeadquartersChannel", () => {
 	});
 
 	it("reposts a deleted card and adopts one whose stored id was lost", async () => {
-		const { guild, send, messages, stored } = rig({});
+		const { guild, send, messages, stored } = rig(ARCADE_FINISHED);
 		await syncHeadquartersChannel(guild, "arcadeControl");
 		const [steps] = [...messages.values()];
 		messages.delete(steps!.id);
@@ -501,7 +508,7 @@ describe("syncHeadquartersChannel", () => {
 	});
 
 	it("posts 🛠️server-config's steps card, then its switches, then its chart, and stores all three ids", async () => {
-		const { guild, send, messages, stored } = rig({ arcadeControlChannelId: null, serverConfigChannelId: "ch-arcade" });
+		const { guild, send, messages, stored } = rig({ arcadeControlChannelId: null, serverConfigChannelId: "ch-arcade", ...SERVER_FINISHED });
 		await syncHeadquartersChannel(guild, "serverConfig");
 
 		expect(send).toHaveBeenCalledTimes(3);
@@ -535,7 +542,7 @@ describe("syncHeadquartersChannel", () => {
 	});
 
 	it("turning the arcade on deletes the enable card, then posts the steps card and the chart beneath", async () => {
-		const { guild, send, messages, stored } = rig({ gamesCategoryId: null });
+		const { guild, send, messages, stored } = rig({ gamesCategoryId: null, ...ARCADE_FINISHED });
 		await syncHeadquartersChannel(guild, "arcadeControl");
 		const [enable] = [...messages.values()];
 
@@ -553,7 +560,7 @@ describe("syncHeadquartersChannel", () => {
 	});
 
 	it("turning the arcade off swaps back: the steps card and the chart go, the enable card posts", async () => {
-		const { guild, messages, stored } = rig({});
+		const { guild, messages, stored } = rig(ARCADE_FINISHED);
 		await syncHeadquartersChannel(guild, "arcadeControl");
 		const [steps, chart] = [...messages.values()];
 
@@ -575,10 +582,11 @@ describe("syncHeadquartersChannel", () => {
 	});
 });
 
-// ── 🧭onboarding's notice board tutorial cards (2026-11 item 285 Phase 3) ──
-// Kept beneath the chart like the other messages: posted once, stored by slot, and edited
-// only when a card's own slot changes.
-describe("syncHeadquartersChannel in 🧭onboarding", () => {
+// ── the setup walk (2026-11 item 289) ──
+// One card at a time in every config channel, read from the row alone: a stored card stays,
+// the first unresolved step is the one new card, and the chart and the switches wait for the
+// last step unless they are already posted.
+describe("the setup walk", () => {
 	// The rig's channel serves as 🧭onboarding here, on a guild that is not Community.
 	function onboardingRig(row: Partial<HeadquartersRow> = {}) {
 		const rigged = rig({ arcadeControlChannelId: null, onboardingConfigChannelId: "ch-arcade", ...row });
@@ -586,48 +594,198 @@ describe("syncHeadquartersChannel in 🧭onboarding", () => {
 		Object.assign(rigged.guild.channels, { cache: new Map() });
 		return rigged;
 	}
+	const deroConfigRig = (row: Partial<HeadquartersRow> = {}) => rig({ arcadeControlChannelId: null, deroConfigChannelId: "ch-arcade", ...row });
+	const serverConfigRig = (row: Partial<HeadquartersRow> = {}) => rig({ arcadeControlChannelId: null, serverConfigChannelId: "ch-arcade", ...row });
 
-	it("posts the ten tutorial cards after the steps card and the chart, and stores each by slot", async () => {
-		const { guild, send, messages, stored } = onboardingRig();
-		await syncHeadquartersChannel(guild, "onboarding");
+	const titlesOf = (messages: Map<string, FakeMessage>) => [...messages.values()].map((message) => message.embeds[0]!.title);
+	const buttonLabels = (message: FakeMessage) =>
+		(message.components as Array<{ toJSON(): { components: Array<{ label: string }> } }>).flatMap((row) => row.toJSON().components.map((button) => button.label));
+	const descriptionOf = (message: FakeMessage) => message.embeds[0]!.data.description as string;
 
-		expect(send).toHaveBeenCalledTimes(12);
-		const titles = [...messages.values()].map((message) => message.embeds[0]!.title);
-		expect(titles.slice(0, 2)).toEqual([copy.onboarding.title, copy.onboarding.chartTitle]);
-		expect(titles.slice(2)).toEqual(["📜 Introductions", "📢 Announcements", "📅 Event Schedule", "👋 Welcome", "📘 Rules", "📖 Command Center", "🏛️ Meeting Hall", "💬 Dero Commands", "🏆 Leaderboard", "🔜 Upcoming Events"]);
-		expect(Object.keys(stored.tutorialCardMessageIds ?? {})).toEqual([
-			"introChannelId",
-			"announcementsChannelId",
-			"scheduleChannelId",
-			"welcomeChannelId",
-			"rulesChannelId",
-			"commandsChannelId",
-			"meetingVoiceChannelId",
-			"commandOutputChannelId",
-			"leaderboardChannelId",
-			"nextDecreeChannelId",
-		]);
+	describe("on a fresh row", () => {
+		it("shows the Introductions card alone in 🧭onboarding, with no chart", async () => {
+			const { guild, messages, stored } = onboardingRig();
+			await syncHeadquartersChannel(guild, "onboarding");
+			expect(titlesOf(messages)).toEqual([copy.onboarding.title, "📜 Introductions"]);
+			expect(Object.keys(stored.tutorialCardMessageIds ?? {})).toEqual(["introChannelId"]);
+			expect(stored.settingsChartMessageIds).toBeUndefined();
+		});
+
+		it("shows the voice card alone in ⚙️dero-config, with no chart", async () => {
+			const { guild, messages, stored } = deroConfigRig();
+			await syncHeadquartersChannel(guild, "deroConfig");
+			expect(titlesOf(messages)).toEqual([copy.deroConfig.title, copy.deroConfig.steps[0]]);
+			expect(Object.keys(stored.tutorialCardMessageIds ?? {})).toEqual(["deroConfig-voice"]);
+			expect(stored.settingsChartMessageIds).toBeUndefined();
+		});
+
+		it("shows the timezone card alone in 🛠️server-config, with no chart and no switches", async () => {
+			const { guild, messages, stored } = serverConfigRig();
+			await syncHeadquartersChannel(guild, "serverConfig");
+			expect(titlesOf(messages)).toEqual([copy.serverConfig.title, copy.serverConfig.steps.timezone]);
+			expect(stored.settingsChartMessageIds).toBeUndefined();
+			expect(stored.settingsSwitchesMessageIds).toBeUndefined();
+		});
+
+		it("shows only Turn the arcade on in 🎰arcade-control, with no step card", async () => {
+			const { guild, messages, stored } = rig({ gamesCategoryId: null });
+			await syncHeadquartersChannel(guild, "arcadeControl");
+			expect(titlesOf(messages)).toEqual([copy.arcadeControl.enableTitle]);
+			expect(stored.tutorialCardMessageIds).toBeUndefined();
+			expect(buttonLabels([...messages.values()][0]!)).toEqual(["Step 1", copy.stepCards.skipButton]);
+		});
 	});
 
-	it("edits only the card whose channel was built, and posts nothing new", async () => {
-		const { guild, send, messages, stored } = onboardingRig();
-		await syncHeadquartersChannel(guild, "onboarding");
-		const introCard = messages.get(stored.tutorialCardMessageIds!.introChannelId!)!;
-		const welcomeCard = messages.get(stored.tutorialCardMessageIds!.welcomeChannelId!)!;
+	describe("as a step resolves", () => {
+		it("reveals the next card when a flow step finishes, leaving the finished card its Open alone", async () => {
+			const { guild, send, messages, stored } = serverConfigRig();
+			await syncHeadquartersChannel(guild, "serverConfig");
+			const timezoneCard = messages.get(stored.tutorialCardMessageIds!["serverConfig-timezone"]!)!;
+			expect(buttonLabels(timezoneCard)).toEqual([copy.stepCards.openButton, copy.stepCards.skipButton]);
 
-		stored.introChannelId = "c-intro";
-		await syncHeadquartersChannel(guild, "onboarding");
+			stored.timezone = "Asia/Tokyo";
+			await syncHeadquartersChannel(guild, "serverConfig");
 
-		expect(send).toHaveBeenCalledTimes(12);
-		expect(introCard.edit).toHaveBeenCalledOnce();
-		expect(introCard.embeds[0]!.data.description).toContain("<#c-intro>");
-		expect(welcomeCard.edit).not.toHaveBeenCalled();
+			expect(send).toHaveBeenCalledTimes(3);
+			expect(titlesOf(messages).at(-1)).toBe(copy.serverConfig.steps.template);
+			expect(buttonLabels(timezoneCard)).toEqual([copy.stepCards.openButton]);
+		});
+
+		it("holds a needsContinue step that reads done until its Continue, and never calls it skipped", async () => {
+			const { guild, send, messages, stored } = serverConfigRig({ timezone: "Asia/Tokyo" });
+			await syncHeadquartersChannel(guild, "serverConfig");
+			await syncHeadquartersChannel(guild, "serverConfig");
+			expect(send).toHaveBeenCalledTimes(2);
+			const templateCard = messages.get(stored.tutorialCardMessageIds!["serverConfig-template"]!)!;
+			expect(buttonLabels(templateCard)).toEqual([copy.stepCards.openButton, copy.stepCards.continueButton]);
+
+			stored.setupStepsSkipped = ["serverConfig:template"];
+			await syncHeadquartersChannel(guild, "serverConfig");
+
+			expect(descriptionOf(templateCard)).toContain(copy.stepCards.continuedLine);
+			expect(descriptionOf(templateCard)).not.toContain(copy.stepCards.skippedLine);
+			expect(buttonLabels(templateCard)).toEqual([copy.stepCards.openButton]);
+			expect(titlesOf(messages).at(-1)).toBe(copy.serverConfig.steps.kvkSeason);
+		});
+
+		it("posts the held switches and chart below the cards once the last step resolves", async () => {
+			const listed = SERVER_FINISHED.setupStepsSkipped.filter((id) => id !== "serverConfig:rename");
+			const { guild, messages, stored } = serverConfigRig({ setupStepsSkipped: listed });
+			await syncHeadquartersChannel(guild, "serverConfig");
+			expect(titlesOf(messages)).toEqual([copy.serverConfig.title, copy.serverConfig.steps.rename]);
+
+			stored.setupStepsSkipped = SERVER_FINISHED.setupStepsSkipped;
+			await syncHeadquartersChannel(guild, "serverConfig");
+
+			expect(titlesOf(messages)).toEqual([copy.serverConfig.title, copy.serverConfig.steps.rename, copy.serverConfig.switches.title, copy.serverConfig.chartTitle]);
+		});
 	});
 
-	it("keeps no tutorial card in any other config channel", async () => {
-		const { guild, send } = rig({});
-		await syncHeadquartersChannel(guild, "arcadeControl");
+	describe("on an existing row", () => {
+		// A server set up before the walk: what it already holds is stored, so it is kept.
+		async function seed(send: ReturnType<typeof rig>["send"], title: string): Promise<string> {
+			const posted = await send({ embeds: [new EmbedBuilder().setTitle(title)] as never, components: [] });
+			return posted.id;
+		}
+		const SEVEN_FIELDS = ["introChannelId", "announcementsChannelId", "scheduleChannelId", "welcomeChannelId", "rulesChannelId", "commandsChannelId", "meetingVoiceChannelId"] as const;
+		const THREE_FIELDS = ["commandOutputChannelId", "leaderboardChannelId", "nextDecreeChannelId"] as const;
+		const allChannels = Object.fromEntries([...SEVEN_FIELDS, ...THREE_FIELDS].map((field) => [field, `c-${field}`]));
+
+		it("keeps every stored card and its chart, gains Remove, the three new cards and one flow card", async () => {
+			const { guild, send, messages, stored } = onboardingRig(allChannels);
+			const cardIds: Record<string, string> = {};
+			for (const field of SEVEN_FIELDS) cardIds[field] = await seed(send, field);
+			const chartId = await seed(send, copy.onboarding.chartTitle);
+			const stepsId = await seed(send, copy.onboarding.title);
+			Object.assign(stored, { tutorialCardMessageIds: cardIds, settingsChartMessageIds: { onboardingConfigChannelId: chartId }, setupStepsMessageIds: { onboardingConfigChannelId: stepsId } });
+			const before = [...messages.values()];
+
+			await syncHeadquartersChannel(guild, "onboarding");
+
+			for (const message of before) expect(message.delete).not.toHaveBeenCalled();
+			expect(titlesOf(messages).slice(before.length)).toEqual(["💬 Dero Commands", "🏆 Leaderboard", "🔜 Upcoming Events", copy.onboarding.steps[0]]);
+			expect(buttonLabels(messages.get(cardIds.introChannelId!)!)).toEqual(["Channel ready", copy.stepCards.removeButton]);
+			expect(stored.settingsChartMessageIds?.onboardingConfigChannelId).toBe(chartId);
+		});
+
+		it("gives a stored card past the frontier its Skip, and never takes it away", async () => {
+			const { guild, send, messages, stored } = onboardingRig();
+			const announcementsId = await seed(send, "📢 Announcements");
+			stored.tutorialCardMessageIds = { announcementsChannelId: announcementsId };
+
+			await syncHeadquartersChannel(guild, "onboarding");
+
+			expect(buttonLabels(messages.get(announcementsId)!)).toEqual(["Add this channel", copy.stepCards.skipButton]);
+			expect(titlesOf(messages)).toEqual(["📢 Announcements", copy.onboarding.title, "📜 Introductions"]);
+		});
+
+		it("keeps updating a stored chart and switches while the walk is unfinished", async () => {
+			const { guild, send, messages, stored } = serverConfigRig();
+			const chartId = await seed(send, copy.serverConfig.chartTitle);
+			const switchesId = await seed(send, copy.serverConfig.switches.title);
+			Object.assign(stored, { settingsChartMessageIds: { serverConfigChannelId: chartId }, settingsSwitchesMessageIds: { serverConfigChannelId: switchesId } });
+
+			await syncHeadquartersChannel(guild, "serverConfig");
+
+			expect(messages.get(chartId)!.delete).not.toHaveBeenCalled();
+			expect(messages.get(chartId)!.edit).toHaveBeenCalledOnce();
+			expect(messages.get(switchesId)!.edit).toHaveBeenCalledOnce();
+			expect(titlesOf(messages)).toEqual([copy.serverConfig.chartTitle, copy.serverConfig.switches.title, copy.serverConfig.title, copy.serverConfig.steps.timezone]);
+		});
+
+		it("gains no flow card on a fully set up row", async () => {
+			const { guild, send } = serverConfigRig({
+				timezone: "Asia/Tokyo",
+				kvkSeasonEnd: new Date(Date.now() + 86_400_000),
+				hiddenChannels: ["x"],
+				setupStepsSkipped: ["serverConfig:template", "serverConfig:leveling", "serverConfig:rename"],
+			});
+			events.findByGuildId.mockResolvedValue([{ type: "recurring", intervalHours: 168, seasonEnd: null, paused: false }]);
+			await syncHeadquartersChannel(guild, "serverConfig");
+			const titles = send.mock.calls.map((call) => (call[0] as { embeds: Array<{ toJSON(): { title: string } }> }).embeds[0]!.toJSON().title);
+			expect(titles).toEqual([copy.serverConfig.title, copy.serverConfig.switches.title, copy.serverConfig.chartTitle]);
+			events.findByGuildId.mockResolvedValue([]);
+		});
+	});
+
+	describe("in 🎰arcade-control", () => {
+		it("gives each arcade step a card once the arcade is on, Dismantle staying on the steps card", async () => {
+			const { guild, messages, stored } = rig({});
+			await syncHeadquartersChannel(guild, "arcadeControl");
+			expect(titlesOf(messages)).toEqual([copy.arcadeControl.title, copy.arcadeControl.steps[1]]);
+			expect(Object.keys(stored.tutorialCardMessageIds ?? {})).toEqual(["arcadeControl-chips"]);
+			expect(buttonLabels([...messages.values()][0]!)).toContain(copy.arcadeControl.dismantleButton);
+		});
+
+		it("deletes the stored step cards while the arcade is off, clears their ids and keeps the skip list", async () => {
+			const { guild, messages, stored } = rig({ setupStepsSkipped: ["arcadeControl:chips"] });
+			await syncHeadquartersChannel(guild, "arcadeControl");
+			const reachId = stored.tutorialCardMessageIds!["arcadeControl-reach"]!;
+			const reachCard = messages.get(reachId)!;
+
+			stored.gamesCategoryId = null;
+			await syncHeadquartersChannel(guild, "arcadeControl");
+
+			expect(reachCard.delete).toHaveBeenCalledOnce();
+			expect(stored.tutorialCardMessageIds!["arcadeControl-reach"]).toBeNull();
+			expect(stored.setupStepsSkipped).toEqual(["arcadeControl:chips"]);
+			expect(titlesOf(messages)).toEqual([copy.arcadeControl.enableTitle]);
+		});
+
+		it("posts no step card and deletes nothing it was not asked to while the arcade stays off", async () => {
+			const { guild, send } = rig({ gamesCategoryId: null, setupStepsSkipped: ["arcadeControl:enable"] });
+			await syncHeadquartersChannel(guild, "arcadeControl");
+			expect(send).toHaveBeenCalledOnce();
+		});
+	});
+
+	it("keeps no step card when a stored id's message is gone but a lost id's title still stands", async () => {
+		const { guild, send, stored } = serverConfigRig();
+		await syncHeadquartersChannel(guild, "serverConfig");
+		stored.tutorialCardMessageIds = {};
+		await syncHeadquartersChannel(guild, "serverConfig");
 		expect(send).toHaveBeenCalledTimes(2);
+		expect(stored.tutorialCardMessageIds?.["serverConfig-timezone"]).toBeTruthy();
 	});
 });
 

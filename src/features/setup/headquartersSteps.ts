@@ -28,7 +28,7 @@ import {
 	type ServerSwitch,
 } from "./headquartersCards.js";
 import { setupCopy } from "./setupCopy.js";
-import { handleAddChannel, tutorialKeyOf, type TutorialChannelKey } from "./tutorialCards.js";
+import { REMOVE_STEP_TAIL, SKIP_STEP_TAIL, channelKeyOf, handleAddChannel, parseStepId, stepIdOf, tutorialKeyOf, type TutorialChannelKey } from "./tutorialCards.js";
 import { arcadeControlActionOf, handleDismantle, RETIRED_ENABLE_STUB_TAIL, type ArcadeControlAction } from "./arcadeControlCards.js";
 import { handleOpen as handleRenameInfo } from "./renameInfoStep.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
@@ -50,7 +50,9 @@ import { TEMPLATE_PLUGIN_IDS, isTemplatePluginId, switchTemplate, type ISwitchTe
 //        `hqstep:<domain>:<step>`. The 🧭onboarding steps carry the Community and
 //        adoption customIds themselves and never come here; its notice board tutorial
 //        cards do, as `hqstep:onboarding:tutorial-<key>` (2026-11 item 285 Phase 3), and go
-//        on to tutorialCards.handleAddChannel.
+//        on to tutorialCards.handleAddChannel. A step card's Skip and Continue arrive as
+//        `hqstep:<domain>:skip-<key>` and a ready channel's Remove as
+//        `hqstep:onboarding:remove-<key>` (2026-11 item 289), and go on to tutorialCards too.
 // How:   the launcher re-runs its owner or admin gate at every step, and the priority,
 //        timezone and template modals run gateOwnerOrAdmin on the press and again on the
 //        Submit, because a modal is reachable without the button that opened it.
@@ -63,6 +65,8 @@ type StepTarget =
 	| { kind: "timezone" }
 	| { kind: "template" }
 	| { kind: "tutorial"; key: TutorialChannelKey }
+	| { kind: "skip"; stepId: string }
+	| { kind: "remove"; key: TutorialChannelKey }
 	| { kind: "arcadeControl"; action: ArcadeControlAction }
 	| { kind: "renameInfo" };
 
@@ -109,6 +113,16 @@ const ROUTED_STEPS: Partial<Record<HeadquartersDomain, readonly StepTarget[]>> =
 export function stepTarget(customId: string): StepTarget | null {
 	const [prefix, domain, step] = customId.split(":");
 	if (prefix !== HEADQUARTERS_STEP_PREFIX || !domain || !step) return null;
+	// Before the onboarding branch below, which answers null to any tail but a tutorial's,
+	// and before the number lookup. An unknown tail is null, so the press reads as stale.
+	if (step.startsWith(SKIP_STEP_TAIL)) {
+		const parsed = parseStepId(`${domain}:${step.slice(SKIP_STEP_TAIL.length)}`);
+		return parsed ? { kind: "skip", stepId: stepIdOf(parsed.domain, parsed.key) } : null;
+	}
+	if (step.startsWith(REMOVE_STEP_TAIL)) {
+		const key = channelKeyOf(step.slice(REMOVE_STEP_TAIL.length));
+		return domain === "onboarding" && key ? { kind: "remove", key } : null;
+	}
 	if (step.startsWith(SWITCH_STEP_TAIL)) {
 		const name = step.slice(SWITCH_STEP_TAIL.length);
 		return domain === "serverConfig" && Object.hasOwn(SWITCH_ROUTES, name) ? SWITCH_ROUTES[name as ServerSwitch] : null;
@@ -153,6 +167,10 @@ async function handleStepButton(interaction: ButtonInteraction): Promise<void> {
 	}
 	if (target.kind === "tutorial") {
 		await handleAddChannel(interaction, target.key);
+		return;
+	}
+	if (target.kind === "skip" || target.kind === "remove") {
+		await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [setupCopy.headquarters.staleStep] });
 		return;
 	}
 	if (target.kind === "arcadeControl") {

@@ -12,19 +12,19 @@ import { ensureOnDemandChannel, type OnDemandField } from "./onDemandChannel.js"
 import { setupCopy } from "./setupCopy.js";
 
 // ── tutorialCards ───────────────────────────────────────────────────────────
-// What:  the notice board tutorial in 🧭onboarding (2026-11 item 285 Phase 3): one card
-//        per channel an admin builds by hand, each teaching what its channel is for and
-//        carrying one button that builds it. A card reads done once its slot holds a
-//        channel id, whoever built it, and pending while the slot is empty.
-// Who:   headquartersCards.ts keeps the cards beneath 🧭onboarding's chart (buildCards);
-//        headquartersSteps.ts routes each button here (handleAddChannel).
-// Where: the build itself is onDemandChannel's, the one path that builds a notice board
-//        channel after install, so a card's button and a feature's first use can never
-//        build a channel two different ways. Nothing here touches Discord's channels.
-// How:   seven cards: the four the plan named (introductions, announcements, schedule,
-//        welcome) and, by the owner's rulings at Phase 3 kickoff, the rules, the command
-//        center and the Meeting Hall, the notice board channels no feature can ask for
-//        on a server without them (the Edit rules button lives on the rules post itself).
+// What:  the step cards of the four config channels (2026-11 item 285 Phase 3, widened
+//        by 2026-11 item 289): the step model every config channel walks, and one card per
+//        step, each teaching what its step is for. A channel card builds one notice board
+//        channel and reads done once its slot holds an id, whoever built it. A flow card
+//        opens a step's existing flow. Every step can be skipped or continued past, and a
+//        ready channel can be removed.
+// Who:   headquartersCards.ts keeps the cards in their channel (buildCards) and reveals them
+//        one at a time (revealedSteps); headquartersSteps.ts routes each button here.
+// Where: the build is onDemandChannel's, the one path that builds a notice board channel
+//        after install, and a card's Remove is removeChannel.ts, so a card cannot build or
+//        take away a channel any other way. Nothing here touches Discord's channels.
+// How:   ten channel cards, one per notice board channel, and the 17 flow steps of the four
+//        channels. A card's title never carries its mark, so a lost id still finds its card.
 
 /** The channels a tutorial card builds, in card order, keyed by the word its customId carries. */
 export const TUTORIAL_CHANNELS = {
@@ -54,8 +54,7 @@ export function tutorialCustomId(key: TutorialChannelKey): string {
 /** The card key a step tail names, or null for one no card carries. */
 export function tutorialKeyOf(step: string): TutorialChannelKey | null {
 	if (!step.startsWith(TUTORIAL_STEP_TAIL)) return null;
-	const key = step.slice(TUTORIAL_STEP_TAIL.length);
-	return Object.hasOwn(TUTORIAL_CHANNELS, key) ? (key as TutorialChannelKey) : null;
+	return channelKeyOf(step.slice(TUTORIAL_STEP_TAIL.length));
 }
 
 /** The step tail a Skip or Continue button's customId carries after `hqstep:<domain>:`. */
@@ -66,16 +65,44 @@ export function skipCustomId(domain: HeadquartersDomain, key: string): string {
 	return `hqstep:${domain}:${SKIP_STEP_TAIL}${key}`;
 }
 
+/** The step tail a Remove button's customId carries after `hqstep:onboarding:`. */
+export const REMOVE_STEP_TAIL = "remove-";
+
+/** The customId of a ready channel card's Remove: `hqstep:onboarding:remove-<key>`. */
+export function removeCustomId(key: TutorialChannelKey): string {
+	return `hqstep:onboarding:${REMOVE_STEP_TAIL}${key}`;
+}
+
+/** The channel key a word names, or null for one no channel card carries. */
+export function channelKeyOf(word: string): TutorialChannelKey | null {
+	return Object.hasOwn(TUTORIAL_CHANNELS, word) ? (word as TutorialChannelKey) : null;
+}
+
+// The arcade's enable step has no stored card and no teaching: the steps card is its card.
+const ARCADE_ENABLE_KEY = "enable";
+
+/**
+ * The domain and key of a step id, or null for an id no step carries. The teaching table is
+ * the list of flow steps, so a step added to it is known here at once.
+ */
+export function parseStepId(stepId: string): { domain: HeadquartersDomain; key: string } | null {
+	const [domain, key, extra] = stepId.split(":");
+	if (!domain || !key || extra !== undefined || !Object.hasOwn(setupCopy.headquarters.stepTeaching, domain)) return null;
+	const known = domain as HeadquartersDomain;
+	const isChannel = known === "onboarding" && channelKeyOf(key) !== null;
+	const isArcadeEnable = known === "arcadeControl" && key === ARCADE_ENABLE_KEY;
+	return isChannel || isArcadeEnable || Object.hasOwn(setupCopy.headquarters.stepTeaching[known], key) ? { domain: known, key } : null;
+}
+
 /** The slots buildCards reads off the row, and the steps an admin moved past. */
 export type TutorialRow = Partial<Record<TutorialChannelField, string | null>> & {
 	setupStepsSkipped?: readonly string[] | null;
 };
 
-/** One kept card: the slot it builds (which keys its stored message id), its title and its message. */
-export interface TutorialCard {
-	field: TutorialChannelField;
+/** One kept card: the key its stored message id sits under, its title and its message. */
+export interface StepCard {
+	key: string;
 	title: string;
-	done: boolean;
 	message: { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] };
 }
 
@@ -167,27 +194,72 @@ export function buildSkipButton(domain: HeadquartersDomain, key: string): Button
 	return new ButtonBuilder().setCustomId(skipCustomId(domain, key)).setLabel(cardCopy.skipButton).setStyle(ButtonStyle.Secondary);
 }
 
+function buildStepCard(key: string, title: string, description: string, buttons: ButtonBuilder[]): StepCard {
+	const embed = new EmbedBuilder().setTitle(title).setDescription(description).setColor(COLORS.ADMIN);
+	const components = buttons.length > 0 ? [new ActionRowBuilder<ButtonBuilder>().addComponents(buttons)] : [];
+	return { key, title, message: { embeds: [embed], components } };
+}
+
+function channelButtons(key: TutorialChannelKey, domain: HeadquartersDomain, progress: StepProgress): ButtonBuilder[] {
+	// A done card's button still works: it answers that the channel is already there.
+	if (progress === "done") {
+		return [
+			new ButtonBuilder().setCustomId(tutorialCustomId(key)).setLabel(copy.doneButton).setStyle(ButtonStyle.Success),
+			new ButtonBuilder().setCustomId(removeCustomId(key)).setLabel(cardCopy.removeButton).setStyle(ButtonStyle.Danger),
+		];
+	}
+	const add = new ButtonBuilder().setCustomId(tutorialCustomId(key)).setLabel(copy.addButton).setStyle(ButtonStyle.Primary);
+	return progress === "open" ? [add, buildSkipButton(domain, key)] : [add];
+}
+
+function channelLine(channelId: string | null, progress: StepProgress): string {
+	if (channelId) return copy.doneLine(channelId);
+	return progress === "skipped" ? cardCopy.skippedLine : copy.pendingLine;
+}
+
+function channelCard(step: SetupStep, domain: HeadquartersDomain, row: TutorialRow | null, skipped: readonly string[]): StepCard {
+	const key = step.key as TutorialChannelKey;
+	const channelId = row?.[TUTORIAL_CHANNELS[key]] ?? null;
+	const progress = progressOf(step, domain, skipped);
+	return buildStepCard(cardKeyOf(step, domain), step.label, `${step.teaching}\n\n${channelLine(channelId, progress)}`, channelButtons(key, domain, progress));
+}
+
+// A needsContinue step has nothing to skip: it only waits to be seen, so its one extra
+// button is Continue, which is the action here and takes the blue. Gating has no flow to
+// open, so a pressed Continue leaves it no button at all.
+function continueButtons(step: SetupStep, domain: HeadquartersDomain, pressed: boolean): ButtonBuilder[] {
+	const open = step.customId ? [new ButtonBuilder().setCustomId(step.customId).setLabel(cardCopy.openButton).setStyle(ButtonStyle.Secondary)] : [];
+	if (pressed) return open;
+	return [...open, new ButtonBuilder().setCustomId(skipCustomId(domain, step.key)).setLabel(cardCopy.continueButton).setStyle(ButtonStyle.Primary)];
+}
+
+function flowButtons(step: SetupStep, domain: HeadquartersDomain, progress: StepProgress): ButtonBuilder[] {
+	if (!step.customId) return [];
+	const open = new ButtonBuilder().setCustomId(step.customId).setLabel(cardCopy.openButton);
+	if (progress === "open") return [open.setStyle(ButtonStyle.Primary), buildSkipButton(domain, step.key)];
+	return [open.setStyle(ButtonStyle.Secondary)];
+}
+
+function flowCard(step: SetupStep, domain: HeadquartersDomain, skipped: readonly string[]): StepCard {
+	const listed = skipped.includes(stepIdOf(domain, step.key));
+	const key = cardKeyOf(step, domain);
+	if (step.needsContinue) {
+		const description = listed ? `${step.teaching}\n\n${cardCopy.continuedLine}` : step.teaching;
+		return buildStepCard(key, step.label, description, continueButtons(step, domain, listed));
+	}
+	const progress = progressOf(step, domain, skipped);
+	const description = progress === "skipped" ? `${step.teaching}\n\n${cardCopy.skippedLine}` : step.teaching;
+	return buildStepCard(key, step.label, description, flowButtons(step, domain, progress));
+}
+
 /**
- * Every tutorial card as the row stands. The title never carries the mark, because the
- * keeper finds a card whose id was lost by its title, and a title that changed with the
- * mark would post a second card the moment a channel was built.
+ * The one builder of a step card, channel or flow, as the row stands. A title never carries
+ * the mark, because the keeper finds a card whose id was lost by its title, and a title that
+ * changed with the mark would post a second card the moment a step moved.
  */
-export function buildCards(stored: TutorialRow | null, pack: IPluginCopy): TutorialCard[] {
-	return (Object.keys(TUTORIAL_CHANNELS) as TutorialChannelKey[]).map((key) => {
-		const field = TUTORIAL_CHANNELS[key];
-		const channelId = stored?.[field] ?? null;
-		const teaching = pack.channelContent.tutorial[key];
-		const embed = new EmbedBuilder()
-			.setTitle(teaching.title)
-			.setDescription(`${teaching.body}\n\n${channelId ? copy.doneLine(channelId) : copy.pendingLine}`)
-			.setColor(COLORS.ADMIN);
-		// A done card's button still works: it answers that the channel is already there.
-		const button = new ButtonBuilder()
-			.setCustomId(tutorialCustomId(key))
-			.setLabel(channelId ? copy.doneButton : copy.addButton)
-			.setStyle(channelId ? ButtonStyle.Success : ButtonStyle.Primary);
-		return { field, title: teaching.title, done: Boolean(channelId), message: { embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(button)] } };
-	});
+export function buildCards(steps: readonly SetupStep[], domain: HeadquartersDomain, row: TutorialRow | null): StepCard[] {
+	const skipped = row?.setupStepsSkipped ?? [];
+	return steps.map((step) => (step.kind === "channel" ? channelCard(step, domain, row, skipped) : flowCard(step, domain, skipped)));
 }
 
 // ── the button ───────────────────────────────────────────────────────────────

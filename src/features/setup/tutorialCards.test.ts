@@ -22,14 +22,37 @@ vi.mock("@utils/answerInChannel.js", () => ({ beginChannelAnswer: mocks.beginCha
 vi.mock("@utils/textModal.js", () => ({ showNotice: mocks.showNotice }));
 vi.mock("./onDemandChannel.js", () => ({ ensureOnDemandChannel: mocks.ensureOnDemandChannel }));
 
-import { TUTORIAL_CHANNELS, buildCards, cardKeyOf, handleAddChannel, isResolved, progressOf, revealedSteps, stepIdOf, tutorialCustomId, tutorialKeyOf } from "./tutorialCards.js";
+import {
+	TUTORIAL_CHANNELS,
+	buildCards,
+	cardKeyOf,
+	channelSteps,
+	handleAddChannel,
+	isResolved,
+	parseStepId,
+	progressOf,
+	revealedSteps,
+	removeCustomId,
+	skipCustomId,
+	stepIdOf,
+	tutorialCustomId,
+	tutorialKeyOf,
+	type TutorialRow,
+} from "./tutorialCards.js";
 import type { SetupStep } from "./headquartersCards.js";
+import { setupCopy } from "./setupCopy.js";
+import type { IPluginCopy } from "@base/copy/types.js";
 
 const GUILD_ID = "g1";
 // The en dash and the em dash, built from their code points so this file carries neither.
 const LONG_DASHES = new RegExp(`[${String.fromCharCode(0x2013, 0x2014)}]`);
 
 const interaction = (): ButtonInteraction => ({ guild: { id: GUILD_ID }, user: { id: "u-admin" } }) as unknown as ButtonInteraction;
+
+const cardCopy = setupCopy.headquarters.stepCards;
+const channelCards = (row: TutorialRow | null, pack: IPluginCopy = rokCommanderCopy) => buildCards(channelSteps(row, pack), "onboarding", row);
+const buttonsOf = (card: { message: { components: Array<{ toJSON(): { components: unknown[] } }> } }) =>
+	card.message.components.flatMap((row) => row.toJSON().components as Array<{ custom_id: string; label: string; style: number }>);
 
 beforeEach(() => {
 	mocks.findByGuildId.mockReset().mockResolvedValue({ guildId: GUILD_ID, introChannelId: null });
@@ -43,7 +66,7 @@ beforeEach(() => {
 describe("the cards", () => {
 	it("are the ten owner approved channels, in card order", () => {
 		expect(Object.keys(TUTORIAL_CHANNELS)).toEqual(["intro", "announcements", "schedule", "welcome", "rules", "commands", "meetingVoice", "commandOutput", "leaderboard", "nextDecree"]);
-		expect(buildCards(null, rokCommanderCopy).map((card) => card.field)).toEqual([
+		expect(channelCards(null).map((card) => card.key)).toEqual([
 			"introChannelId",
 			"announcementsChannelId",
 			"scheduleChannelId",
@@ -57,36 +80,51 @@ describe("the cards", () => {
 		]);
 	});
 
-	it("render pending, with an Add this channel button, while the slot is empty", () => {
-		const card = buildCards({ introChannelId: null }, rokCommanderCopy)[0]!;
-		const button = card.message.components[0]!.toJSON().components[0] as { custom_id: string; label: string; style: number };
-		expect(card.done).toBe(false);
+	it("render an open channel with Add this channel and Skip while the slot is empty", () => {
+		const card = channelCards({ introChannelId: null })[0]!;
 		expect(card.message.embeds[0]!.data.description).toContain("Not built yet");
-		expect(button).toMatchObject({ custom_id: "hqstep:onboarding:tutorial-intro", label: "Add this channel", style: ButtonStyle.Primary });
+		expect(buttonsOf(card)).toMatchObject([
+			{ custom_id: "hqstep:onboarding:tutorial-intro", label: "Add this channel", style: ButtonStyle.Primary },
+			{ custom_id: "hqstep:onboarding:skip-intro", label: "Skip", style: ButtonStyle.Secondary },
+		]);
 	});
 
-	it("render done, naming the channel, once the slot holds an id", () => {
-		const card = buildCards({ introChannelId: "c-intro" }, rokCommanderCopy)[0]!;
-		const button = card.message.components[0]!.toJSON().components[0] as { label: string; style: number };
-		expect(card.done).toBe(true);
+	it("render a skipped channel with its skipped line and Add this channel alone", () => {
+		const card = channelCards({ setupStepsSkipped: ["onboarding:intro"] })[0]!;
+		expect(card.message.embeds[0]!.data.description).toContain(cardCopy.skippedLine);
+		expect(card.message.embeds[0]!.data.description).not.toContain("Not built yet");
+		expect(buttonsOf(card)).toMatchObject([{ custom_id: "hqstep:onboarding:tutorial-intro", label: "Add this channel", style: ButtonStyle.Primary }]);
+	});
+
+	it("render a done channel naming the channel, with Channel ready and Remove", () => {
+		const card = channelCards({ introChannelId: "c-intro" })[0]!;
 		expect(card.message.embeds[0]!.data.description).toContain("<#c-intro>");
-		expect(button).toMatchObject({ label: "Channel ready", style: ButtonStyle.Success });
+		expect(buttonsOf(card)).toMatchObject([
+			{ custom_id: "hqstep:onboarding:tutorial-intro", label: "Channel ready", style: ButtonStyle.Success },
+			{ custom_id: "hqstep:onboarding:remove-intro", label: "Remove", style: ButtonStyle.Danger },
+		]);
+	});
+
+	it("let done beat skipped, so a channel added after its Skip reads ready", () => {
+		const card = channelCards({ introChannelId: "c-intro", setupStepsSkipped: ["onboarding:intro"] })[0]!;
+		expect(card.message.embeds[0]!.data.description).not.toContain(cardCopy.skippedLine);
+		expect(buttonsOf(card).map((button) => button.label)).toEqual(["Channel ready", "Remove"]);
 	});
 
 	it("keep the same title done or pending, so a card whose id was lost is found again", () => {
-		const pending = buildCards(null, rokCommanderCopy).map((card) => card.title);
-		const done = buildCards(Object.fromEntries(Object.values(TUTORIAL_CHANNELS).map((field) => [field, "x"])), rokCommanderCopy).map((card) => card.title);
+		const pending = channelCards(null).map((card) => card.title);
+		const done = channelCards(Object.fromEntries(Object.values(TUTORIAL_CHANNELS).map((field) => [field, "x"]))).map((card) => card.title);
 		expect(done).toEqual(pending);
 	});
 
 	it("teach from the guild's pack, both packs carrying every card", () => {
 		for (const pack of [rokCommanderCopy, generalEventsCopy]) {
-			for (const card of buildCards(null, pack)) {
+			for (const card of channelCards(null, pack)) {
 				expect(card.title.length).toBeGreaterThan(0);
 				expect(card.message.embeds[0]!.data.description!.length).toBeGreaterThan(80);
 			}
 		}
-		expect(buildCards(null, generalEventsCopy)[0]!.message.embeds[0]!.data.description).toContain("Where newcomers say hello");
+		expect(channelCards(null, generalEventsCopy)[0]!.message.embeds[0]!.data.description).toContain("Where newcomers say hello");
 	});
 
 	it("carry no em or en dash in any teaching paragraph", () => {
@@ -180,6 +218,87 @@ describe("revealedSteps", () => {
 	});
 });
 
+describe("a flow card", () => {
+	const card = (step: SetupStep, skipped: string[] = []) => buildCards([step], "serverConfig", { setupStepsSkipped: skipped })[0]!;
+	const labelled = (built: ReturnType<typeof card>) => buttonsOf(built).map((button) => [button.label, button.style]);
+
+	it("stores under <domain>-<key>, titled by its label, teaching its step", () => {
+		const built = card(flow("timezone", { label: "The server's timezone" }));
+		expect(built.key).toBe("serverConfig-timezone");
+		expect(built.title).toBe("The server's timezone");
+		expect(built.message.embeds[0]!.data.description).toBe("teaches");
+	});
+
+	it("reads open with Open and Skip, Open carrying the step's own customId", () => {
+		const built = card(flow("timezone"));
+		expect(labelled(built)).toEqual([
+			["Open", ButtonStyle.Primary],
+			["Skip", ButtonStyle.Secondary],
+		]);
+		expect(buttonsOf(built).map((button) => button.custom_id)).toEqual(["c-timezone", "hqstep:serverConfig:skip-timezone"]);
+	});
+
+	it("reads skipped with its line and Open alone", () => {
+		const built = card(flow("timezone"), ["serverConfig:timezone"]);
+		expect(built.message.embeds[0]!.data.description).toContain(cardCopy.skippedLine);
+		expect(buttonsOf(built).map((button) => button.label)).toEqual(["Open"]);
+	});
+
+	it("reads done with Open alone and no line", () => {
+		const built = card(flow("timezone", { done: true }));
+		expect(built.message.embeds[0]!.data.description).toBe("teaches");
+		expect(buttonsOf(built).map((button) => button.label)).toEqual(["Open"]);
+	});
+
+	it("offers Continue where a step needs one, never Skip, whether or not it reads done", () => {
+		for (const done of [true, false]) {
+			const built = card(flow("template", { needsContinue: true, done }));
+			expect(built.message.embeds[0]!.data.description).toBe("teaches");
+			expect(labelled(built)).toEqual([
+				["Open", ButtonStyle.Secondary],
+				["Continue", ButtonStyle.Primary],
+			]);
+			expect(buttonsOf(built)[1]!.custom_id).toBe("hqstep:serverConfig:skip-template");
+		}
+	});
+
+	it("keeps Open once Continue is pressed, with the noted line and never the skipped one", () => {
+		const built = card(flow("template", { needsContinue: true }), ["serverConfig:template"]);
+		expect(built.message.embeds[0]!.data.description).toContain(cardCopy.continuedLine);
+		expect(built.message.embeds[0]!.data.description).not.toContain(cardCopy.skippedLine);
+		expect(buttonsOf(built).map((button) => button.label)).toEqual(["Open"]);
+	});
+
+	it("shows gating, which has no flow to open, Continue alone and then nothing", () => {
+		const gating = flow("gating", { needsContinue: true, customId: null });
+		expect(buildCards([gating], "onboarding", {})[0]!.message.components[0]!.toJSON().components).toHaveLength(1);
+		const pressed = buildCards([gating], "onboarding", { setupStepsSkipped: ["onboarding:gating"] })[0]!;
+		expect(pressed.message.components).toEqual([]);
+		expect(pressed.message.embeds[0]!.data.description).toContain(cardCopy.continuedLine);
+	});
+
+	it("never carries its mark in its title, read or skipped", () => {
+		const open = card(flow("timezone", { label: "Label" }));
+		const skipped = card(flow("timezone", { label: "Label" }), ["serverConfig:timezone"]);
+		expect(skipped.title).toBe(open.title);
+	});
+});
+
+describe("parseStepId", () => {
+	it("knows every channel and flow step, and the arcade's enable step", () => {
+		expect(parseStepId("onboarding:intro")).toEqual({ domain: "onboarding", key: "intro" });
+		expect(parseStepId("onboarding:gating")).toEqual({ domain: "onboarding", key: "gating" });
+		expect(parseStepId("arcadeControl:enable")).toEqual({ domain: "arcadeControl", key: "enable" });
+		expect(parseStepId("serverConfig:rename")).toEqual({ domain: "serverConfig", key: "rename" });
+	});
+
+	it("refuses a domain or a key no step carries, a channel key on another domain, and a prototype word", () => {
+		for (const id of ["onboarding:nope", "arcade:chips", "deroConfig:intro", "serverConfig:enable", "onboarding:toString", "constructor:intro", "onboarding", "onboarding:intro:extra"]) {
+			expect(parseStepId(id), id).toBeNull();
+		}
+	});
+});
+
 describe("the customIds", () => {
 	it("round trip through tutorialKeyOf", () => {
 		for (const key of Object.keys(TUTORIAL_CHANNELS) as Array<keyof typeof TUTORIAL_CHANNELS>) {
@@ -187,6 +306,11 @@ describe("the customIds", () => {
 		}
 		expect(tutorialKeyOf("tutorial-arcade")).toBeNull();
 		expect(tutorialKeyOf("1")).toBeNull();
+	});
+
+	it("name Skip by domain and step, and Remove by channel, within Discord's 100 characters", () => {
+		expect(skipCustomId("serverConfig", "kvkSeason")).toBe("hqstep:serverConfig:skip-kvkSeason");
+		expect(removeCustomId("nextDecree")).toBe("hqstep:onboarding:remove-nextDecree");
 	});
 });
 
