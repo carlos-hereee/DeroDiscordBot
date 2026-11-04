@@ -15,8 +15,8 @@ import { demolishChannels } from "./selfDestruct.js";
 // Who:   tutorialCards.handleRemove, once an admin confirmed. That press owns the prompt, the
 //        log line and the redraw, so nothing here posts.
 // Where: the delete is selfDestruct.demolishChannels, the one channel delete, and the way
-//        back is the card's Add this channel through ensureOnDemandChannel, whose explicit
-//        request outranks userRemovedChannels and re-adopts a server's own channel.
+//        back is the card's Add this channel, whose explicit request outranks
+//        userRemovedChannels and re-adopts a server's own channel.
 // How:   one Remove at a time per guild, so two prompts cannot both read one slot, and the
 //        opt out is written before any delete, or ChannelDeleteWatcher could read the old
 //        row and rebuild the channel it just saw go.

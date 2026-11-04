@@ -11,20 +11,19 @@ import { createGuildQueue } from "@utils/guildQueue.js";
 // ── onDemandChannel ─────────────────────────────────────────────────────────
 // What:  the one way a 🪧 NOTICE BOARD channel is built after install (2026-11 item 285
 //        Phase 3). A Headquarters only install has no notice board; each of its channels
-//        is built the first time something needs it, and the notice board category with
-//        the first one. ensureOnDemandChannel hands back the live channel, building it
-//        (and the category) only when the slot is empty.
-// Who:   the onboarding tutorial cards (tutorialCards.ts, an admin's Add this channel)
-//        and the features that post into a notice board channel: the levels board on a
-//        level up, the upcoming events board, the Edit rules save and a member answer in
-//        💬dero-commands.
+//        is built when an admin asks for it, and the notice board category with the first
+//        one. ensureOnDemandChannel hands back the live channel, building it (and the
+//        category) only when the slot is empty.
+// Who:   the onboarding step cards alone (tutorialCards.ts, an admin's Add this channel).
+//        Nothing builds unasked: a level up, a decree and a member answer leave an empty
+//        slot empty (2026-11 item 289).
 // Where: it builds nothing itself. The category comes from GuildSetupManager's managed
 //        category helpers (found by stored id, then adopted by name, then created), and
 //        the channel from repairOneChannel, the same primitive the boot sweep and the
 //        delete watcher use, so an on demand channel gets the same overwrites, the same
 //        adoption of the server's own welcome or rules channel, the same intro post and
 //        the same stored ids as a repaired one.
-// How:   calls for one guild run one after another (a per guild queue), so two features
+// How:   calls for one guild run one after another (a per guild queue), so two presses
 //        asking for the same slot at once build it once and both get the same channel.
 //        The first notice board write is also conditional on categoryId still being null
 //        (guildConfigStore.claimEmptySlot), so even a second process cannot store a
@@ -47,10 +46,10 @@ export type OnDemandField =
 
 /** Options for one call. */
 export interface EnsureOptions {
-	// An admin asked for this channel by name (a tutorial card's button). It then outranks
-	// an earlier removal of the same slot, which a feature's own trigger never does.
+	// An admin asked for this channel by name (a step card's button). It then outranks an
+	// earlier removal of the same slot, which any other call never does.
 	explicitRequest?: boolean;
-	// Who asked, for the admin log line; a feature's trigger is logged as Dero.
+	// Who asked, for the admin log line; a call that names nobody is logged as Dero.
 	actorUserId?: string | null;
 }
 
@@ -116,7 +115,7 @@ async function ensureNow(guild: Guild, configField: OnDemandField, options: Ensu
 		const live = await guild.channels.fetch(storedId).catch(() => null);
 		if (live instanceof TextChannel || live instanceof VoiceChannel) return live;
 		// The channel was deleted. The boot sweep and the delete watcher rebuild it unless
-		// auto heal is off, and a feature's trigger must not overrule that switch.
+		// auto heal is off, and this build must not overrule that switch.
 		if (row.autoHealEnabled === false) return null;
 	}
 

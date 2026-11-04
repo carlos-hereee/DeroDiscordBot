@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TextChannel } from "discord.js";
 import type { Client } from "discord.js";
 
-// ── the upcoming events channel, built when a decree is due (2026-11 item 285 Phase 3) ──
-// A Headquarters only server has no upcoming events channel. refreshNextUp builds it
-// through onDemandChannel only once an event has an occurrence inside the 24 hour
-// horizon, before it reads the channel; a server with nothing due builds nothing.
+// ── no decree builds a channel (2026-11 item 289) ──
+// A server with no upcoming events channel stays without one until an admin adds it from its
+// step card, however close a decree is. The onDemandChannel fake stays here to fail these tests
+// if a build ever comes back.
 
 const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
@@ -44,7 +44,7 @@ const eventAt = (firstOccurrence: Date, overrides: Partial<IGameEvent> = {}): IG
 function harness(): { client: Client; send: ReturnType<typeof vi.fn>; fetchChannel: ReturnType<typeof vi.fn> } {
 	const send = vi.fn(async () => ({ id: "decree" }));
 	const channel = Object.create(TextChannel.prototype) as TextChannel;
-	Object.assign(channel, { id: "ch-built", send, messages: { fetch: vi.fn().mockResolvedValue(new Map()) } });
+	Object.assign(channel, { id: "ch-stored", send, messages: { fetch: vi.fn().mockResolvedValue(new Map()) } });
 	const fetchChannel = vi.fn(async () => channel);
 	const client = { channels: { fetch: fetchChannel }, guilds: { cache: new Map([["guild-1", guild]]) } } as unknown as Client;
 	return { client, send, fetchChannel };
@@ -55,8 +55,9 @@ beforeEach(() => {
 	vi.setSystemTime(NOW);
 	_resetNextUpDedupForTest();
 	mocks.findByGuildId.mockReset().mockResolvedValue({ nextDecreeChannelId: null });
+	// Six hours out, well inside the 24 hour horizon.
 	mocks.findEvents.mockReset().mockResolvedValue([eventAt(new Date("2030-01-01T06:00:00Z"))]);
-	mocks.ensureOnDemandChannel.mockReset().mockResolvedValue({ id: "ch-built" });
+	mocks.ensureOnDemandChannel.mockReset();
 });
 
 afterEach(() => {
@@ -64,40 +65,26 @@ afterEach(() => {
 });
 
 describe("refreshNextUp on a server with no upcoming events channel", () => {
-	it("builds the channel when a decree is due, before reading it, and posts the decree there", async () => {
+	it("builds nothing and posts nothing, even with a decree due", async () => {
 		const { client, send, fetchChannel } = harness();
+
 		await refreshNextUp(client, "guild-1");
 
-		expect(mocks.ensureOnDemandChannel).toHaveBeenCalledWith(guild, "nextDecreeChannelId");
-		expect(mocks.ensureOnDemandChannel.mock.invocationCallOrder[0]!).toBeLessThan(fetchChannel.mock.invocationCallOrder[0]!);
-		expect(fetchChannel).toHaveBeenCalledWith("ch-built");
+		expect(mocks.ensureOnDemandChannel).not.toHaveBeenCalled();
+		expect(fetchChannel).not.toHaveBeenCalled();
+		expect(send).not.toHaveBeenCalled();
+	});
+});
+
+describe("refreshNextUp on a server with one", () => {
+	it("posts a due decree there and builds nothing", async () => {
+		mocks.findByGuildId.mockResolvedValue({ nextDecreeChannelId: "ch-stored" });
+		const { client, send, fetchChannel } = harness();
+
+		await refreshNextUp(client, "guild-1");
+
+		expect(fetchChannel).toHaveBeenCalledWith("ch-stored");
 		expect(send).toHaveBeenCalledTimes(1);
-	});
-
-	it("builds nothing when no event falls inside the next 24 hours", async () => {
-		mocks.findEvents.mockResolvedValue([eventAt(new Date("2030-01-03T06:00:00Z"))]);
-		const { client, fetchChannel } = harness();
-		await refreshNextUp(client, "guild-1");
-		expect(mocks.ensureOnDemandChannel).not.toHaveBeenCalled();
-		expect(fetchChannel).not.toHaveBeenCalled();
-	});
-
-	it("builds nothing for a paused event", async () => {
-		mocks.findEvents.mockResolvedValue([eventAt(new Date("2030-01-01T06:00:00Z"), { paused: true } as Partial<IGameEvent>)]);
-		await refreshNextUp(harness().client, "guild-1");
-		expect(mocks.ensureOnDemandChannel).not.toHaveBeenCalled();
-	});
-
-	it("stops quietly when nothing could be built", async () => {
-		mocks.ensureOnDemandChannel.mockResolvedValue(null);
-		const { client, fetchChannel } = harness();
-		await refreshNextUp(client, "guild-1");
-		expect(fetchChannel).not.toHaveBeenCalled();
-	});
-
-	it("never builds once the channel is stored", async () => {
-		mocks.findByGuildId.mockResolvedValue({ nextDecreeChannelId: "ch-built" });
-		await refreshNextUp(harness().client, "guild-1");
 		expect(mocks.ensureOnDemandChannel).not.toHaveBeenCalled();
 	});
 });

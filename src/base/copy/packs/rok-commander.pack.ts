@@ -1046,8 +1046,8 @@ export const rokCommanderCopy = {
 		},
 
 		// ── the notice board tutorial cards (2026-11 item 285 Phase 3) ──
-		// One card per notice board channel an admin builds by hand, posted beneath the
-		// chart in 🧭onboarding (features/setup/tutorialCards.ts). Admins read them, so the
+		// One card per notice board channel an admin builds by hand, posted in 🧭onboarding
+		// (features/setup/tutorialCards.ts). Admins read them, so the
 		// voice stays light; each body teaches what the channel is for in one paragraph.
 		tutorial: {
 			intro: {

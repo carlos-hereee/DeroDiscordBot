@@ -303,26 +303,9 @@ async function readConfig(interaction: RepliableInteraction): Promise<AnswerChan
 async function resolveAnswerChannel(interaction: RepliableInteraction, audience: AnswerAudience, config: AnswerChannelConfig | null | undefined): Promise<SendableChannels | null> {
 	if ((interaction as unknown as Record<symbol, unknown>)[RECORDS_ANSWERS] === true) return null;
 	const channelId = audience === "here" ? interaction.channelId : answerChannelId(config, audience);
-	if (!channelId) {
-		if (audience === "member") buildMemberChannelLater(interaction);
-		return null;
-	}
+	if (!channelId) return null;
 	const channel = await settle(() => interaction.client.channels.fetch(channelId), `fetching channel ${channelId}`, interaction.id);
 	return channel?.isSendable() ? channel : null;
-}
-
-// On demand (2026-11 item 285 Phase 3): a Headquarters only server has no 💬dero-commands
-// until a member answer needs it, so the first such answer starts the build and is itself
-// answered privately: a first build (category, channel, intro) cannot fit in the three
-// second window this resolution runs inside, and every later answer finds the channel.
-// The import is lazy so this util keeps no static edge into a feature module, whose own
-// imports reach back here. Fire and forget, like every side effect after an answer.
-function buildMemberChannelLater(interaction: RepliableInteraction): void {
-	const guild = interaction.guild;
-	if (!guild) return;
-	void import("@features/setup/onDemandChannel.js")
-		.then(({ ensureOnDemandChannel }) => ensureOnDemandChannel(guild, "commandOutputChannelId"))
-		.catch((error: unknown) => console.warn(`[answer-in-channel] building 💬dero-commands in guild ${guild.id} on demand failed`, error));
 }
 
 async function postInChannel(interaction: RepliableInteraction, channel: SendableChannels, answer: ChannelAnswer): Promise<Message | null> {
