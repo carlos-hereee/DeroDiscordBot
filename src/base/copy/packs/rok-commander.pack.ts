@@ -1341,72 +1341,35 @@ export const rokCommanderCopy = {
 	//        which fails silently and no test catches. Diff the two blocks when
 	//        you are done; identical is the invariant, not a coincidence.
 	featureAnnouncement: {
-		// ── release 2.0.0 ── leveling, the arcade, Dero's voice, network play, onboarding ──
-		// Owner decision 2026-10-24: the release prepared as 1.7.0 ships as 2.0.0, a
-		// major version, because Dero's voice, its new look, the arcade, server against
-		// server rankings and Community Onboarding (2026-10 item 247) land together, and
-		// the seventeen retired command names break anything that typed them. The public
-		// block's title is THE VERSE AWAKENS (2026-10 item 257, owner item 17, which
-		// retired the borrowed evolution line and its opening sentence); the version number itself rides the
-		// " (v2.0.0)" suffix postFeatureAnnouncement appends to each title.
+		// ── release 2.0.1 ── setup one card at a time, form and arcade fixes, new board art ──
+		// A patch still posts: postFeatureAnnouncement keys on the exact version, so
+		// this block goes to every set up guild once at any bump. It is rewritten for
+		// each release, because leaving the last one here reposts that whole
+		// announcement (2.0.0's is in git and the CHANGELOG). Keep it short and to
+		// what changed since the last release.
 		//
-		// The first announcement since 1.6.1, so it carries everything this
-		// release adds: leveling (production never had its announcement), the
-		// arcade with a room per match, and Dero's voice. Public is Dero's kingdom
-		// voice post to members; inner sanctum tells admins what is already
-		// running in their server, what stays off until they turn it on, and how
-		// to switch each one off. The renown paragraph lists levels 2, 3, 5, 7
-		// and 11 and refuses to explain them, the same shape as the hidden prime
-		// mover achievement: the discovery is the reward, so spelling it out
-		// would spend it.
+		// The public block calls the game "the long board game" and names only
+		// `/mini-game`, because 2026-11 item 293 renames Monopoly and is not built, so
+		// neither the old name nor the new one is safe in a post nobody can take back.
 		//
-		// Monopoly gets its own lines in both arcade paragraphs because it is the
-		// one game that runs for days; its voice referee sits in both voice
-		// paragraphs because it only speaks where voice is switched on and a
-		// member already brought Dero into the call.
-		//
-		// The drawn cards of 2026-10 item 243 get one paragraph in each embed. The
-		// admin one says every card falls back to its text, and states the weekly
-		// digest DM's real limits (BOT_CONSTANTS.LEVELING.WEEKLY_DIGEST_*, and no DM
-		// where announcements are off), so an admin is never surprised by a DM.
-		//
-		// The 1.7.0 test fixes (2026-10 item 245) are folded in where each belongs,
-		// every number read off BOT_CONSTANTS by hand and pinned by the test: the
-		// 1 XP message and reaction with the 50 a day cap, the 🕹️games channel and
-		// its solo games against Dero, the ten hangman shelves, rematch in the same
-		// room, the 30 minute idle close, Hold'em's 3 minute clock and Leave table,
-		// George as the ready voice, the merged commands and their buttons, and
-		// /rating. A number changed in BOT_CONSTANTS is a sentence to change here.
-		//
-		// 2026-10 item 244's network play rides this release too (owner decision 2026-10-24,
-		// Phase 5d): reach modes, host controls and network tables get a paragraph in
-		// each embed. The member paragraph names what crosses servers exactly as the
-		// network notice does (arcadeNetwork.consent.body), so the two never promise
-		// different things. Item 247 gets a paragraph in each embed as well (👋welcome,
-		// 📘rules, Enable Community and Configure Onboarding), and the admin one says
-		// earlier members may need to retake Onboarding. Both embeds now sit within
-		// a few characters of Discord's 4096 limit (the public one at 4093), so any new words here need a
-		// cut elsewhere.
-		//
-		// Voice ships OFF in every guild, so the public block promises it only
-		// where the keepers switch it on. Owner decision 2026-10-21: release copy
-		// stays professional and never says where Dero's brain runs or when it is
-		// offline. It also never promises always on voice (2026-10 item 216, risk
-		// R9); featureAnnouncement.test.ts holds the copy to both.
+		// Release copy stays professional and never says where Dero's brain runs or
+		// when it is offline, and it never promises always on voice (owner decision
+		// 2026-10-21, 2026-10 item 216 risk R9); featureAnnouncement.test.ts holds the
+		// copy to both.
 		//
 		// ⚠️ BOTH PACKS CARRY THIS BLOCK VERBATIM (owner decision 2026-07-04,
 		// reaffirmed 2026-08-11). featureAnnouncement.test.ts fails when the two
 		// drift, when a description passes Discord's 4096 character embed limit,
 		// or when a long dash slips in.
 		public: {
-			title: "⚔️ THE VERSE AWAKENS",
+			title: "⚔️ A NEW BOARD IN THE ARCADE",
 			description:
-				"Warriors.\n\nA new look, a voice, a whole arcade, realm against realm rankings and a proper welcome for newcomers.\n\n**Renown.** The realm now keeps score. Speak in the halls, answer a comrade with a reaction, sit in an approved war room, or play a game, and you earn renown. A message or a reaction earns 1, and messages, reactions and quick games against me earn at most 50 a day, counted from midnight Central. Gather enough and you rise a level. I announce it here without pinging a soul. A secret, since you would find it anyway: level 2, level 3, level 5, level 7, level 11. Look at those numbers until you see it.\n`/account` shows your level, rank and record, `/account view:levels` who is most present, and `/account view:achievements` your honors; the buttons in #command-center show yours to you alone.\n\n**The arcade.** A new 🕹️games channel holds every game. Flip a coin, roll a die or throw rock paper scissors against me on the spot: 3 renown for a win, 1 for anything else. Hang a word alone from one of ten shelves, each word with its hint, or start a challenge for a rival. Each match gets a room of its own in the arcade, and a hangman host writes the word or lets me draw one. When a match ends, **Rematch** starts the next one in the same room. A room left 30 minutes without a move is closed, Monopoly and hangman aside. Blackjack is dealt right where you ask for it with `/mini-game blackjack`. Every move goes into the match's record.\nAt Hold'em each decision has 3 minutes on a live clock, the next hand deals itself, two timeouts in a row sit you out until you press I'm back, and **Leave table** gives up your seat and its chips whenever you choose.\nAnd **Monopoly** has arrived, for two to six, on a board of my own. You know the rules. Start a match from 🕹️games or with `/mini-game monopoly`, and settle in: a good one runs for days. `/rating` shows where you stand in Hold'em, Battleship, Monopoly and Blackjack.\n\n**Realm against realm.** Where your keepers open it, a Hold'em table can seat warriors from other servers, each playing from a channel in their own. First I tell you what crosses (your name, worn server tag, moves and ratings, never your chat) and you choose. `/rating servers` ranks realm against realm by the warriors who wear each tag, and `/rating network leave` deletes your consent and your ratings whenever you wish. A host may also hold a table to a rating band, approve each joiner or remove a player.\n\n**A proper welcome.** 👋welcome and 📘rules now stand in the notice board, and where your keepers set up Discord Onboarding, its last step opens the realm's channels to you.\n\n**Pictures.** Your `/account`, your level ups, the levels board, a fresh honor, a role you earn, every turn of blackjack and Hold'em, the end of a hangman or battleship match, a Monopoly trade, bid or victory, a welcome, a fortune and the challenge card now arrive as painted cards instead of lines of text. And on Mondays I send the most present among you a private card of your week.\n\n**My voice.** Where your keepers switch it on, I can speak. A Listen button on welcomes and on most fortunes reads the post aloud to you alone, or plays it in your voice call when I sit there with you. Members on my task list can give me small tasks with `/dero tell`, bring me into a voice call with `/dero join` or the Join button in 🏛️ Meeting Hall and 🎮 Arcade Lounge, and ask me for a Hold'em table, which I deal myself. When the host of a Monopoly match turns on the voice referee at its challenge card, I call the big moments out loud while I sit in a call with one of its players. In a call I listen only to members on my task list. Their speech goes to ElevenLabs to become text, and I record and keep nothing. Anyone on the task list can send me away with `/dero leave`.\n\nEvery game now pays Dero coins, the first currency of something larger. Trade them for chips in 🏪dero-market.\n\nWant something I do not do yet? Press the Suggestion Box below. I read every one of them, which is more than I can say for most prophecies.\n\nRise well, warriors. The scroll is open.",
+				"Warriors.\n\nA small update, one day after the great one.\n\n**A new board.** The long board game in the arcade has new art and a logo of its own on its challenge card and match opener. Start a match from 🕹️games or with `/mini-game`.\n\n**Your keepers' setup.** Setting me up now goes one step at a time, and the forms that were failing work again.\n\nWant something I do not do yet? Press the Suggestion Box below.\n\nRise well, warriors.",
 		},
 		innerSanctum: {
 			title: "🏛️ THE ORACLE EXPLAINS WHAT CHANGED",
 			description:
-				"Those who hold the reins.\n\nVersion 2.0.0 is a major one. Here is what it does in your server and how to take it in hand.\n\n**Fewer commands, a button for each.** `/events pause` and `/events resume` act on one event, or every event when you name none. `/events stream announce`, `soon` and `weekly` hold the stream tools, `/server` holds auto heal, leaderboard tracking and the leaderboard week, `/events` lists and deletes events, and `/server channels rename` renames a channel I keep. Every admin command also has a button on the guide in your admin channel that opens it with a form and refuses anyone but the owner or an admin. Members get their own buttons in #command-center.\n\n**Leveling is already running.** Messages, reactions, approved voice channels and games earn renown. A message or a reaction pays 1, and messages, reactions and solo games against me pay a member at most 50 a day, reset at midnight Central. I read no message text, only that a message happened, where and by whom. Voice renown is off until you approve a voice channel by name. Nothing I post pings anyone.\n`/leveling settings` sets the cooldowns, the curve, which channels count, role rewards and where level ups post. `/leveling settings toggle enabled:false` turns it all off and keeps every record.\n`/leveling xp` corrects, resets a member or the whole server (it asks first) and exports it all as a file.\nI never hand out a role carrying Administrator or Manage Server, nor one above my own, so keep my role above any reward.\n\n**The arcade is open.** A 🎮 ARCADE GAMES category holds 🕹️games, where every game starts, 📋arcade-rules, ⚔️challenges and a 🎮 Arcade Lounge voice room, and the notice board gains a 🏛️ Meeting Hall voice room. Every match gets its own room under the arcade, seen only by its players unless the host opens it to all. A finished room clears four hours after the match unless its players rematch in it, and a room with no move for 30 minutes closes as abandoned, Monopoly and hangman aside. Hosts can band by rating, approve joiners and remove a player. Hold'em gives each decision 3 minutes, lets any player leave and lets the host end the table. Monopoly matches can run for days, and the host decides at the challenge card whether passed lots go to auction and whether I referee aloud.\n\n**Network play is yours to open.** `/arcade reach` sets challenges to invite only, this server (the default) or the network, where a Hold'em host may seat players from other servers. A player's name, tag, moves and ratings cross only after they accept a notice; chat never does. `/arcade server block` shuts a server out both ways.\n\n**Community and Onboarding.** 👋welcome and 📘rules join the notice board. On the admin guide, Enable Community turns on Discord Community with screening from your rules, and Configure Onboarding ends Onboarding with an answer that grants the member role, which opens my channels. Earlier members may need to retake Onboarding.\n\n**Most posts are now drawn cards**, in my new look, and each falls back to the text you know whenever a picture cannot be drawn. On Mondays at 9 am Central I send up to 25 of the week's most present members a private card of their week, never in a server where level up announcements are off.\n\n**My voice is switched off here**, and nothing listens or speaks until you turn it on. I speak in George's voice from the start, so `/dero-config enable` is the only step. The role, text channel and voice channel lists decide who may give me tasks, where I may post and which calls I may join; the voice room buttons follow them too. A monthly speech budget, $5 by default, is checked before every paid speech call. `/dero-config disable` or `/dero-config cap dollars:0` stops every speech call at once and ends a live call. In a call I hear only members on the task list; their speech goes to ElevenLabs to become text, and I keep no audio and no transcript. The Monopoly voice referee follows all of this: it speaks only into a call someone has already brought me into, and from the same monthly budget.",
+				"Those who hold the reins.\n\nVersion 2.0.1 is a small one, and nearly all of it is about setup.\n\n**One card at a time.** ⚙️dero-config, 🧭onboarding, 🎰arcade-control and 🛠️server-config each show the next step on its own card, and the steps card's buttons jump to any step. The settings chart and the switches appear once a channel's steps are finished, and a server that already has them keeps them.\n\n**Every step can be skipped.** A skipped step says so on its card, and you can come back to it.\n\n**Nothing is built unless you ask.** A level up, an upcoming event or a member's command no longer creates a channel, and a rebuild leaves alone the channels you left out and an arcade you switched off.\n\n**A ready channel can be removed.** A notice board channel's card offers Remove behind a confirm. A channel I built is deleted, and Add this channel brings an empty one back. A channel that was already yours stays with its messages, and I stop using it.\n\n**Fixes.** Button forms with a dropdown save again. Turn the arcade on and `/arcade on` now build the arcade while auto heal is off, and a partly built arcade can be pressed again to finish.\n\n**New art.** The long board game has a new board and a logo of its own.",
 		},
 	},
 
