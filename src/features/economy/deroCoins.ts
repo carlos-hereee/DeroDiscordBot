@@ -153,6 +153,53 @@ export function hasClaimedCoinsToday(userId: string, now: Date): Promise<boolean
 	return deroCoinStore.hasClaim(claimKeyFor(now), userId);
 }
 
+// ── the claim log ──
+// Every coin claim runs ① write the log row, open; ② the coins and a receipt in one wallet write;
+// ③ close the row. The row says a member is owed, and the receipt says they were paid, so a crash
+// at any step is finished by the next press or the next boot and can neither lose the coins
+// nor pay them twice. Game awards keep the plainer insert then credit in payPlayer.
+
+interface LoggedClaim {
+	userId: string;
+	guildId: string;
+	amount: number;
+	claimKey: string;
+	at: Date;
+}
+
+// True when this call paid the claim. A row already there is finished rather than refused
+// when it is still open, which is what lets a press after a failed credit pay.
+async function payLoggedClaim(claim: LoggedClaim): Promise<boolean> {
+	const inserted = await deroCoinStore.insertAward({ ...claim, source: "claim", settled: false });
+	if (inserted) return settleClaim(claim);
+	const logged = await deroCoinStore.findClaim(claim.claimKey, claim.userId);
+	return logged?.settled === false ? settleClaim({ ...claim, amount: logged.amount }) : false;
+}
+
+async function settleClaim(claim: Pick<LoggedClaim, "userId" | "amount" | "claimKey">): Promise<boolean> {
+	const paid = await deroCoinStore.creditClaim(claim.userId, claim.amount, claim.claimKey);
+	// The member has their coins by now, so a failed close must not read as a failed claim. The
+	// receipt keeps the row from paying again, and the boot sweep closes it.
+	await deroCoinStore.settleClaim(claim.claimKey, claim.userId).catch((error: unknown) => console.warn(`[economy] closing coin claim ${claim.claimKey} for ${claim.userId} failed`, error));
+	return paid;
+}
+
+/**
+ * Finish every claim a crash left open, so a member owed coins never has to press again. Called
+ * once at boot from main.ts, because a crash is exactly what ends in a boot. Never throws.
+ */
+export async function settleOpenCoinClaims(): Promise<number> {
+	let paid = 0;
+	try {
+		for (const claim of await deroCoinStore.findOpenClaims()) {
+			if (claim.claimKey && (await settleClaim({ userId: claim.userId, amount: claim.amount, claimKey: claim.claimKey }))) paid += 1;
+		}
+	} catch (error) {
+		console.error("[economy] settling open coin claims at boot failed, the next boot tries again", error);
+	}
+	return paid;
+}
+
 /**
  * Pay the daily claim's coins: DERO_COINS.CLAIM's amount for the round's outcome. Answers
  * the coins paid, 0 when today's claim was already paid or the write failed. Never throws.
@@ -163,17 +210,8 @@ export async function awardForClaim(claim: { guildId: string; userId: string; ou
 	try {
 		// ⚠️ Money invariant: one claim row per member per UTC day, across every server, so
 		// a second Submit of the same day, here or in another server, pays nothing.
-		const inserted = await deroCoinStore.insertAward({
-			userId: claim.userId,
-			guildId: claim.guildId,
-			amount,
-			source: "claim",
-			claimKey: claimKeyFor(claim.now),
-			at: claim.now,
-		});
-		if (!inserted) return 0;
-		await deroCoinStore.credit(claim.userId, amount);
-		return amount;
+		const paid = await payLoggedClaim({ userId: claim.userId, guildId: claim.guildId, amount, claimKey: claimKeyFor(claim.now), at: claim.now });
+		return paid ? amount : 0;
 	} catch (error) {
 		console.error(`[economy] paying the daily claim's Dero coins to ${claim.userId} in guild ${claim.guildId} failed`, error);
 		return 0;
@@ -192,10 +230,8 @@ export async function awardReleaseGift(gift: { guildId: string; userId: string; 
 	const amount = BOT_CONSTANTS.DERO_COINS.RELEASE_GIFTS[gift.giftKey];
 	if (!amount) return { status: "unknown" };
 	try {
-		const inserted = await deroCoinStore.insertAward({ userId: gift.userId, guildId: gift.guildId, amount, source: "claim", claimKey: `release:${gift.giftKey}`, at: gift.now });
-		if (!inserted) return { status: "already" };
-		await deroCoinStore.credit(gift.userId, amount);
-		return { status: "paid", amount };
+		const paid = await payLoggedClaim({ userId: gift.userId, guildId: gift.guildId, amount, claimKey: `release:${gift.giftKey}`, at: gift.now });
+		return paid ? { status: "paid", amount } : { status: "already" };
 	} catch (error) {
 		console.error(`[economy] paying release gift ${gift.giftKey} to ${gift.userId} in guild ${gift.guildId} failed`, error);
 		return { status: "failed" };

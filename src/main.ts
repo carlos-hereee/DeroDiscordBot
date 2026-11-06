@@ -39,6 +39,7 @@ import { registerArcadeHostHandlers } from "@features/games/arcadeHost.js";
 import { registerAgeGateHandlers } from "@features/age-gate/ageGateRules.js";
 import { registerSoloLuckHandlers } from "@features/games/soloLuck.js";
 import { registerClaimRoundHandlers } from "@features/economy/chipClaim.js";
+import { settleOpenCoinClaims } from "@features/economy/deroCoins.js";
 import { registerReleaseGiftHandlers } from "@features/announcements/releaseCoinGift.js";
 import { registerSecretCodeHandlers } from "@features/secret-codes/secretCodeEntry.js";
 import { registerCoinMarketHandlers } from "@features/economy/coinMarketPanel.js";
@@ -273,6 +274,7 @@ process.on("uncaughtException", (err) => {
 	// failure is logged and boot continues, because unmigrated rows are retried next boot.
 	try {
 		await migrateGlobalChipWallets();
+		await settleOpenCoinClaims();
 	} catch (error) {
 		console.error("[economy] the global chip wallet migration failed; it runs again next boot", error);
 	}

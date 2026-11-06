@@ -44,6 +44,10 @@ export interface ICoinAward {
 	// A claim only: the UTC day ("2026-10-28"); rows written before 2026-10 item 267 carry
 	// the day plus the guild.
 	claimKey?: string;
+	// The claim log (2026-11): false on a claim row from the moment it is written until the wallet
+	// has its coins, then true. A row with no value predates the log and counts as settled, so
+	// the boot sweep can never pay an old claim again.
+	settled?: boolean;
 	// A market trade only: its side, and the chips it cost or paid. `amount` stays the
 	// coins moved, positive either way; the side says which way.
 	marketSide?: MarketSide;
@@ -60,6 +64,7 @@ const coinAwardSchema = new mongoose.Schema<ICoinAward>({
 	outcome: { type: String, enum: COIN_AWARD_OUTCOMES },
 	roomId: { type: String },
 	claimKey: { type: String },
+	settled: { type: Boolean },
 	marketSide: { type: String, enum: MARKET_SIDES },
 	chips: { type: Number, min: 0 },
 	at: { type: Date, required: true },
@@ -70,6 +75,8 @@ const coinAwardSchema = new mongoose.Schema<ICoinAward>({
 // index would treat every missing value as the same null and refuse the second member.
 coinAwardSchema.index({ source: 1, roomId: 1, userId: 1 }, { unique: true, partialFilterExpression: { source: "game" } });
 coinAwardSchema.index({ source: 1, claimKey: 1, userId: 1 }, { unique: true, partialFilterExpression: { source: "claim" } });
+// The boot sweep's read of claims a crash left open. Partial, so it stays as small as they are.
+coinAwardSchema.index({ settled: 1 }, { partialFilterExpression: { settled: false } });
 // The solo daily cap's read: one member's game awards since midnight UTC.
 coinAwardSchema.index({ userId: 1, source: 1, at: -1 });
 

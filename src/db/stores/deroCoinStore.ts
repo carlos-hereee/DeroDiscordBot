@@ -1,3 +1,4 @@
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { CoinAward, type CoinAwardSource, type ICoinAward } from "@db/models/CoinAward.js";
 import { DeroCoinWallet, type IDeroCoinWallet } from "@db/models/DeroCoinWallet.js";
 
@@ -33,6 +34,40 @@ export const deroCoinStore = {
 			if (isDuplicateKey(error)) return false;
 			throw error;
 		}
+	},
+
+	/** One member's claim log row for a key, or null. */
+	async findClaim(claimKey: string, userId: string): Promise<ICoinAward | null> {
+		return CoinAward.findOne({ source: "claim", claimKey, userId }).lean<ICoinAward>();
+	},
+
+	/** Every claim log row whose coins may not have reached the wallet. */
+	async findOpenClaims(): Promise<ICoinAward[]> {
+		return CoinAward.find({ source: "claim", settled: false }).lean<ICoinAward[]>();
+	},
+
+	/**
+	 * Pay a claim once: the coins and the receipt in ONE write, creating the wallet on a first
+	 * award. False when this claim was already paid, which surfaces as the upsert colliding
+	 * with the unique index, like the market's reservation.
+	 */
+	async creditClaim(userId: string, amount: number, claimKey: string): Promise<boolean> {
+		try {
+			await DeroCoinWallet.updateOne(
+				{ userId, claimReceipts: { $ne: claimKey } },
+				{ $inc: { balance: amount, totalEarned: amount }, $push: { claimReceipts: { $each: [claimKey], $slice: -BOT_CONSTANTS.DERO_COINS.CLAIM_RECEIPT_CAP } } },
+				{ upsert: true }
+			);
+			return true;
+		} catch (error) {
+			if (isDuplicateKey(error)) return false;
+			throw error;
+		}
+	},
+
+	/** Close a claim log row once the wallet has its coins. */
+	async settleClaim(claimKey: string, userId: string): Promise<void> {
+		await CoinAward.updateOne({ source: "claim", claimKey, userId }, { $set: { settled: true } });
 	},
 
 	/** Add coins to a member's wallet, creating it on their first award. */

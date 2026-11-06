@@ -916,6 +916,10 @@ export const BOT_CONSTANTS = {
 		// not a base times ECONOMY.CLAIM_ROUND_MULTIPLIERS, because no multiplier of 1
 		// rounds to the owner's 2 and 3 (owner decision of 2026-10-28).
 		CLAIM: { lost: 1, tie: 2, won: 3 },
+		// The newest claim receipts a coin wallet keeps. A receipt only guards a claim whose log row
+		// is still open, and the row closes right after the wallet write or at the next boot, so
+		// this outlasts any real gap while one receipt a day never grows a wallet without end.
+		CLAIM_RECEIPT_CAP: 20,
 		// What a release's Claim button pays, once per member across every server, by gift. Owner
 		// decision 2026-11-06: games say sorry for a hotfix with currency. A gift stays listed
 		// after its release, because its button stays on that old post and keeps paying.
