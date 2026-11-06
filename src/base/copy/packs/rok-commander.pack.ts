@@ -367,7 +367,7 @@ export const rokCommanderCopy = {
 		description: (code: string) =>
 			"To bind this server to your dashboard, present this code:\n\n" +
 			`**\`${code}\`**\n\n` +
-			"Open the ROK Commander panel on your Company Uno dashboard at companyuno.com and enter it there.\n\n" +
+			"Enter it in the ROK Commander panel on your app dashboard at companyuno.com, or in the Dero panel on your account dashboard.\n\n" +
 			"The code expires in **15 minutes**. Run `/dero plan` in your server and I will issue a fresh one.",
 	},
 

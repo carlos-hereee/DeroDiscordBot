@@ -284,7 +284,7 @@ export const generalEventsCopy: IPluginCopy = {
 		description: (code: string) =>
 			"Use this code to connect this server to your dashboard:\n\n" +
 			`**\`${code}\`**\n\n` +
-			"Open the plugin panel on your Company Uno dashboard at companyuno.com and paste it in.\n\n" +
+			"Paste it in the Dero panel on your account dashboard at companyuno.com, or in the plugin panel on your app dashboard.\n\n" +
 			"The code expires in **15 minutes**. Run `/dero plan` in this server to get a fresh code.",
 	},
 
