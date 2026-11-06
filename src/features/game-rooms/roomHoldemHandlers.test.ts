@@ -15,6 +15,9 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), recordCarriedMoves: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
+// The age gate (2026-11 item 302) runs inside judgeJoin, which handleBuyIn calls for every
+// press; every case here is a confirmed member unless a case says otherwise.
+vi.mock("@features/age-gate/ageGateRules.js", () => ({ hasConfirmedAge: vi.fn(async () => true), replyWithAgeGate: vi.fn() }));
 
 import {
 	handleBuyIn,

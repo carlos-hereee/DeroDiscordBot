@@ -327,9 +327,9 @@ describe("logMonopolyRendererStatus", () => {
 		const line = String(log.mock.calls[0][0]);
 		expect(line).toContain("image board");
 		expect(line).toContain("monopoly/winner.png");
-		// Every one of the fourteen Monopoly slots is asked about, and nothing else.
+		// Every one of the fifteen Monopoly slots is asked about, and nothing else.
 		const asked = missingMock.mock.calls.find(([keys]) => (keys as GameAssetKey[]).includes("monopolyWinner"))?.[0] as GameAssetKey[];
-		expect(asked).toHaveLength(14);
+		expect(asked).toHaveLength(15);
 		expect(asked.every((key) => key.startsWith("monopoly"))).toBe(true);
 		log.mockRestore();
 	});

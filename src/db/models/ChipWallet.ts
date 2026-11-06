@@ -37,6 +37,9 @@ export interface IChipWallet {
 	// the game's own ledger, written in the same write as the debit. A refund claims its receipt
 	// in the same write as the credit, so a buy in a crash stranded is given back exactly once.
 	openReceipts?: string[];
+	// The global row only: ids of the chip gifts this wallet was paid, written in the same write
+	// as the chips (features/economy/chipGift.ts), so one gift can never pay twice.
+	paidGifts?: string[];
 }
 
 const chipWalletSchema = new mongoose.Schema<IChipWallet>(
@@ -51,6 +54,7 @@ const chipWalletSchema = new mongoose.Schema<IChipWallet>(
 		vaultDayKey: { type: String, required: false },
 		vaultReceivedToday: { type: Number, required: false },
 		openReceipts: { type: [String], required: false },
+		paidGifts: { type: [String], default: undefined, required: false },
 	},
 	{ timestamps: true }
 );

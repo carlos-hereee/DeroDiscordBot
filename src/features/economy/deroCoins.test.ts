@@ -12,11 +12,15 @@ const mocks = vi.hoisted(() => ({
 	sumGameCoinsSince: vi.fn(),
 	hasClaim: vi.fn(),
 	findWallet: vi.fn(),
+	creditClaim: vi.fn(),
+	settleClaim: vi.fn(),
+	findClaim: vi.fn(),
+	findOpenClaims: vi.fn(),
 }));
 
 vi.mock("@db/stores/deroCoinStore.js", () => ({ deroCoinStore: mocks }));
 
-import { awardForClaim, awardForResult, claimKeyFor, coinAmountFor, coinTierOf, readCoinBalance } from "./deroCoins.js";
+import { awardForClaim, awardForResult, awardReleaseGift, settleOpenCoinClaims, claimKeyFor, coinAmountFor, coinTierOf, readCoinBalance } from "./deroCoins.js";
 
 const NOW = new Date("2026-10-27T15:00:00Z");
 const BOT = "dero-bot-red";
@@ -25,6 +29,10 @@ beforeEach(() => {
 	for (const mock of Object.values(mocks)) mock.mockReset();
 	mocks.insertAward.mockResolvedValue(true);
 	mocks.sumGameCoinsSince.mockResolvedValue(0);
+	mocks.creditClaim.mockResolvedValue(true);
+	mocks.settleClaim.mockResolvedValue(undefined);
+	mocks.findClaim.mockResolvedValue(null);
+	mocks.findOpenClaims.mockResolvedValue([]);
 });
 
 // The owner's "drip" amounts of 2026-10-28 (2026-10 item 267, decision 4).
@@ -127,6 +135,84 @@ describe("awardForResult", () => {
 	});
 });
 
+describe("awardReleaseGift", () => {
+	const gift = { guildId: "g1", userId: "u1", giftKey: "age-limit-apology", now: NOW };
+
+	it("pays the listed coins, on a claim row of its own that no UTC day key can equal", async () => {
+		await expect(awardReleaseGift(gift)).resolves.toEqual({ status: "paid", amount: 5 });
+		expect(mocks.insertAward).toHaveBeenCalledWith(expect.objectContaining({ userId: "u1", amount: 5, source: "claim", claimKey: "release:age-limit-apology", settled: false }));
+		expect(mocks.creditClaim).toHaveBeenCalledWith("u1", 5, "release:age-limit-apology");
+		expect(mocks.settleClaim).toHaveBeenCalledWith("release:age-limit-apology", "u1");
+	});
+
+	it("pays nothing on a second press, in this server or another", async () => {
+		mocks.insertAward.mockResolvedValue(false);
+		mocks.findClaim.mockResolvedValue({ amount: 5, settled: true });
+		await expect(awardReleaseGift({ ...gift, guildId: "g2" })).resolves.toEqual({ status: "already" });
+		expect(mocks.creditClaim).not.toHaveBeenCalled();
+	});
+
+	it("loses nothing when the credit fails: the log row stays open and the next press pays", async () => {
+		const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		mocks.creditClaim.mockRejectedValueOnce(new Error("the network dropped"));
+		await expect(awardReleaseGift(gift)).resolves.toEqual({ status: "failed" });
+		expect(mocks.settleClaim).not.toHaveBeenCalled();
+		logged.mockRestore();
+
+		mocks.insertAward.mockResolvedValue(false);
+		mocks.findClaim.mockResolvedValue({ amount: 5, settled: false });
+		await expect(awardReleaseGift(gift)).resolves.toEqual({ status: "paid", amount: 5 });
+		expect(mocks.settleClaim).toHaveBeenCalledOnce();
+	});
+
+	it("doubles nothing when the wallet paid but the row never closed: the receipt refuses the retry", async () => {
+		mocks.insertAward.mockResolvedValue(false);
+		mocks.findClaim.mockResolvedValue({ amount: 5, settled: false });
+		mocks.creditClaim.mockResolvedValue(false);
+		await expect(awardReleaseGift(gift)).resolves.toEqual({ status: "already" });
+		expect(mocks.settleClaim).toHaveBeenCalledOnce();
+	});
+
+	it("still says paid when closing the row fails after the coins landed", async () => {
+		const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		mocks.settleClaim.mockRejectedValue(new Error("the network dropped"));
+		await expect(awardReleaseGift(gift)).resolves.toEqual({ status: "paid", amount: 5 });
+		warned.mockRestore();
+	});
+
+	it("pays nothing for a gift the table does not list", async () => {
+		await expect(awardReleaseGift({ ...gift, giftKey: "made-up" })).resolves.toEqual({ status: "unknown" });
+		expect(mocks.insertAward).not.toHaveBeenCalled();
+	});
+
+	it("never throws to the button", async () => {
+		const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		mocks.insertAward.mockRejectedValue(new Error("the network dropped"));
+		await expect(awardReleaseGift(gift)).resolves.toEqual({ status: "failed" });
+		logged.mockRestore();
+	});
+});
+
+describe("settleOpenCoinClaims", () => {
+	it("finishes a claim a crash left open, paying only what the wallet has no receipt for", async () => {
+		mocks.findOpenClaims.mockResolvedValue([
+			{ userId: "u1", amount: 5, claimKey: "release:age-limit-apology" },
+			{ userId: "u2", amount: 3, claimKey: "2026-11-06" },
+		]);
+		mocks.creditClaim.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+		await expect(settleOpenCoinClaims()).resolves.toBe(1);
+		expect(mocks.settleClaim).toHaveBeenCalledTimes(2);
+	});
+
+	it("never stops a boot", async () => {
+		const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		mocks.findOpenClaims.mockRejectedValue(new Error("the network dropped"));
+		await expect(settleOpenCoinClaims()).resolves.toBe(0);
+		logged.mockRestore();
+	});
+});
+
 describe("awardForClaim", () => {
 	// One coin claim a day across every server (2026-10 item 267 Session 1a).
 	it("keys the claim by the UTC day alone, so every server shares it", () => {
@@ -139,8 +225,8 @@ describe("awardForClaim", () => {
 		["lost", 1],
 	] as const)("pays a %s round %i coins from the claim table", async (outcome, coins) => {
 		await expect(awardForClaim({ guildId: "g1", userId: "u1", outcome, now: NOW })).resolves.toBe(coins);
-		expect(mocks.insertAward).toHaveBeenCalledWith({ userId: "u1", guildId: "g1", amount: coins, source: "claim", claimKey: "2026-10-27", at: NOW });
-		expect(mocks.credit).toHaveBeenCalledWith("u1", coins);
+		expect(mocks.insertAward).toHaveBeenCalledWith({ userId: "u1", guildId: "g1", amount: coins, source: "claim", claimKey: "2026-10-27", settled: false, at: NOW });
+		expect(mocks.creditClaim).toHaveBeenCalledWith("u1", coins, "2026-10-27");
 	});
 
 	it("pays a claim in server A, then in server B the same day, once", async () => {
@@ -149,7 +235,7 @@ describe("awardForClaim", () => {
 		await expect(awardForClaim({ guildId: "gB", userId: "u1", outcome: "won", now: NOW })).resolves.toBe(0);
 		// Both rows carry the same day key, so the unique claim index refuses the second.
 		expect(mocks.insertAward.mock.calls.map((call) => (call[0] as { claimKey: string }).claimKey)).toEqual(["2026-10-27", "2026-10-27"]);
-		expect(mocks.credit).toHaveBeenCalledTimes(1);
+		expect(mocks.creditClaim).toHaveBeenCalledTimes(1);
 	});
 });
 

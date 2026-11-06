@@ -32,6 +32,12 @@ vi.mock("@features/entitlements/serverPlanAccess.js", () => ({ isServerCovered: 
 vi.mock("@db/stores/guildConfigStore.js", () => ({
 	guildConfigStore: { findByGuildId: vi.fn(async () => ({ meetingVoiceChannelId: "vc-meeting", arcadeVoiceChannelId: "vc-lounge" })) },
 }));
+// The age gate's defense in depth (2026-11 item 302) reads the room a game's request
+// names; null keeps every case here on the path that existed before it, same as a room
+// the read could not find. Every seat is confirmed by default, for the cases that stand up
+// their own room.
+vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: vi.fn(async () => null) } }));
+vi.mock("@features/age-gate/ageGateRules.js", () => ({ hasConfirmedAge: vi.fn(async () => true) }));
 
 import { checkJoin, execute, runQueuedJoin, type JoinGateInput } from "./dero.js";
 import { voiceQueue, type VoiceQueueRequest } from "@features/voice/voiceQueue.js";

@@ -172,6 +172,9 @@ export const setupCopy = {
 		// A notice board channel built on its first use (2026-11 item 285 Phase 3).
 		noticeBoardChannel: (channelName: string): string => `${channelName} channel`,
 		builtOnFirstUse: (channelId: string): string => `built <#${channelId}> in the notice board`,
+		// A notice board channel taken away by its setup card's Remove (2026-11 item 289).
+		removedFromCard: "deleted from its setup card",
+		releasedFromCard: "released from its setup card, the channel stays",
 		capSet: (usd: number): string => `$${usd} a month`,
 		set: (value: string): string => `set to ${value}`,
 		blocked: (serverId: string): string => `blocked ${serverId}`,
@@ -341,7 +344,7 @@ export const setupCopy = {
 		onTitle: "🎮 Arcade on",
 		onBody: "The 🎮 ARCADE GAMES category and its channels are back.",
 		onPending:
-			"The arcade is switched back on, but its channels could not all be built just now. If auto heal is off, `/server auto-heal` turns it back on; otherwise the next restart finishes them.",
+			"The arcade is switched back on, but its channels could not all be built just now. Check that Dero has Manage Channels, then run `/arcade on` again. A self destructed server needs `/setup` first.",
 		offDescription: "Delete the arcade category and every channel in it, matches included",
 		onDescription: "Bring the arcade category and its channels back",
 		alreadyOn: "The arcade is already on.",
@@ -365,6 +368,8 @@ export const setupCopy = {
 	headquarters: {
 		done: "✅",
 		todo: "⬜",
+		skippedMark: "⏭️",
+		skippedWord: "(skipped)",
 		stepLine: (mark: string, step: number, label: string): string => `${mark} **Step ${step}** ${label}`,
 		optional: "(optional)",
 		buttonLabel: (step: number): string => `Step ${step}`,
@@ -378,6 +383,50 @@ export const setupCopy = {
 		dollars: (usd: number): string => `$${usd} a month`,
 		stepUnavailable: "That step could not open just now. Try again in a moment.",
 		staleStep: "This step is no longer available. The card refreshes on the next change.",
+		// What a step card says and carries (2026-11 item 289). The channel cards' own lines and
+		// their Add this channel button are onboarding.tutorial's.
+		stepCards: {
+			openButton: "Open",
+			skipButton: "Skip",
+			continueButton: "Continue",
+			removeButton: "Remove",
+			skippedLine: "⏭️ Skipped. You can always come back and make edits.",
+			continuedLine: "✅ Noted. You can always come back and make edits.",
+			notAdmin: "Only the server owner or an admin can move a setup step along.",
+		},
+		// The step cards of the four config channels (2026-11 item 289). The 17 flow steps teach
+		// here, keyed by domain and step, each written from what its flow does; a channel step
+		// teaches from the guild's pack instead (channelContent.tutorial). tutorialCards reads
+		// this table as the list of flow steps that have a card.
+		stepTeaching: {
+			deroConfig: {
+				voice: "Turns Dero's voice and the Listen buttons on or off, and sets the task roles and the voice channels Dero may join. This step finishes once the voice is on with a channel to join.",
+				priority: "Picks what gets Dero's voice first while Dero is busy in a call. A request waits its turn, and Dero never leaves a call for it.",
+			},
+			onboarding: {
+				community:
+					"Turns on Discord Community. A form picks your rules channel, your community updates channel and whether Membership Screening goes on, and a review shows what will change before you confirm.",
+				adopted: "Says whether each welcome or rules channel your server already had moves into 🪧 NOTICE BOARD or stays where it is. Until you answer, Dero uses it where it stands.",
+				discordOnboarding:
+					"Once Discord Community is on, drafts the questions new members answer in Discord Onboarding, keeping any your server already has. You edit each question and answer in a review, and nothing is written until you confirm.",
+				gating: "Once Discord Community is on and /setup has named a member role, Dero's channels open only to members who hold that role. There is nothing to press here: the gate follows on its own.",
+			},
+			arcadeControl: {
+				chips: "Switches chips and the daily claim, the monthly post and Dero bot opponents on or off. All three start on, so you can keep them as they are.",
+				reach: "Sets how far a host's challenge may reach: invite only rooms, rooms open to this server, or tables open to other servers on the network.",
+				block: "Keeps one server off this server's network tables, both ways, by its server id. It only matters once your reach is the network.",
+			},
+			serverConfig: {
+				timezone: "Picks the zone Dero reads typed times in for party games and stream announcements. A new weekly stream starts in it, and the KvK season stays on UTC.",
+				template: "Sets how Dero speaks in this server, kingdom or streamer. Switching rewrites Dero's pinned intros and renames the channels still on their default names.",
+				kvkSeason: "Builds the prebuilt event reminders for a Rise of Kingdoms KvK season. Pass this one by if your server does not play a season.",
+				streams: "Sets up a weekly stream or event reminder on a fixed day and time.",
+				events: "Lists your server's events, and pauses, resumes or deletes one.",
+				channels: "Hides or shows a member facing channel, lists them, or renames one Dero keeps. A hidden channel still exists and Dero still posts in it; only members stop seeing it.",
+				leveling: "Sets how members earn XP, how level ups are announced, the milestones and any restrictions. Leveling starts on, so you can keep it as it is.",
+				rename: "Explains how a channel keeps a new name: a name set with /server channels rename stays, and a rename made straight in Discord is put back while auto heal is on.",
+			},
+		},
 		deroConfig: {
 			title: "⚙️ Dero's voice setup",
 			steps: ["Dero's voice, Listen, the task roles and the voice channels Dero may join", "Set the voice priority order"],
@@ -423,6 +472,25 @@ export const setupCopy = {
 				alreadyBuilt: (channelId: string): string => `<#${channelId}> is already there, so nothing new was built.`,
 				notBuilt: "Dero could not build that channel just now. Check that Dero may manage channels, then press the button again.",
 				notAdmin: "Only the server owner or an admin can add notice board channels.",
+				// A ready channel card's Remove (2026-11 item 289). The confirm says which of the two
+				// removes this is, because a built channel goes and an adopted one stays.
+				remove: {
+					title: "🪧 Remove this channel?",
+					confirmBuilt: (channelId: string): string => `This deletes <#${channelId}> and every message in it. Add this channel on its card brings an empty one back.`,
+					confirmAdopted: (channelId: string): string => `Dero stops using <#${channelId}>. The channel and its messages stay as they are.`,
+					confirmButton: "Remove",
+					cancelButton: "Cancel",
+					cancelled: "Nothing changed. The channel stays as it is.",
+					timedOut: "No answer came in time, so nothing changed. Press Remove again to ask once more.",
+					alreadyGone: "That channel is already gone, so there is nothing to remove.",
+					deleted: (label: string): string => `${label} is gone. Add this channel on its card brings an empty one back.`,
+					released: (label: string): string => `Dero no longer uses ${label}. The channel and its messages stay as they are.`,
+					gone: (label: string): string => `${label} was already gone, so nothing changed.`,
+					refused: (label: string): string =>
+						`Discord refused to delete ${label}, so nothing changed. A channel Discord Community requires, such as the rules or community updates channel, must be swapped in Server Settings first (Discord error 50074).`,
+					failed: "Dero could not finish removing that channel. Check that Dero may manage channels, then press Remove again.",
+					notAdmin: "Only the server owner or an admin can remove notice board channels.",
+				},
 			},
 		},
 		arcadeControl: {

@@ -6,7 +6,10 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { featureAnnouncedEvent } from "@base/constants/BOT_LOG_EVENTS.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { buildReleaseGiftButton } from "@features/announcements/releaseCoinGift.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
+import { isDev } from "@utils/config.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 
 // ── postFeatureAnnouncement ──────────────────────────────────────────
@@ -39,6 +42,27 @@ import { infoEmbed } from "@utils/embedBuilder.js";
 //        ④ failures on either post are swallowed with a log. the
 //           botLogStore write only fires after BOTH posts succeed so
 //           a partial failure re-attempts next boot.
+
+// The channels release copy names, with the GuildConfig field holding each one's id. The copy
+// stays one plain string shared by every server, and each server's post swaps in its own link.
+const LINKED_CHANNELS = {
+	"⚙️dero-config": "deroConfigChannelId",
+	"🧭onboarding": "onboardingConfigChannelId",
+	"🎰arcade-control": "arcadeControlChannelId",
+	"🛠️server-config": "serverConfigChannelId",
+	"🕹️games": "arcadeGamesChannelId",
+} as const;
+
+/**
+ * Turn each channel release copy names into a real link for this server. A server without that
+ * channel keeps its plain name, because a mention of a missing channel reads as #unknown.
+ */
+export function linkReleaseChannels(text: string, config: Partial<Record<(typeof LINKED_CHANNELS)[keyof typeof LINKED_CHANNELS], string | null>>): string {
+	return Object.entries(LINKED_CHANNELS).reduce((linked, [name, field]) => {
+		const channelId = config[field];
+		return channelId ? linked.replaceAll(name, `<#${channelId}>`) : linked;
+	}, text);
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -81,6 +105,7 @@ const VERSION_SHIPPED_AT: Record<string, string> = {
 	"1.5.1": "2026-05-13T00:00:00Z",
 	// The release prepared as 1.7.0 ships as 2.0.0, so 1.7.0 never reached a guild.
 	"2.0.0": "2026-11-03T00:00:00Z",
+	"2.0.1": "2026-11-04T00:00:00Z",
 };
 
 export async function postFeatureAnnouncements(client: Client): Promise<void> {
@@ -141,7 +166,10 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			// Idempotency: has this guild already seen this version?
 			// botLogStore.has is a single-document indexed lookup, cheap
 			// enough to run once per guild per boot without batching.
-			const alreadyAnnounced = await botLogStore.has(guild.id, eventKey);
+			// A dev bot skips this so every boot reposts while the owner iterates on release copy,
+			// with no reset-feature-announcement run. isDev, never a weaker check: production
+			// must stay once per version, or every restart posts in every server.
+			const alreadyAnnounced = !isDev && (await botLogStore.has(guild.id, eventKey));
 			if (alreadyAnnounced) {
 				skippedAlready += 1;
 				continue;
@@ -189,7 +217,7 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			// Inject the release version into the title from BOT_VERSION (package.json),
 			// the single source of truth this announcement is keyed to, so the title
 			// always reads the right version with no hardcoded version in the copy packs.
-			const publicEmbed = infoEmbed(`${c.public.title} (v${BOT_VERSION})`, c.public.description, packCopy.COLORS.ANNOUNCEMENTS);
+			const publicEmbed = infoEmbed(`${c.public.title} (v${BOT_VERSION})`, linkReleaseChannels(c.public.description, config), packCopy.COLORS.ANNOUNCEMENTS);
 
 			// Suggestion Box rides the PUBLIC announcement only. A release post is the
 			// one moment a member is already reading about what changed, which is when
@@ -200,7 +228,9 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			// message or channel it was built in. The admin send deliberately omits it,
 			// admins have the same button in #command-center and the inner-sanctum post
 			// is a changelog, not a call to action.
-			const suggestionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(buildSuggestionBoxButton());
+			// The Claim button rides beside it while a release offers a gift (releaseCoinGift.ts).
+			const giftButton = buildReleaseGiftButton(BOT_CONSTANTS.DERO_COINS.CURRENT_RELEASE_GIFT);
+			const suggestionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(...(giftButton ? [giftButton] : []), buildSuggestionBoxButton());
 			await announcementsChannel.send({
 				embeds: [publicEmbed],
 				components: [suggestionRow],
@@ -212,7 +242,7 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			// AFTER the public one so a failure on the public post does
 			// not leave the admin with a "here's what shipped" while
 			// the community has not seen anything yet.
-			const adminEmbed = infoEmbed(`${c.innerSanctum.title} (v${BOT_VERSION})`, c.innerSanctum.description, packCopy.COLORS.ADMIN);
+			const adminEmbed = infoEmbed(`${c.innerSanctum.title} (v${BOT_VERSION})`, linkReleaseChannels(c.innerSanctum.description, config), packCopy.COLORS.ADMIN);
 			await adminChannel.send({
 				embeds: [adminEmbed],
 				allowedMentions: { parse: [] },

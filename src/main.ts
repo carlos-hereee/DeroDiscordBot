@@ -36,8 +36,12 @@ import { refreshAllLeaderboards } from "@features/leaderboard/LeaderboardBoard.j
 import { registerScheduleControlHandlers } from "@features/schedule/ScheduleControls.js";
 import { registerSuggestionBoxHandlers } from "@features/suggestion-box/SuggestionBox.js";
 import { registerArcadeHostHandlers } from "@features/games/arcadeHost.js";
+import { registerAgeGateHandlers } from "@features/age-gate/ageGateRules.js";
 import { registerSoloLuckHandlers } from "@features/games/soloLuck.js";
 import { registerClaimRoundHandlers } from "@features/economy/chipClaim.js";
+import { settleOpenCoinClaims } from "@features/economy/deroCoins.js";
+import { registerReleaseGiftHandlers } from "@features/announcements/releaseCoinGift.js";
+import { registerSecretCodeHandlers } from "@features/secret-codes/secretCodeEntry.js";
 import { registerCoinMarketHandlers } from "@features/economy/coinMarketPanel.js";
 import { migrateGlobalChipWallets } from "@features/economy/migrateGlobalChipWallets.js";
 import { registerPartyGameHandlers } from "@features/game-rooms/partyGames.js";
@@ -270,6 +274,7 @@ process.on("uncaughtException", (err) => {
 	// failure is logged and boot continues, because unmigrated rows are retried next boot.
 	try {
 		await migrateGlobalChipWallets();
+		await settleOpenCoinClaims();
 	} catch (error) {
 		console.error("[economy] the global chip wallet migration failed; it runs again next boot", error);
 	}
@@ -380,6 +385,10 @@ process.on("uncaughtException", (err) => {
 	registerLeaderboardChannelHandlers();
 	registerScheduleControlHandlers();
 	registerSuggestionBoxHandlers();
+	// The global 18+ confirmation gate's yes/no buttons (2026-11 item 302), on the one
+	// "ageGate" prefix. Registered early, like the rest, so a prompt posted by an earlier
+	// deploy keeps answering.
+	registerAgeGateHandlers();
 	// The Host a game buttons and the hangman category start on the 🕹️games intro.
 	// Registered by customId PREFIX at the client level, like every other handler
 	// here, so the buttons keep working on a card posted by an earlier deploy,
@@ -416,6 +425,8 @@ process.on("uncaughtException", (err) => {
 	registerNoticeModal();
 	registerPowerUpHandlers();
 	registerClaimRoundHandlers();
+	registerReleaseGiftHandlers();
+	registerSecretCodeHandlers();
 	registerCoinMarketHandlers();
 	// Every admin command's button on the admin guide, with the pick, the optional
 	// field pick and the form each one opens (2026-10 item 245 Phase 4b).

@@ -71,6 +71,10 @@ describe("resetConfigsToDefault", () => {
 		expect(m.invalidate).toHaveBeenCalledWith("g1");
 	});
 
+	it("forgets the setup steps an admin moved past, so a reset server walks them again", () => {
+		expect(CONFIG_DEFAULTS).toMatchObject({ setupStepsSkipped: [] });
+	});
+
 	it("never touches ids, roles or setup state", () => {
 		for (const key of Object.keys(CONFIG_DEFAULTS)) {
 			expect(key).not.toMatch(/ChannelId$|CategoryId$|RoleId$|^setupComplete$|^homebaseDestroyed$|^pluginId$/);

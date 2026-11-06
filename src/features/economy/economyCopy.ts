@@ -32,6 +32,30 @@ export function coins(amount: number): string {
 const relative = (at: Date): string => `<t:${Math.floor(at.getTime() / 1000)}:R>`;
 
 export const economyCopy = {
+	// ── /platform birthday-gift, the owner's side (what the member reads is in the copy packs) ──
+	birthdayGift: {
+		title: "🎂 Birthday gift",
+		command: {
+			description: "Set chips aside for a member to collect once with the birthday code",
+			memberOption: "The member the gift is for",
+			chipsOption: "How many chips they collect",
+		},
+		notOwner: "Only the platform owner can set a birthday gift.",
+		notABot: "A bot has no wallet to collect a gift with. Pick a member.",
+		saved: (userId: string, amount: number): string =>
+			`<@${userId}> can collect **${chips(amount)}** once by entering this in \`/secret-code\`:\n\`${BOT_CONSTANTS.ECONOMY.BIRTHDAY_GIFT_CODE}\`\nRun this again before they do to change the amount.`,
+	},
+
+	// ── a release announcement's Claim button (announcements/releaseCoinGift.ts) ──
+	releaseGift: {
+		title: "🪙 Dero coins",
+		buttonLabel: "Claim",
+		paid: (amount: number): string => `**${coins(amount)}** added to your wallet. Thank you for your patience.`,
+		already: "You already claimed these Dero coins. Each member claims them once, in any server.",
+		closed: "This gift is no longer on offer.",
+		failed: "Those coins did not reach your wallet. Press Claim again in a moment.",
+	},
+
 	// ── /claim ──
 	claim: {
 		title: "🪙 Chips",

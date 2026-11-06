@@ -134,7 +134,7 @@ describe("DERO_ART_FILES, the slot map", () => {
 	it("points only the welcome at the 3:2 banner and every card slot at the mecha", () => {
 		const { welcome, ...cardSlots } = DERO_ART_FILES;
 		expect(welcome).toBe("welcome-banner.png");
-		expect(Object.keys(cardSlots).sort()).toEqual(["account", "battle", "board", "levelUp", "prime", "tiers"]);
+		expect(Object.keys(cardSlots).sort()).toEqual(["account", "battle", "board", "invite", "levelUp", "prime", "tiers"]);
 		for (const file of Object.values(cardSlots)) expect(file).toBe("mecha-dero.png");
 	});
 

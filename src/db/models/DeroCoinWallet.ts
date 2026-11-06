@@ -23,6 +23,9 @@ export interface IDeroCoinWallet {
 	// and how many. A buy on a new day starts the count again. Absent until a first buy.
 	marketDayKey?: string;
 	marketBoughtToday?: number;
+	// The claim log's receipts (2026-11): the claim keys this wallet was paid, written in the same
+	// write as the coins, so a claim retried after a crash can never pay twice.
+	claimReceipts?: string[];
 }
 
 const deroCoinWalletSchema = new mongoose.Schema<IDeroCoinWallet>(
@@ -32,6 +35,7 @@ const deroCoinWalletSchema = new mongoose.Schema<IDeroCoinWallet>(
 		totalEarned: { type: Number, default: 0 },
 		marketDayKey: { type: String, required: false },
 		marketBoughtToday: { type: Number, required: false },
+		claimReceipts: { type: [String], default: undefined, required: false },
 	},
 	{ timestamps: true }
 );

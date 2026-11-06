@@ -19,6 +19,9 @@ vi.mock("./challengeCardRenderer.js", () => ({ renderChallengeCard: vi.fn().mock
 // Dero's voice (2026-10 item 267, decision 14): which call he is in, and what he would say there.
 vi.mock("@features/voice/voiceSessions.js", () => ({ voiceSessions: { get: vi.fn(() => null) } }));
 vi.mock("@features/voice/callAnnouncer.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("@features/voice/callAnnouncer.js")>()), speakInCall: vi.fn(async () => "spoken") }));
+// The age gate (2026-11 item 302) runs in offerChallengeDraft and joinChallenge; every case
+// here is a confirmed member unless a case says otherwise.
+vi.mock("@features/age-gate/ageGateRules.js", () => ({ hasConfirmedAge: vi.fn(async () => true), replyWithAgeGate: vi.fn() }));
 
 import { chooseVisibility, handleInviteSelect, handleOpponentSelect, joinChallenge, openInvitePicker } from "./challengeBoard.js";
 import { buildSettingsModal, defaultSettings, type SettingsGame } from "./challengeSettings.js";

@@ -97,13 +97,14 @@ beforeEach(() => {
 	mocks.log.mockResolvedValue(undefined);
 });
 
-// The two Community flows open from 🧭onboarding's steps 1 and 3 alone (R3-14): no
-// managed channel's intro carries a community row any more.
+// The two Community flows open from 🧭onboarding's Community and Discord Onboarding steps
+// alone (R3-14): no managed channel's intro carries a community row any more.
 describe("where the Community buttons live", () => {
-	it("are 🧭onboarding's steps 1 and 3, on the flows' own customIds", () => {
-		const view = onboardingView({ communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: true, adoptedLines: [] });
-		expect(view.steps[0]?.customId).toBe(COMMUNITY_CUSTOM_IDS.enable);
-		expect(view.steps[2]?.customId).toBe(COMMUNITY_CUSTOM_IDS.configure);
+	it("are 🧭onboarding's Community and Discord Onboarding steps, on the flows' own customIds", () => {
+		const view = onboardingView({ communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: true, adoptedLines: [] }, {});
+		const customIdOf = (key: string) => view.steps.find((step) => step.key === key)?.customId;
+		expect(customIdOf("community")).toBe(COMMUNITY_CUSTOM_IDS.enable);
+		expect(customIdOf("discordOnboarding")).toBe(COMMUNITY_CUSTOM_IDS.configure);
 	});
 
 	it("are on no channel's intro", () => {

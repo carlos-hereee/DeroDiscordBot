@@ -13,6 +13,9 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
+import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { hasConfirmedAge } from "@features/age-gate/ageGateRules.js";
+import { memberIdsOnly } from "@features/game-rooms/botSeat.js";
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
 import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
 import { CooldownManager } from "@utils/cooldownManager.js";
@@ -527,6 +530,21 @@ export async function runQueuedJoin(request: VoiceQueueRequest): Promise<QueuedJ
 	});
 	if ("queue" in gate) return "busy";
 	if (!gate.ok) return game ? skipGameJoin(request, gameSkipReasonOf(gate.reason)) : "skipped";
+
+	// Defense in depth for the age gate (2026-11 item 302): the primary gate is joinGate,
+	// which should already keep an unconfirmed member from ever being seated, so this never
+	// posts a notice and never blocks the game, it only logs once and leaves Dero out of the
+	// room's voice for that join.
+	if (game) {
+		const room = await gameRoomStore.findByRoomId(guild.id, game.roomId);
+		if (room) {
+			const confirmed = await Promise.all(memberIdsOnly(room.playerIds).map((userId) => hasConfirmedAge(userId)));
+			if (!confirmed.every(Boolean)) {
+				console.warn(`[dero-voice] skipping voice for room ${game.roomId}: a seated player has not confirmed their age`);
+				return "skipped";
+			}
+		}
+	}
 
 	// The same per guild window a typed join records, since this attempt costs the same traffic.
 	joinCooldown.record(guild.id);

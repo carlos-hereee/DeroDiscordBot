@@ -13,7 +13,6 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getUpcomingOccurrences } from "@features/events/occurrenceCalculator.js";
 import type { IGameEvent } from "@features/events/event.types.js";
 import { decreeEditCustomIds } from "./decreeEditHandlers.js";
-import { ensureOnDemandChannel } from "@features/setup/onDemandChannel.js";
 
 // ── NextUpBoard ─────────────────────────────────────────────────────
 // Posts a fresh embed for each upcoming decree in a guild's configured
@@ -86,17 +85,10 @@ export async function refreshNextUp(client: Client, guildId: string): Promise<vo
 	// self-destructed guild: homebase channels are gone, nothing to refresh.
 	if (config?.homebaseDestroyed) return;
 	if (!config) return;
-	// On demand (2026-11 item 285 Phase 3): a Headquarters only server has no upcoming
-	// events channel until a decree is actually due, so the channel is built only then,
-	// and a server with nothing in the next 24 hours bails as before. A legacy row that
-	// predates the field lands here too, and the boot sweep builds its channel anyway.
-	let nextDecreeChannelId = config.nextDecreeChannelId ?? null;
-	if (!nextDecreeChannelId) {
-		const guild = client.guilds.cache.get(guildId);
-		if (!guild || !(await hasDecreeDue(guildId, Date.now()))) return;
-		nextDecreeChannelId = (await ensureOnDemandChannel(guild, "nextDecreeChannelId"))?.id ?? null;
-		if (!nextDecreeChannelId) return;
-	}
+	// No upcoming events channel means no decree posts, due or not: only its setup card
+	// builds that channel, so a server that never asked for one is never handed one.
+	const nextDecreeChannelId = config.nextDecreeChannelId ?? null;
+	if (!nextDecreeChannelId) return;
 
 	const channel = await client.channels.fetch(nextDecreeChannelId).catch(() => null);
 	if (!channel || !(channel instanceof TextChannel)) {
@@ -156,17 +148,6 @@ export async function refreshNextUp(client: Client, guildId: string): Promise<vo
 }
 
 // ── private ─────────────────────────────────────────────────────────
-
-// Whether any unpaused event has an occurrence inside the horizon, the same test the
-// refresh loop applies before it posts, so the on demand build waits for a real decree.
-async function hasDecreeDue(guildId: string, now: number): Promise<boolean> {
-	const events = await eventStore.findByGuildId(guildId);
-	return events.some((eventLike) => {
-		const event = eventLike as unknown as IGameEvent;
-		if (event.paused) return false;
-		return getUpcomingOccurrences(event, 5).some((occurrence) => occurrence.getTime() > now && occurrence.getTime() <= now + HORIZON_MS);
-	});
-}
 
 // Walks the last 100 messages in the next-decree channel and seeds the
 // postedDecrees Set with the (guildId, eventId, occurrenceMs) tuples it

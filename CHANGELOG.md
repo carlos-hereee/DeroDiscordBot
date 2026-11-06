@@ -12,6 +12,23 @@ This file starts at v1.4.0. Earlier releases predate the changelog convention; t
 
 **This entry ships as 2.0.0** (owner decision 2026-10-24), a major version rather than the 1.7.0 it was prepared as: Dero's voice, its new look, the arcade, server against server rankings and Community Onboarding land together, and the command names listed under Removed stop working.
 
+### 2.0.1 (2026-11-04)
+
+A patch still posts in every set up server, so 2.0.1 carries its own short announcement in place of the 2.0.0 post.
+
+* **The arcade is now 18 and over.** The first time a member starts or joins a game, Dero asks them to confirm their age, once, across every server. Invited members confirm too, and a match cannot start until they have.
+* **A Claim button on the announcement.** Each member can claim 5 Dero coins once, as an apology for the hotfix.
+* **Enter a code on the command center.** A new button does the same job as `/secret-code`, which now holds more than luck codes.
+* **Gifts from the creator.** The platform owner can set a one time chip gift for a member, who collects it with a code.
+* **Dero coin claims survive a crash.** The daily claim and the Claim button finish on the next press or the next boot, and cannot pay twice.
+* **Setup walks you through one card at a time.** `⚙️dero-config`, `🧭onboarding`, `🎰arcade-control` and `🛠️server-config` each show the next step on its own card, with the steps card as a table of contents that jumps to any step. The settings chart and the switches appear once a channel's steps are finished, and a server that already has them keeps them.
+* **Every step can be skipped.** A skipped step says so on its own card, and you can always come back and make edits.
+* **A ready channel can be removed.** A notice board channel's card offers Remove behind a confirm. A channel Dero built is deleted, and Add this channel brings an empty one back. A channel that was already yours stays with its messages, and Dero stops using it.
+* **Nothing is built unless an admin asks.** A level up, an upcoming event and a member's command no longer create a channel, and a rebuild leaves alone the channels an admin left out and an arcade that is switched off.
+* **Admin button forms with a dropdown work again.** Set the network reach in `🎰arcade-control`, and the `/events`, `/server` and `/leveling` button forms that offer a dropdown, answered "Something went wrong executing this command" on Submit. Each one saves now.
+* **Turn the arcade on builds the arcade while auto heal is off.** The press and `/arcade on` build it, and a partly built arcade can be pressed again to finish.
+* **New board art.** The long board game has a new board and a logo of its own on its challenge card and room opener.
+
 ### Added
 
 * **Game rooms.** A two-player or cooperative match now plays in its own Discord channel under a second managed category, 🎮 ARCADE GAMES. The Challenge Board in `🕹️games` is where a member starts a challenge, which posts to `⚔️challenges`; the host chooses **Invite only** or **Open to all**, gathers who is in, and opens the room. The room's full move list is kept as an append-only transcript that outlives the channel. Each room's channel name starts with its game's emoji. When a match ends, **Rematch** starts the next one in the same channel with the same players, for every game, solo blackjack and solo hangman included: the finished match keeps its transcript and releases the channel to the new one. A room nobody acts in for 30 minutes is closed as abandoned, so it never holds its host's one room; a Monopoly match (its 24 hour seat clock rules it) and a hangman round in play are exempt.

@@ -9,6 +9,7 @@ import {
 	type StringSelectMenuInteraction,
 } from "discord.js";
 import { registerButton, registerModal, registerSelectMenu } from "@handlers/interactionRegistry.js";
+import { hasConfirmedAge, replyWithAgeGate } from "@features/age-gate/ageGateRules.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { describeSoloOpenFailure, openSoloRoom, readPrivateQuotaStatus, readSoloRefusalAtPress, type SoloGameSlug } from "@features/game-rooms/soloRooms.js";
 import { showNotice } from "@utils/textModal.js";
@@ -141,11 +142,20 @@ async function handleHangmanCategoryStart(interaction: StringSelectMenuInteracti
 // open: a held draft is offered to close in one Submit (handleSoloReplace), and a held match
 // is named where it plays. The replace confirm's own Submit skips the check, having just closed
 // the draft; whatever still holds the slot then is a race, answered by answerSoloRefusal.
+//
+// ⚠️ THE AGE GATE RUNS FIRST (2026-11 item 302), before even the guild read below: this is
+// every solo start's one door (the Host a game row, the hangman category select, Play Dero
+// instead, /mini-game typed in a challenge channel), so gating it here covers a DM invoked
+// command the same way as a guild one. No room opens on a false result.
 export async function openSoloRoomForMember(
 	interaction: ButtonInteraction | StringSelectMenuInteraction | ChatInputCommandInteraction | ModalSubmitInteraction,
 	game: SoloGameSlug,
 	options: { hangmanCategory?: HangmanCategory } = {}
 ): Promise<void> {
+	if (!(await hasConfirmedAge(interaction.user.id))) {
+		await replyWithAgeGate(interaction);
+		return;
+	}
 	const guild = interaction.guild!;
 	// Started beside the held slot reads rather than after them, so the press spends one round
 	// of reads inside Discord's three seconds; a held slot answers first and the check is dropped.

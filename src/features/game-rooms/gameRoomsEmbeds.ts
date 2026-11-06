@@ -63,6 +63,7 @@ const OPENER_LOGOS: Partial<Record<GameSlug, GameAssetKey>> = {
 	hangman: "hangmanLogoStacked",
 	"solo-hangman": "hangmanLogoStacked",
 	battleship: "battleshipLogo",
+	monopoly: "monopolyLogo",
 	rps: "rpsLogo",
 };
 

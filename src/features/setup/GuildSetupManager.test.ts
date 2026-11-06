@@ -15,6 +15,12 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({
 	},
 }));
 
+// A card sync reads the voice row and the server's events. Unmocked, either read waits on
+// Mongoose's 10 second buffer, and every test here shares one guild id, so that one read
+// would hold the guild's sync queue past the next test's limit (2026-11 item 289).
+vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({ deroVoiceConfigStore: { findByGuildId: vi.fn().mockResolvedValue(null) } }));
+vi.mock("@db/stores/eventStore.js", () => ({ eventStore: { findByGuildId: vi.fn().mockResolvedValue([]) } }));
+
 // Dero's own voice rooms on his voice allow list (2026-10 item 257 Phase 2b): spied
 // here so no setup test reaches the DeroVoiceConfig model.
 vi.mock("@features/voice/deroVoiceRooms.js", () => ({
@@ -2578,6 +2584,51 @@ describe("GuildSetupManager on a Headquarters only install", () => {
 		expect(calls[0]!.parent).toBe("hq-cat-1");
 	});
 
+	// ── a press with auto heal off ────────────────────────────────────────────
+	// The row the press finds: no notice board, Headquarters live, the arcade's opt out
+	// already lifted by turnArcadeOn, and one Headquarters channel deleted so a held spec
+	// is visible. Auto heal off must keep that channel gone either way.
+	const pressedRow = () => makeHeadquartersOnlyRow({ autoHealEnabled: false, userRemovedChannels: [] });
+	const PRESS = { requestedCategory: "gamesCategoryId" } as const;
+
+	it("builds nothing on the boot sweep with auto heal off, the arcade's opt out lifted or not", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(pressedRow());
+		const guild = makeGuild({ channelFetchMap: { ...LIVE_HEADQUARTERS, "ch-deroconfig": null } });
+
+		const result = await GuildSetupManager.ensureHomebase(makeClient({ selfId: "bot-1" }), guild);
+
+		expect(result).toEqual({ action: "skipped", repairedChannels: [] });
+		expect(createMockOf(guild)).not.toHaveBeenCalled();
+	});
+
+	it("builds the arcade category and every arcade channel on a press with auto heal off, and only those", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(pressedRow());
+		const guild = makeGuild({ channelFetchMap: { ...LIVE_HEADQUARTERS, "ch-deroconfig": null } });
+		const adminChannel = makeAdminChannel();
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => (id === "ch-admin" ? adminChannel : null) });
+
+		const result = await GuildSetupManager.ensureHomebase(client, guild, PRESS);
+
+		expect(result.action).toBe("repaired");
+		const calls = callsOf(guild);
+		expect(calls.filter((call) => call.type === ChannelType.GuildCategory).map((call) => call.name)).toEqual([rokCommanderCopy.setup.gamesCategoryName]);
+		expect(calls.filter((call) => call.type !== ChannelType.GuildCategory)).toHaveLength(ARCADE_FIELDS.length);
+		expect(calls.map((call) => call.name)).not.toContain(packChannels.deroConfig);
+		for (const call of guildConfigMock.update.mock.calls) expect(call[1]).not.toHaveProperty("autoHealEnabled");
+	});
+
+	it("stores no arcade on a press Discord refuses, so the switch can answer pending", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(pressedRow());
+		const guild = makeGuild({ channelFetchMap: LIVE_HEADQUARTERS });
+		createMockOf(guild).mockRejectedValue(new Error("Discord refused the create"));
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+		const result = await GuildSetupManager.ensureHomebase(makeClient({ selfId: "bot-1" }), guild, PRESS).catch(() => null);
+
+		expect(result?.repairedChannels ?? []).toEqual([]);
+		for (const call of guildConfigMock.update.mock.calls) expect((call[1] as { gamesCategoryId?: string | null }).gamesCategoryId ?? null).toBeNull();
+	});
+
 	// ── waiting for setup (2026-11 item 285 debug pass, owner ruling) ─────────
 	// A new server and a self destructed one hold 🔒inner-sanctum alone until Set up Dero.
 	const WAITING_FIELDS = HEADQUARTERS_SPECS.map((spec) => spec.configField).filter((field) => field !== "adminChannelId");
@@ -2698,5 +2749,106 @@ describe("GuildSetupManager boot sweep with notice board slots waiting for first
 		await GuildSetupManager.ensureHomebase(client, guild);
 
 		expect(createCalls(guild).map((call) => call.name)).toEqual([packChannels.leaderboard]);
+	});
+
+	// 2026-11 item 289: the row removeChannel.ts leaves on an existing server, where the last
+	// Remove nulled categoryId and the arcade still stands.
+	it("builds no notice board after the last Remove, and keeps a live arcade", async () => {
+		const emptiedNoticeBoard = Object.fromEntries(NOTICE_BOARD_FIELDS.map((field) => [field, null]));
+		guildConfigMock.findByGuildId.mockResolvedValue(
+			makeStoredConfig({ ...emptiedNoticeBoard, categoryId: null, headquartersCategoryId: "hq-cat-1", scheduleMessageId: null, onDemandChannels: [], userRemovedChannels: NOTICE_BOARD_FIELDS })
+		);
+		const guild = makeGuild({
+			channelFetchMap: { "ch-admin": { id: "ch-admin" }, "hq-cat-1": { id: "hq-cat-1", type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } } },
+		});
+
+		const result = await GuildSetupManager.ensureHomebase(makeClient({ selfId: "bot-1" }), guild);
+
+		expect(result.action).not.toBe("rebuilt");
+		const noticeBoardNames = new Set(GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.categoryField === "categoryId").map((spec) => spec.displayName));
+		expect(createCalls(guild).filter((call) => noticeBoardNames.has(call.name))).toEqual([]);
+		expect(createCalls(guild).map((call) => call.name)).not.toContain(rokCommanderCopy.setup.categoryName);
+		for (const [, payload] of guildConfigMock.update.mock.calls as Array<[string, Record<string, unknown>]>) expect(payload).not.toHaveProperty("gamesCategoryId");
+	});
+
+	// 2026-11 item 289: the row still stores a NOTICE BOARD an admin deleted by hand.
+	describe("when the stored notice board is gone", () => {
+		const emptied = Object.fromEntries(NOTICE_BOARD_FIELDS.map((field) => [field, null]));
+		// One slot an admin removed, every other still waiting for its step card.
+		const heldRow = (overrides: Record<string, unknown> = {}) =>
+			makeStoredConfig({ ...emptied, scheduleMessageId: null, headquartersCategoryId: "hq-cat-1", onDemandChannels: WAITING, userRemovedChannels: ["introChannelId"], ...overrides });
+
+		let autoSetup: ReturnType<typeof vi.spyOn>;
+		let adminChannel: ReturnType<typeof makeAdminChannel>;
+		let client: ReturnType<typeof makeClient>;
+
+		beforeEach(() => {
+			autoSetup = vi.spyOn(GuildSetupManager, "autoSetup").mockResolvedValue(undefined);
+			adminChannel = makeAdminChannel();
+			client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => (id === "ch-admin" ? adminChannel : null) });
+		});
+
+		afterEach(() => {
+			autoSetup.mockRestore();
+		});
+
+		const guildWithNoCategory = () => makeGuild({ categoryId: null, channelFetchMap: { "ch-admin": { id: "ch-admin" } } });
+
+		it("forgets it and builds nothing when every slot is held back and empty", async () => {
+			guildConfigMock.findByGuildId.mockResolvedValue(heldRow());
+			const guild = guildWithNoCategory();
+
+			const result = await GuildSetupManager.ensureHomebase(client, guild);
+
+			expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", { categoryId: null, onDemandChannels: [] });
+			expect(autoSetup).not.toHaveBeenCalled();
+			expect(createCalls(guild)).toEqual([]);
+			expect(result.action).not.toBe("rebuilt");
+		});
+
+		it("tells nobody the homebase was rebuilt, because it was not", async () => {
+			guildConfigMock.findByGuildId.mockResolvedValue(heldRow());
+
+			await GuildSetupManager.ensureHomebase(client, guildWithNoCategory());
+
+			expect(adminChannel.send).not.toHaveBeenCalled();
+		});
+
+		it("leaves a live arcade and its opt outs out of the write", async () => {
+			guildConfigMock.findByGuildId.mockResolvedValue(heldRow({ gamesCategoryId: "games-cat-1" }));
+
+			await GuildSetupManager.ensureHomebase(client, guildWithNoCategory());
+
+			for (const [, payload] of guildConfigMock.update.mock.calls as Array<[string, Record<string, unknown>]>) {
+				expect(payload).not.toHaveProperty("gamesCategoryId");
+				expect(payload).not.toHaveProperty("userRemovedChannels");
+			}
+		});
+
+		it("still rebuilds when an empty slot is not held back, because that channel is owed", async () => {
+			guildConfigMock.findByGuildId.mockResolvedValue(heldRow({ onDemandChannels: WAITING.slice(1) }));
+
+			const result = await GuildSetupManager.ensureHomebase(client, guildWithNoCategory());
+
+			expect(autoSetup).toHaveBeenCalledOnce();
+			expect(result.action).toBe("rebuilt");
+		});
+
+		it("still rebuilds when a held slot holds an id, because a survivor may need moving back", async () => {
+			guildConfigMock.findByGuildId.mockResolvedValue(heldRow({ leaderboardChannelId: "ch-leaderboard" }));
+
+			const result = await GuildSetupManager.ensureHomebase(client, guildWithNoCategory());
+
+			expect(autoSetup).toHaveBeenCalledOnce();
+			expect(result.action).toBe("rebuilt");
+		});
+
+		it("still rebuilds a legacy row with neither list", async () => {
+			guildConfigMock.findByGuildId.mockResolvedValue(heldRow({ onDemandChannels: undefined, userRemovedChannels: undefined }));
+
+			await GuildSetupManager.ensureHomebase(client, guildWithNoCategory());
+
+			expect(autoSetup).toHaveBeenCalledOnce();
+		});
 	});
 });

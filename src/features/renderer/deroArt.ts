@@ -47,6 +47,7 @@ export const DERO_ART_FILES = {
 	// name, so changing it makes refreshIntroEmbeds post one fresh welcome per guild and
 	// move the pin on the next boot, which is that function's designed behavior.
 	welcome: WELCOME_BANNER,
+	invite: MECHA_POSE, // the Add Dero to your server card, sent whole
 	board: MECHA_POSE, // the levels board header
 	levelUp: MECHA_POSE, // an ordinary level up
 	prime: MECHA_POSE, // a prime milestone and an achievement unlock

@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@db/stores/playerRatingStore.js", () => ({ playerRatingStore: { findForPlayers: vi.fn() } }));
 vi.mock("@db/stores/networkConsentStore.js", () => ({ networkConsentStore: { findByUserId: vi.fn() } }));
+// The age gate (2026-11 item 302) runs ahead of every other check in judgeJoin; every case
+// here is a confirmed member unless its own describe block says otherwise.
+const ageMocks = vi.hoisted(() => ({ hasConfirmedAge: vi.fn(async () => true) }));
+vi.mock("@features/age-gate/ageGateRules.js", () => ({ hasConfirmedAge: ageMocks.hasConfirmedAge }));
 
 import { judgeJoin, fitsRoomBand, isKicked, type JoinGateRoom } from "./joinGate.js";
 import { asChallengeReach, isChallengeReach, isWithinReach } from "./challengeReach.js";
@@ -35,6 +39,7 @@ const rated = (userId: string, displayRating: number, ratedGames = SETTLED) => (
 beforeEach(() => {
 	vi.clearAllMocks();
 	ratingsMock.mockResolvedValue([]);
+	ageMocks.hasConfirmedAge.mockResolvedValue(true);
 });
 
 describe("judgeJoin", () => {
@@ -153,5 +158,26 @@ describe("judgeJoin at a network table", () => {
 		consentMock.mockClear();
 		expect(await judgeJoin(room(), JOINER, { alreadyApproved: false })).toEqual({ kind: "admit" });
 		expect(consentMock).not.toHaveBeenCalled();
+	});
+});
+
+// ── the age gate (2026-11 item 302) ────────────────────────────────────────
+describe("judgeJoin and the age gate", () => {
+	it("refuses an unconfirmed member before the removed check never runs this far, and before network consent", async () => {
+		ageMocks.hasConfirmedAge.mockResolvedValue(false);
+		expect(await judgeJoin(room(), JOINER, { alreadyApproved: false })).toEqual({ kind: "refuse", reason: "noAgeConfirmation" });
+		expect(await judgeJoin(room({ network: true }), JOINER, { alreadyApproved: true })).toEqual({ kind: "refuse", reason: "noAgeConfirmation" });
+		expect(networkConsentStore.findByUserId).not.toHaveBeenCalled();
+	});
+
+	it("refuses a removed member as removed before ever asking about age", async () => {
+		ageMocks.hasConfirmedAge.mockResolvedValue(false);
+		expect(await judgeJoin(room({ kickedIds: [JOINER] }), JOINER, { alreadyApproved: false })).toEqual({ kind: "refuse", reason: "kicked" });
+		expect(ageMocks.hasConfirmedAge).not.toHaveBeenCalled();
+	});
+
+	it("goes on to the band and approval as before once the age gate passes", async () => {
+		ageMocks.hasConfirmedAge.mockResolvedValue(true);
+		expect(await judgeJoin(room(), JOINER, { alreadyApproved: false })).toEqual({ kind: "admit" });
 	});
 });

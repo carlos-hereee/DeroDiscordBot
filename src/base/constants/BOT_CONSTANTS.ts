@@ -109,6 +109,9 @@ export const BOT_CONSTANTS = {
 	// channel and the canvas renderer (bot audit 2026-10-30). The guild's own burst cap still
 	// applies on top through the greeter's throttle.
 	GREETING_BUTTON_COOLDOWN_MS: 60_000,
+	// How long a confirm prompt waits for its asker's press. Past it the prompt is rewritten, so a
+	// stale Dismantle or Remove can never be pressed into a delete later.
+	CONFIRM_PROMPT_MS: 60_000,
 	// How long gracefulShutdown may run before the process exits anyway. Railway sends SIGTERM on
 	// every deploy and kills a container that lingers; a hung Mongo close must not outlive it.
 	SHUTDOWN_DEADLINE_MS: 15_000,
@@ -459,6 +462,17 @@ export const BOT_CONSTANTS = {
 		// The longest note the owner may keep on a network ban. Only the owner reads it,
 		// and a short cap keeps a pasted wall of text out of the ban list.
 		BAN_REASON_MAX_LENGTH: 200,
+	},
+
+	// ── age gate (2026-11 item 302, ElevenLabs Startup Grant compliance) ──
+	// What:  the one version number the global 18+ confirmation gate runs on.
+	// Who:   features/age-gate/ageGateRules.ts. Unrelated to any version number the
+	//        client website tracks for its own Terms acceptance; the two never compare.
+	AGE_GATE: {
+		// Raise this when the gate's wording changes what a member is agreeing to: every
+		// row below it then reads as not confirmed, EXCEPT a "declined" row, which is
+		// never current at any version (ageGateRules.isAgeConfirmed).
+		CONFIRMATION_VERSION: 1,
 	},
 
 	// ── dero voice ───────────────────────────────────────────────
@@ -902,6 +916,16 @@ export const BOT_CONSTANTS = {
 		// not a base times ECONOMY.CLAIM_ROUND_MULTIPLIERS, because no multiplier of 1
 		// rounds to the owner's 2 and 3 (owner decision of 2026-10-28).
 		CLAIM: { lost: 1, tie: 2, won: 3 },
+		// The newest claim receipts a coin wallet keeps. A receipt only guards a claim whose log row
+		// is still open, and the row closes right after the wallet write or at the next boot, so
+		// this outlasts any real gap while one receipt a day never grows a wallet without end.
+		CLAIM_RECEIPT_CAP: 20,
+		// What a release's Claim button pays, once per member across every server, by gift. Owner
+		// decision 2026-11-06: games say sorry for a hotfix with currency. A gift stays listed
+		// after its release, because its button stays on that old post and keeps paying.
+		RELEASE_GIFTS: { "age-limit-apology": 5 } as Readonly<Record<string, number>>,
+		// The gift the next announcement's Claim button offers. Null posts no button.
+		CURRENT_RELEASE_GIFT: "age-limit-apology" as string | null,
 	},
 
 	// ── PINGABLE ──────────────────────────────────────────────────
@@ -995,6 +1019,9 @@ export const BOT_CONSTANTS = {
 	// server vault admins grant from. Every amount below is an owner decision of 2026-10-24
 	// (the plan's chip economy rounds) unless its line says otherwise. Chips are never
 	// sold, bought or cashed out of Discord: they are a scorekeeping currency only.
+	// The longest code /secret-code and its Enter a code modal accept.
+	SECRET_CODE_MAX_LENGTH: 100,
+
 	ECONOMY: {
 		// The ChipWallet row whose guildId is this sentinel is a member's one global
 		// wallet (2026-10 item 267 Session 1a). The rows with a real guildId are the per
@@ -1015,6 +1042,10 @@ export const BOT_CONSTANTS = {
 		// the round existed. The first claim's 25,000 is the base the multiplier applies to
 		// (risk R11 in that plan). The coins the round pays are DERO_COINS.CLAIM's table.
 		CLAIM_ROUND_MULTIPLIERS: { won: 2, tie: 1.5, lost: 1 },
+		// The birthday code entered in /secret-code (owner request, 2026-11). One code for every
+		// recipient, and safe in source: it pays only a member who has a gift waiting from
+		// /platform birthday-gift, so knowing it is worth nothing to anyone else.
+		BIRTHDAY_GIFT_CODE: "UP DOWN UP DOWN LEFT LEFT UP RIGHT A B SELECT START",
 		// Owner decision 2026-10-24: a server's vault starts here the first time anything reads it.
 		VAULT_STARTING_CHIPS: 100_000,
 		// Owner decision 2026-10-24 (the plan's data model): the vault keeps its 50 most recent grants.

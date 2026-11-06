@@ -26,7 +26,7 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGui
 // Mocked so the chips off test can prove the press never opens the arcade panel.
 vi.mock("@features/command-buttons/adminCommandLauncher.js", () => ({ openSettingsPanel: mocks.openSettingsPanel }));
 vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { claimFirst: mocks.claimFirst, claimDaily: mocks.claimDaily, findOne: mocks.findChipWallet } }));
-vi.mock("@db/stores/deroCoinStore.js", () => ({ deroCoinStore: { insertAward: mocks.insertAward, credit: mocks.credit, hasClaim: mocks.hasClaim } }));
+vi.mock("@db/stores/deroCoinStore.js", () => ({ deroCoinStore: { insertAward: mocks.insertAward, credit: mocks.credit, creditClaim: async (userId: string, amount: number) => { mocks.credit(userId, amount); return true; }, settleClaim: async () => undefined, findClaim: async () => null, hasClaim: mocks.hasClaim } }));
 vi.mock("@features/ratings/luckStats.js", () => ({ recordLuckResult: mocks.recordLuckResult }));
 vi.mock("@features/games/rpsRenderer.js", () => ({ renderRpsCard: mocks.renderRpsCard }));
 

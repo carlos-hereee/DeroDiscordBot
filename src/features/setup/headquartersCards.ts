@@ -18,19 +18,20 @@ import { readAdoptionChoice } from "./adoption.js";
 import { isMemberRoleGated } from "./communityOverwrites.js";
 import { setupCopy } from "./setupCopy.js";
 import { buildButtons as buildArcadeControlButtons } from "./arcadeControlCards.js";
-import { buildCards as buildTutorialCards, type TutorialRow } from "./tutorialCards.js";
+import { buildCards as buildStepCards, buildSkipButton, cardKeyOf, channelSteps, progressOf, revealedSteps, stepIdOf, type StepProgress, type TutorialRow } from "./tutorialCards.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { DEFAULT_SERVER_TIMEZONE, resolveServerTimezone } from "@utils/tzParser.js";
+import { createGuildQueue } from "@utils/guildQueue.js";
 
 // ── headquartersCards ───────────────────────────────────────────────────────
 // What:  the messages each 🏰 DERO HEADQUARTERS config channel holds under its
-//        intro (2026-10 item 257 Phase 2b, owner item 7): the pinned steps card, a
-//        numbered checklist whose marks are read from the server as it stands and
-//        whose buttons open each step's existing flow, and the drawn settings chart of
+//        intro (2026-10 item 257 Phase 2b, owner item 7): the pinned steps card, the
+//        table of contents, whose marks are read from the server as it stands and
+//        whose buttons jump to each step's existing flow, and the drawn settings chart of
 //        every switch in that channel's domain. 🛠️server-config (2026-10 item 263
-//        Phase 4a) keeps a third, the server switches, between its card and chart, and
-//        🧭onboarding keeps the notice board tutorial cards beneath its chart (2026-11
-//        item 285 Phase 3, tutorialCards.ts), one message per channel an admin builds.
+//        Phase 4a) keeps a third, the server switches. Beneath the steps card sit the step
+//        cards (2026-11 item 289, tutorialCards.ts), revealed one at a time, and the chart
+//        and the switches wait below them until every step is resolved.
 // Who:   GuildSetupManager after a full build and on every boot (refreshIntroEmbeds);
 //        after every change in a domain, fire and forget: the /dero-config and /arcade
 //        commands (the settings panels run them), the voice priority step, the
@@ -43,8 +44,10 @@ import { DEFAULT_SERVER_TIMEZONE, resolveServerTimezone } from "@utils/tzParser.
 // How:   each message is kept like 🕹️games' Challenge Board (maintainGamesBoard): the
 //        stored id first, then adopted by its embed title among Dero's recent
 //        messages, edited in place only when what it shows changed, and posted fresh
-//        beneath a freshly posted intro so the order stays intro, steps, chart. Every
-//        failure logs one line and never throws (rulebook convention 7).
+//        beneath a freshly posted intro so the order stays intro, steps, cards, chart. One
+//        guild's syncs run one after another, each reading the row inside the queue, so a
+//        double press cannot post a card twice. Every failure logs one line and never
+//        throws (rulebook convention 7).
 
 /** The four Headquarters config channels, by the domain each one sets up. */
 export const HEADQUARTERS_DOMAINS = ["deroConfig", "onboarding", "arcadeControl", "serverConfig"] as const;
@@ -129,11 +132,20 @@ export interface HeadquartersRow extends IAdoptionChoiceRow, TutorialRow {
 
 /** One numbered step of a steps card. A step with no customId shows its mark only. */
 export interface SetupStep {
+	// With its domain, the step's id (tutorialCards.stepIdOf) and its card's key.
+	key: string;
+	// A channel step builds a notice board channel; a flow step opens an existing flow.
+	kind: "channel" | "flow";
 	label: string;
 	done: boolean;
+	// True when `done` can read true with nobody acting on it, so the step waits for Continue.
+	needsContinue: boolean;
+	teaching: string;
 	optional?: boolean;
 	note?: string;
 	customId: string | null;
+	// Filled in by readDomainView, the one place the skip list meets a view, so views stay pure.
+	progress?: StepProgress;
 }
 
 /** One message of buttons kept between a domain's steps card and its chart. */
@@ -156,11 +168,39 @@ export interface DomainView {
 	chart: SettingsChartView | null;
 	switches?: SwitchesView;
 	extraButtons?: ButtonBuilder[];
+	// How many rows the step buttons may fill, when it is not MAX_STEP_ROWS.
+	stepRows?: number;
+	// The steps card is the one step's own card, so no step card posts beneath it.
+	ownCardOnly?: boolean;
+}
+
+// The steps whose done mark can read true with nobody acting on it (2026-11 item 289): a
+// saved voice row, nothing adopted, a gate that follows on its own, the arcade switches, a
+// template, leveling, and the rename step, which has nothing to finish. Each waits for a
+// Continue, or the walk would jump past a card nobody saw.
+const CONTINUE_STEPS: ReadonlySet<string> = new Set([
+	"deroConfig:priority",
+	"onboarding:adopted",
+	"onboarding:gating",
+	"arcadeControl:chips",
+	"serverConfig:template",
+	"serverConfig:leveling",
+	"serverConfig:rename",
+]);
+
+/** The fields of a flow step a view decides; the rest follow from its domain and key. */
+type FlowStepFields = Pick<SetupStep, "label" | "done" | "customId" | "optional" | "note">;
+
+function flowStep(domain: HeadquartersDomain, key: string, fields: FlowStepFields): SetupStep {
+	const teaching = (copy.stepTeaching[domain] as Record<string, string>)[key] ?? "";
+	return { ...fields, key, kind: "flow", needsContinue: CONTINUE_STEPS.has(stepIdOf(domain, key)), teaching };
 }
 
 const onOff = { onLabel: copy.on, offLabel: copy.off };
 const toggle = (label: string, on: boolean): SettingsChartRow => ({ label, kind: "switch", on });
 const value = (label: string, text: string): SettingsChartRow => ({ label, kind: "value", value: text });
+
+const DERO_CONFIG_STEP_KEYS = ["voice", "priority"] as const;
 
 /** ⚙️dero-config: Dero's voice row, or its defaults when no admin saved one yet. */
 export function deroConfigView(voice: IDeroVoiceConfig | null): DomainView {
@@ -174,7 +214,7 @@ export function deroConfigView(voice: IDeroVoiceConfig | null): DomainView {
 	const done = [voice?.enabled === true && voice.allowedVoiceChannelIds.length > 0, voice !== null];
 	return {
 		title: domain.title,
-		steps: domain.steps.map((label, index) => ({ label, done: done[index] ?? false, customId: stepCustomId("deroConfig", index + 1) })),
+		steps: domain.steps.map((label, index) => flowStep("deroConfig", DERO_CONFIG_STEP_KEYS[index] ?? "", { label, done: done[index] ?? false, customId: stepCustomId("deroConfig", index + 1) })),
 		chart: {
 			title: domain.chartTitle,
 			subtitle: domain.chartSubtitle,
@@ -206,21 +246,26 @@ export interface OnboardingFacts {
 }
 
 /**
- * 🧭onboarding. Step 2 names the channels Dero adopted, so the choice lives here and no
- * card posts in 🔒inner-sanctum (2026-10 item 263 Phase 4b, R3-19); with none adopted it
- * stays in place as done, its line saying there is nothing to choose, because the marks
- * are index based. Step 4 carries no button: /setup names the member role (option A).
+ * 🧭onboarding: the ten channel steps first, then Community, the server's own channels,
+ * Discord Onboarding and gating (2026-11 item 289). The own channels step names the channels
+ * Dero adopted, so the choice lives here and no card posts in 🔒inner-sanctum (2026-10 item
+ * 263 Phase 4b, R3-19); with none adopted it stays in place as done, its line saying there is
+ * nothing to choose. Gating carries no button: /setup names the member role (option A).
  */
-export function onboardingView(facts: OnboardingFacts): DomainView {
+export function onboardingView(facts: OnboardingFacts, row: HeadquartersRow): DomainView {
 	const domain = copy.onboarding;
 	const [community, adopted, onboarding, gating] = domain.steps;
 	return {
 		title: domain.title,
+		// Past the owner's two row limit on this one channel: its 13 buttons, one per channel it
+		// can build and one per flow, cannot fit in two rows of five.
+		stepRows: 3,
 		steps: [
-			{ label: community, done: facts.communityOn, customId: COMMUNITY_CUSTOM_IDS.enable },
-			{ label: adopted, done: facts.adoptedPlaced, note: facts.adoptedLines.length > 0 ? facts.adoptedLines.join("\n") : domain.nothingAdopted, customId: CHOOSE_BUTTON_ID },
-			{ label: onboarding, done: facts.onboardingOn === true, customId: COMMUNITY_CUSTOM_IDS.configure },
-			{ label: gating, done: facts.gated, note: domain.gatingNote, customId: null },
+			...channelSteps(row, getPluginCopy(row as unknown as ICopyConfig)),
+			flowStep("onboarding", "community", { label: community, done: facts.communityOn, customId: COMMUNITY_CUSTOM_IDS.enable }),
+			flowStep("onboarding", "adopted", { label: adopted, done: facts.adoptedPlaced, note: facts.adoptedLines.length > 0 ? facts.adoptedLines.join("\n") : domain.nothingAdopted, customId: CHOOSE_BUTTON_ID }),
+			flowStep("onboarding", "discordOnboarding", { label: onboarding, done: facts.onboardingOn === true, customId: COMMUNITY_CUSTOM_IDS.configure }),
+			flowStep("onboarding", "gating", { label: gating, done: facts.gated, note: domain.gatingNote, customId: null }),
 		],
 		chart: {
 			title: domain.chartTitle,
@@ -237,6 +282,8 @@ export function onboardingView(facts: OnboardingFacts): DomainView {
 	};
 }
 
+const ARCADE_CONTROL_STEP_KEYS = ["enable", "chips", "reach", "block"] as const;
+
 /** 🎰arcade-control, read from the row alone. The daily claim rides the chip switch. */
 export function arcadeControlView(row: HeadquartersRow): DomainView {
 	const domain = copy.arcadeControl;
@@ -251,18 +298,24 @@ export function arcadeControlView(row: HeadquartersRow): DomainView {
 	// Chips, the monthly post and the bots are one step since they share the /arcade panel
 	// (2026-10 item 263 Phase 4b, owner decision 15); marks, labels and routes stay index based.
 	const done = [arcadeOn, chipsOn && monthlyPost && bots, reach === "network", blocked > 0];
-	const steps = domain.steps.map((label, index) => ({
-		label,
-		done: done[index] ?? false,
-		// Blocking a server is never required, so its step says so rather than nagging.
-		optional: index === domain.steps.length - 1,
-		customId: stepCustomId("arcadeControl", index + 1),
-	}));
+	const steps = domain.steps.map((label, index) =>
+		flowStep("arcadeControl", ARCADE_CONTROL_STEP_KEYS[index] ?? "", {
+			label,
+			done: done[index] ?? false,
+			// Blocking a server is never required, so its step says so rather than nagging.
+			optional: index === domain.steps.length - 1,
+			customId: stepCustomId("arcadeControl", index + 1),
+		})
+	);
 	// While the arcade is off the channel shows one card, the enable step alone, with no
-	// chart and no Dismantle (2026-11 item 285 debug pass, owner ruling). Once it is on that
-	// card is replaced by the rest of the steps, which keep their routes (step 2 is still
-	// hqstep:arcadeControl:2) while the card numbers them from 1.
-	if (!arcadeOn) return { title: domain.enableTitle, steps: steps.slice(0, 1), chart: null };
+	// chart and no Dismantle (2026-11 item 285 debug pass, owner ruling). That card is the
+	// step's own, so it carries the step's Skip until the step is skipped (2026-11 item 289).
+	// Once the arcade is on that card is replaced by the rest of the steps, which keep their
+	// routes (step 2 is still hqstep:arcadeControl:2) while the card numbers them from 1.
+	if (!arcadeOn) {
+		const enableSkipped = (row.setupStepsSkipped ?? []).includes(stepIdOf("arcadeControl", "enable"));
+		return { title: domain.enableTitle, steps: steps.slice(0, 1), chart: null, ownCardOnly: true, extraButtons: enableSkipped ? [] : [buildSkipButton("arcadeControl", "enable")] };
+	}
 	return {
 		title: domain.title,
 		steps: steps.slice(1),
@@ -339,12 +392,9 @@ export function serverConfigView(row: HeadquartersRow, facts: ServerConfigFacts)
 	const optional: Record<ServerConfigStep, boolean> = { timezone: false, template: false, kvkSeason: true, streams: true, events: false, channels: true, leveling: false, rename: true };
 	return {
 		title: domain.title,
-		steps: SERVER_CONFIG_STEPS.map((key, index) => ({
-			label: domain.steps[key],
-			done: done[key],
-			optional: optional[key],
-			customId: stepCustomId("serverConfig", index + 1),
-		})),
+		steps: SERVER_CONFIG_STEPS.map((key, index) =>
+			flowStep("serverConfig", key, { label: domain.steps[key], done: done[key], optional: optional[key], customId: stepCustomId("serverConfig", index + 1) })
+		),
 		chart: {
 			title: domain.chartTitle,
 			subtitle: domain.chartSubtitle,
@@ -418,16 +468,35 @@ async function readOnboardingFacts(guild: Guild, row: HeadquartersRow): Promise<
 }
 
 /**
- * One domain's view as the server stands now. An exhaustive switch (risk R3 of 2026-10
- * item 263): a domain added without its own branch is a compile error at `never`, never
- * a channel that silently draws another domain's card.
+ * A view with each step's progress read from the skip list, the one place the two meet so
+ * the views stay pure. The enable step has no card beneath the steps card, so the line a
+ * skipped step's own card carries sits on its step there instead.
  */
+function withProgress(view: DomainView, domain: HeadquartersDomain, skipped: readonly string[]): DomainView {
+	const steps = view.steps.map((step) => {
+		const progress = progressOf(step, domain, skipped);
+		const note = view.ownCardOnly && progress === "skipped" ? copy.stepCards.skippedLine : step.note;
+		return { ...step, progress, note };
+	});
+	return { ...view, steps };
+}
+
+/** One domain's view as the server stands now, each step carrying its progress. */
 export async function readDomainView(guild: Guild, row: HeadquartersRow, domain: HeadquartersDomain): Promise<DomainView> {
+	return withProgress(await readPlainView(guild, row, domain), domain, row.setupStepsSkipped ?? []);
+}
+
+/**
+ * One domain's view before the skip list. An exhaustive switch (risk R3 of 2026-10 item
+ * 263): a domain added without its own branch is a compile error at `never`, never a
+ * channel that silently draws another domain's card.
+ */
+async function readPlainView(guild: Guild, row: HeadquartersRow, domain: HeadquartersDomain): Promise<DomainView> {
 	switch (domain) {
 		case "deroConfig":
 			return deroConfigView(await deroVoiceConfigStore.findByGuildId(guild.id));
 		case "onboarding":
-			return onboardingView(await readOnboardingFacts(guild, row));
+			return onboardingView(await readOnboardingFacts(guild, row), row);
 		case "arcadeControl":
 			return arcadeControlView(row);
 		case "serverConfig":
@@ -441,11 +510,20 @@ export async function readDomainView(guild: Guild, row: HeadquartersRow, domain:
 
 // ── the steps card ───────────────────────────────────────────────────────────
 
+const PROGRESS_MARKS: Record<StepProgress, string> = { done: copy.done, skipped: copy.skippedMark, open: copy.todo };
+
+// A view read straight from a view builder has met no skip list, so its marks are its own.
+function shownProgress(step: SetupStep): StepProgress {
+	return step.progress ?? (step.done ? "done" : "open");
+}
+
 function stepLine(step: SetupStep, number: number): string {
-	const line = copy.stepLine(step.done ? copy.done : copy.todo, number, step.label);
+	const progress = shownProgress(step);
+	const line = copy.stepLine(PROGRESS_MARKS[progress], number, step.label);
+	const skipped = progress === "skipped" ? ` ${copy.skippedWord}` : "";
 	const optional = step.optional ? ` ${copy.optional}` : "";
 	const note = step.note ? `\n${step.note}` : "";
-	return `${line}${optional}${note}`;
+	return `${line}${skipped}${optional}${note}`;
 }
 
 /**
@@ -458,16 +536,17 @@ export function buildStepButton(customId: string, number: number, done: boolean)
 	return done ? button.setEmoji(copy.done) : button;
 }
 
-/** The steps card: every step with its mark, and a button per step that opens a flow. */
+/** The steps card, the table of contents: every step with its mark, and a button per step that jumps straight to it. */
 export function buildStepsCard(view: DomainView): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
 	const embed = new EmbedBuilder()
 		.setTitle(view.title)
 		.setDescription(view.steps.map((step, index) => stepLine(step, index + 1)).join("\n"))
 		.setColor(COLORS.ADMIN)
 		.setFooter({ text: copy.footer });
-	const buttons = view.steps.flatMap((step, index) => (step.customId ? [buildStepButton(step.customId, index + 1, step.done)] : []));
+	const buttons = view.steps.flatMap((step, index) => (step.customId ? [buildStepButton(step.customId, index + 1, shownProgress(step) === "done")] : []));
 	const components: ActionRowBuilder<ButtonBuilder>[] = [];
-	for (let start = 0; start < buttons.length && components.length < MAX_STEP_ROWS; start += BUTTONS_PER_ROW) {
+	const maxRows = view.stepRows ?? MAX_STEP_ROWS;
+	for (let start = 0; start < buttons.length && components.length < maxRows; start += BUTTONS_PER_ROW) {
 		components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(buttons.slice(start, start + BUTTONS_PER_ROW)));
 	}
 	// Beside the steps, never among them, so a button that is no step keeps its own row and
@@ -577,19 +656,74 @@ async function dropMessage(channel: TextChannel, storedId: string | null | undef
 	}
 }
 
-/** Options for one sync. `forcePost` posts both messages fresh beneath an intro that was just posted. */
-export interface SyncOptions {
-	forcePost?: boolean;
-	row?: HeadquartersRow | null;
+/**
+ * Keep every revealed step card, in step order, beneath whatever the channel already holds.
+ * Answers the card ids to store: the channel slot for a channel card, <domain>-<key> for a flow.
+ */
+async function keepStepCards(
+	channel: TextChannel,
+	row: HeadquartersRow,
+	steps: readonly SetupStep[],
+	domain: HeadquartersDomain,
+	placement: { selfId: string | undefined; forcePost: boolean }
+): Promise<Record<string, string | null>> {
+	const writes: Record<string, string | null> = {};
+	for (const card of buildStepCards(steps, domain, row)) {
+		const storedCardId = row.tutorialCardMessageIds?.[card.key];
+		const cardId = await keepMessage({
+			channel,
+			storedId: storedCardId,
+			title: card.title,
+			...placement,
+			pin: false,
+			shape: { ...shapeOfEmbed(card.message.embeds[0]?.data), buttons: shapeOfRows(card.message.components) },
+			send: () => channel.send(card.message),
+			edit: (message) => message.edit(card.message),
+		});
+		if (cardId && cardId !== storedCardId) writes[`tutorialCardMessageIds.${card.key}`] = cardId;
+	}
+	return writes;
 }
 
 /**
- * Bring one config channel's steps card and chart up to date with the server, and
- * store their ids. Never throws.
+ * The one case a posted step card is deleted (2026-11 item 289): the arcade's cards have no
+ * flow to open while the arcade is off. The skip list stays, so turning the arcade on again
+ * resumes the walk where it stood. A card whose delete failed keeps its id for the next sync.
+ */
+async function dropArcadeStepCards(channel: TextChannel, row: HeadquartersRow): Promise<Record<string, string | null>> {
+	const writes: Record<string, string | null> = {};
+	for (const key of Object.keys(copy.stepTeaching.arcadeControl)) {
+		const cardKey = cardKeyOf({ key, kind: "flow" }, "arcadeControl");
+		const storedCardId = row.tutorialCardMessageIds?.[cardKey];
+		if (!storedCardId) continue;
+		const remainingId = await dropMessage(channel, storedCardId);
+		if (remainingId !== storedCardId) writes[`tutorialCardMessageIds.${cardKey}`] = remainingId;
+	}
+	return writes;
+}
+
+/** Options for one sync. `forcePost` posts every message fresh beneath an intro that was just posted. */
+export interface SyncOptions {
+	forcePost?: boolean;
+}
+
+// One press at a time now moves a walk, so syncs run far more often than boot ever did. Two
+// at once would each read a row with no stored card and post that card twice, so a guild's
+// syncs queue. This queue is the sync's own: a build awaiting a sync on a shared one would
+// wait on itself (utils/guildQueue.ts).
+const syncQueue = createGuildQueue();
+
+/**
+ * Bring one config channel's steps card, step cards and chart up to date with the server,
+ * and store their ids. Queued per guild, the row read inside the queue. Never throws.
  */
 export async function syncHeadquartersChannel(guild: Guild, domain: HeadquartersDomain, options: SyncOptions = {}): Promise<void> {
+	await syncQueue.run(guild.id, () => syncChannelNow(guild, domain, options));
+}
+
+async function syncChannelNow(guild: Guild, domain: HeadquartersDomain, options: SyncOptions): Promise<void> {
 	try {
-		const row = options.row ?? ((await guildConfigStore.findByGuildId(guild.id)) as unknown as HeadquartersRow | null);
+		const row = (await guildConfigStore.findByGuildId(guild.id)) as unknown as HeadquartersRow | null;
 		const field = DOMAIN_CHANNEL_FIELDS[domain];
 		const channelId = row?.[field];
 		if (!row || !channelId) return;
@@ -614,12 +748,21 @@ export async function syncHeadquartersChannel(guild: Guild, domain: Headquarters
 			edit: (message) => message.edit(steps),
 		});
 
-		// Between the card and the chart, so a fresh post reads intro, steps, switches, chart.
+		const { kept, finished } = revealedSteps(view.steps, domain, row.setupStepsSkipped ?? [], row.tutorialCardMessageIds);
+		// Before the switches and the chart, so a server that finishes its last step reads
+		// its held messages below the cards.
+		const writes = view.ownCardOnly ? await dropArcadeStepCards(channel, row) : await keepStepCards(channel, row, kept, domain, { selfId, forcePost });
+
+		// A held message is neither posted nor dropped: it waits for the domain to finish
+		// (2026-11 item 289). One already posted stays and keeps updating, which is what leaves
+		// an existing server its chart and switches. Only the arcade's off view drops a chart.
 		const switchesView = view.switches;
-		const switchesId = switchesView
+		const storedSwitchesId = row.settingsSwitchesMessageIds?.[field];
+		const holdSwitches = !finished && !storedSwitchesId;
+		const switchesId = switchesView && !holdSwitches
 			? await keepMessage({
 					channel,
-					storedId: row.settingsSwitchesMessageIds?.[field],
+					storedId: storedSwitchesId,
 					title: switchesView.title,
 					selfId,
 					forcePost,
@@ -635,8 +778,9 @@ export async function syncHeadquartersChannel(guild: Guild, domain: Headquarters
 
 		const chart = view.chart;
 		const storedChartId = row.settingsChartMessageIds?.[field];
-		let chartId: string | null;
-		if (chart) {
+		const holdChart = chart !== null && !finished && !storedChartId;
+		let chartId: string | null = null;
+		if (chart && !holdChart) {
 			const chartEmbed = settingsChartEmbed(chart);
 			const chartShape = { ...shapeOfEmbed(chartEmbed.data), buttons: shapeOfRows([]) };
 			// Drawn only when the chart must be written: an unchanged chart costs no render.
@@ -660,29 +804,10 @@ export async function syncHeadquartersChannel(guild: Guild, domain: Headquarters
 				// `attachments: []` drops the old drawing, or every redraw would stack another file.
 				edit: async (message) => message.edit(await chartPayload()),
 			});
-		} else {
+		} else if (!chart) {
 			chartId = await dropMessage(channel, storedChartId);
 		}
 
-		const writes: Record<string, string | null> = {};
-		// The tutorial cards come last, so a fresh post reads intro, steps, chart, cards.
-		if (domain === "onboarding") {
-			for (const card of buildTutorialCards(row, getPluginCopy(row as unknown as ICopyConfig))) {
-				const storedCardId = row.tutorialCardMessageIds?.[card.field];
-				const cardId = await keepMessage({
-					channel,
-					storedId: storedCardId,
-					title: card.title,
-					selfId,
-					forcePost,
-					pin: false,
-					shape: { ...shapeOfEmbed(card.message.embeds[0]?.data), buttons: shapeOfRows(card.message.components) },
-					send: () => channel.send(card.message),
-					edit: (message) => message.edit(card.message),
-				});
-				if (cardId && cardId !== storedCardId) writes[`tutorialCardMessageIds.${card.field}`] = cardId;
-			}
-		}
 		if (stepsId && stepsId !== row.setupStepsMessageIds?.[field]) writes[`setupStepsMessageIds.${field}`] = stepsId;
 		if (chartId !== (storedChartId ?? null) && (chartId || storedChartId)) writes[`settingsChartMessageIds.${field}`] = chartId;
 		if (switchesId && switchesId !== row.settingsSwitchesMessageIds?.[field]) writes[`settingsSwitchesMessageIds.${field}`] = switchesId;

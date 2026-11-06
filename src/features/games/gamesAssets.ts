@@ -130,8 +130,10 @@ export const GAME_ASSET_FILES = {
 	// stays the text map. The jail stamp is drawn when present and skipped when not.
 	// The winner banner heads the winner card and the bankrupt Dero badges each
 	// bankrupt seat on it. The Chance and Community Chest card backs are on disk but
-	// nothing renders them yet.
+	// nothing renders them yet. The logo is the owner's Dero City mark (2026-11 item
+	// 293), which leads the room opener and the challenge card.
 	monopolyBoardBase: "monopoly/board-base.png",
+	monopolyLogo: "monopoly/logo.png",
 	monopolyToken1: "monopoly/token-1.png",
 	monopolyToken2: "monopoly/token-2.png",
 	monopolyToken3: "monopoly/token-3.png",

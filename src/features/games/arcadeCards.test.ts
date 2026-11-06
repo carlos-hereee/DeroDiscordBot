@@ -477,9 +477,10 @@ describe("the arcade art", () => {
 		expect(cachedCardCount()).toBe(0);
 	});
 
-	it("puts the game's logo on a hangman or battleship room opener, and nothing on a game without one", () => {
+	it("puts the game's logo on a hangman, battleship or monopoly room opener, and nothing on a game without one", () => {
 		expect(roomOpenerLogo("hangman")?.ref).toBe("attachment://opener-logo-stacked.png");
 		expect(roomOpenerLogo("battleship")?.ref).toBe("attachment://opener-logo.png");
-		expect(roomOpenerLogo("monopoly")).toBeNull();
+		expect(roomOpenerLogo("monopoly")?.ref).toBe("attachment://opener-logo.png");
+		expect(roomOpenerLogo("holdem")).toBeNull();
 	});
 });

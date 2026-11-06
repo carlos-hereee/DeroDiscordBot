@@ -555,10 +555,10 @@ const guildConfigSchema = new Schema(
 			required: false,
 			default: () => ({}),
 		},
-		// 🧭onboarding's notice board tutorial cards (2026-11 item 285 Phase 3), one message per
-		// channel an admin builds by hand, kept beneath the chart by headquartersCards.ts and
-		// keyed by the channel slot each card builds. Stored rather than found by title alone,
-		// because admin answers post in 🧭onboarding too and would push the cards out of the
+		// The step cards of the four config channels (2026-11 item 285 Phase 3, 2026-11 item 289),
+		// one message per step, kept by headquartersCards.ts. A channel step is keyed by the slot
+		// it builds, and a flow step by <domain>-<key>. Stored rather than found by title alone,
+		// because admin answers post in these channels too and would push the cards out of the
 		// recent message scan. Declared key by key for the same reason as its siblings.
 		tutorialCardMessageIds: {
 			type: {
@@ -569,6 +569,26 @@ const guildConfigSchema = new Schema(
 				rulesChannelId: { type: String, required: false, default: null },
 				commandsChannelId: { type: String, required: false, default: null },
 				meetingVoiceChannelId: { type: String, required: false, default: null },
+				commandOutputChannelId: { type: String, required: false, default: null },
+				leaderboardChannelId: { type: String, required: false, default: null },
+				nextDecreeChannelId: { type: String, required: false, default: null },
+				"deroConfig-voice": { type: String, required: false, default: null },
+				"deroConfig-priority": { type: String, required: false, default: null },
+				"onboarding-community": { type: String, required: false, default: null },
+				"onboarding-adopted": { type: String, required: false, default: null },
+				"onboarding-discordOnboarding": { type: String, required: false, default: null },
+				"onboarding-gating": { type: String, required: false, default: null },
+				"arcadeControl-chips": { type: String, required: false, default: null },
+				"arcadeControl-reach": { type: String, required: false, default: null },
+				"arcadeControl-block": { type: String, required: false, default: null },
+				"serverConfig-timezone": { type: String, required: false, default: null },
+				"serverConfig-template": { type: String, required: false, default: null },
+				"serverConfig-kvkSeason": { type: String, required: false, default: null },
+				"serverConfig-streams": { type: String, required: false, default: null },
+				"serverConfig-events": { type: String, required: false, default: null },
+				"serverConfig-channels": { type: String, required: false, default: null },
+				"serverConfig-leveling": { type: String, required: false, default: null },
+				"serverConfig-rename": { type: String, required: false, default: null },
 			},
 			required: false,
 			default: () => ({}),
@@ -716,6 +736,13 @@ const guildConfigSchema = new Schema(
 		// an admin removed the channel on purpose, which an on demand build must respect,
 		// while this one means nobody has needed it yet. A legacy row never gets an entry.
 		onDemandChannels: { type: [String], required: false, default: () => [] as string[] },
+
+		// ── setup steps an admin moved past (2026-11 item 289) ──
+		// Step ids (domain:key, features/setup/tutorialCards.ts) an admin pressed Skip or Continue
+		// on, or whose channel they removed. The config channels read it to reveal their next
+		// card. It is NOT userRemovedChannels: that list tells the sweeps a channel was removed on
+		// purpose, while this one only remembers that the tutorial may move past a step.
+		setupStepsSkipped: { type: [String], required: false, default: () => [] as string[] },
 
 		// ── leaderboard tracking toggle (streamer feedback 2026-05-11) ────
 		// What:  master switch for participation tracking. When true (default),

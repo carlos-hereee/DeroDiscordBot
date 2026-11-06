@@ -74,7 +74,8 @@ describe("turnArcadeOn", () => {
 		expect(await turnArcadeOn(client, guild)).toBe("on");
 		// The rebuilt arcade also starts with its switches on (2026-10 item 257, owner item 11).
 		expect(m.update).toHaveBeenCalledWith("g1", { userRemovedChannels: ["leaderboardChannelId"], chipEconomyEnabled: true, arcadeMonthlyPost: true, botOpponentsEnabled: true });
-		expect(m.ensureHomebase).toHaveBeenCalledWith(client, guild);
+		// Naming the arcade is what gets a press past auto heal off.
+		expect(m.ensureHomebase).toHaveBeenCalledWith(client, guild, { requestedCategory: "gamesCategoryId" });
 		expect(m.refreshIntroEmbeds).toHaveBeenCalledWith(client, guild);
 	});
 
@@ -91,6 +92,21 @@ describe("turnArcadeOn", () => {
 		m.findByGuildId.mockResolvedValueOnce(OFF).mockResolvedValueOnce({ ...OFF, userRemovedChannels: [] });
 
 		expect(await turnArcadeOn(client, guild)).toBe("pending");
+	});
+
+	it("answers on with auto heal off and never writes the stored switch", async () => {
+		m.findByGuildId.mockResolvedValueOnce({ ...OFF, autoHealEnabled: false }).mockResolvedValueOnce({ ...LIVE, autoHealEnabled: false });
+
+		expect(await turnArcadeOn(client, guild)).toBe("on");
+		expect(m.update.mock.calls[0]![1]).not.toHaveProperty("autoHealEnabled");
+	});
+
+	it("sweeps again for a press that built the category but not every channel", async () => {
+		const partlyBuilt = { ...LIVE, arcadeGamesChannelId: null, userRemovedChannels: [] };
+		m.findByGuildId.mockResolvedValueOnce(partlyBuilt).mockResolvedValueOnce(LIVE);
+
+		expect(await turnArcadeOn(client, guild)).toBe("on");
+		expect(m.ensureHomebase).toHaveBeenCalledOnce();
 	});
 
 	it("does nothing to an arcade that is already on", async () => {

@@ -148,13 +148,14 @@ export const MANAGED_CATEGORY_FIELDS = ["categoryId", "gamesCategoryId", "headqu
 
 /**
  * Who asked for a demolition. It becomes the reason Discord's own audit log shows
- * beside every delete, so a server owner reading that log can tell the two apart.
+ * beside every delete, so a server owner reading that log can tell them apart.
  */
-export type DemolitionSource = "self-destruct" | "arcade-off";
+export type DemolitionSource = "self-destruct" | "arcade-off" | "channel-remove";
 
 const DEMOLITION_REASONS: Record<DemolitionSource, string> = {
 	"self-destruct": "Homebase self-destruct",
 	"arcade-off": "Arcade switched off with /arcade off",
+	"channel-remove": "Channel removed from its Dero setup card",
 };
 
 type SelfDestructEntry = ButtonInteraction | ChatInputCommandInteraction | ModalSubmitInteraction;
@@ -507,7 +508,7 @@ async function clearManagedSlots(guildId: string): Promise<void> {
 	try {
 		// The two roles /setup picked go too, so the rebuilt 🔒inner-sanctum starts at step
 		// one with its Set up Dero button, like a new server (isAdminRolePending reads it).
-		await guildConfigStore.update(guildId, { ...cleared, adminRoleId: null, memberRoleId: null, onDemandChannels: [], tutorialCardMessageIds: {} });
+		await guildConfigStore.update(guildId, { ...cleared, adminRoleId: null, memberRoleId: null, onDemandChannels: [], tutorialCardMessageIds: {}, setupStepsSkipped: [] });
 	} catch (error) {
 		console.warn(`[self-destruct] could not clear the stored channel ids in guild ${guildId}; the next /setup rebuilds the old layout`, error);
 	}
@@ -515,8 +516,8 @@ async function clearManagedSlots(guildId: string): Promise<void> {
 
 /**
  * Delete each tracked channel by id, skipping the server's own (keepIds). Best
- * effort: a failed delete is logged and the rest proceed. Shared by self destruct
- * and arcade off, so the two tear down a channel the same way.
+ * effort: a failed delete is logged and the rest proceed. Shared by self destruct,
+ * arcade off and a setup card's Remove, so all three delete a channel the same way.
  */
 export async function demolishChannels(
 	guild: Guild,

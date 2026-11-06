@@ -7,6 +7,7 @@ import type { ButtonInteraction } from "discord.js";
 
 const mocks = vi.hoisted(() => ({
 	handleAddChannel: vi.fn(),
+	handleRemove: vi.fn(),
 	openAdminLaunch: vi.fn(),
 	buttons: new Map<string, (interaction: ButtonInteraction) => Promise<void>>(),
 }));
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./tutorialCards.js", async (importOriginal) => ({
 	...(await importOriginal<typeof import("./tutorialCards.js")>()),
 	handleAddChannel: mocks.handleAddChannel,
+	handleRemove: mocks.handleRemove,
 }));
 vi.mock("@features/command-buttons/adminCommandLauncher.js", () => ({ openAdminLaunch: mocks.openAdminLaunch, openAdminLeaf: vi.fn() }));
 vi.mock("@handlers/interactionRegistry.js", () => ({
@@ -22,13 +24,14 @@ vi.mock("@handlers/interactionRegistry.js", () => ({
 }));
 
 import { registerHeadquartersStepHandlers, stepTarget } from "./headquartersSteps.js";
-import { TUTORIAL_CHANNELS, tutorialCustomId, type TutorialChannelKey } from "./tutorialCards.js";
+import { TUTORIAL_CHANNELS, removeCustomId, tutorialCustomId, type TutorialChannelKey } from "./tutorialCards.js";
 
 const KEYS = Object.keys(TUTORIAL_CHANNELS) as TutorialChannelKey[];
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	mocks.handleAddChannel.mockResolvedValue(undefined);
+	mocks.handleRemove.mockResolvedValue(undefined);
 });
 
 describe("stepTarget for the tutorial cards", () => {
@@ -38,9 +41,34 @@ describe("stepTarget for the tutorial cards", () => {
 
 	it("routes nothing else on 🧭onboarding, and no tutorial tail on another domain", () => {
 		expect(stepTarget("hqstep:onboarding:1")).toBeNull();
-		expect(stepTarget("hqstep:onboarding:tutorial-leaderboard")).toBeNull();
+		expect(stepTarget("hqstep:onboarding:tutorial-arcade")).toBeNull();
 		expect(stepTarget("hqstep:onboarding:tutorial-toString")).toBeNull();
 		expect(stepTarget("hqstep:arcadeControl:tutorial-intro")).toBeNull();
+	});
+});
+
+// 2026-11 item 289: both tails read before the onboarding branch, which answers null to any
+// tail but a tutorial's, and before the number lookup.
+describe("stepTarget for Skip, Continue and Remove", () => {
+	it("routes a skip tail on every domain, the onboarding domain among them", () => {
+		expect(stepTarget("hqstep:onboarding:skip-intro")).toEqual({ kind: "skip", stepId: "onboarding:intro" });
+		expect(stepTarget("hqstep:onboarding:skip-gating")).toEqual({ kind: "skip", stepId: "onboarding:gating" });
+		expect(stepTarget("hqstep:deroConfig:skip-priority")).toEqual({ kind: "skip", stepId: "deroConfig:priority" });
+		expect(stepTarget("hqstep:arcadeControl:skip-enable")).toEqual({ kind: "skip", stepId: "arcadeControl:enable" });
+		expect(stepTarget("hqstep:serverConfig:skip-timezone")).toEqual({ kind: "skip", stepId: "serverConfig:timezone" });
+	});
+
+	it.each(KEYS)("routes %s's Remove", (key) => {
+		expect(stepTarget(`hqstep:onboarding:remove-${key}`)).toEqual({ kind: "remove", key });
+	});
+
+	it("refuses an unknown key, a channel key off 🧭onboarding, and a Remove on any other domain", () => {
+		expect(stepTarget("hqstep:onboarding:skip-nope")).toBeNull();
+		expect(stepTarget("hqstep:serverConfig:skip-intro")).toBeNull();
+		expect(stepTarget("hqstep:onboarding:skip-toString")).toBeNull();
+		expect(stepTarget("hqstep:onboarding:remove-nope")).toBeNull();
+		expect(stepTarget("hqstep:onboarding:remove-toString")).toBeNull();
+		expect(stepTarget("hqstep:serverConfig:remove-intro")).toBeNull();
 	});
 });
 
@@ -53,5 +81,15 @@ describe("a tutorial card's press", () => {
 
 		expect(mocks.handleAddChannel).toHaveBeenCalledWith(press, "welcome");
 		expect(mocks.openAdminLaunch).not.toHaveBeenCalled();
+	});
+
+	it("goes to handleRemove with the card's key from its Remove", async () => {
+		registerHeadquartersStepHandlers();
+		const press = { customId: removeCustomId("meetingVoice") } as unknown as ButtonInteraction;
+
+		await mocks.buttons.get("hqstep")!(press);
+
+		expect(mocks.handleRemove).toHaveBeenCalledWith(press, "meetingVoice");
+		expect(mocks.handleAddChannel).not.toHaveBeenCalled();
 	});
 });

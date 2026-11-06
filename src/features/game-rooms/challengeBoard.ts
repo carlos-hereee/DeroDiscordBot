@@ -64,6 +64,7 @@ import { cardStateFor, challengeCardLink, editOpenerCard, readChallengeChannelId
 import { isSharedBlackjackTable } from "./chipMatch.js";
 import { asChallengeReach, isWithinReach, readChallengeReach } from "./challengeReach.js";
 import { isKicked, judgeJoin } from "./joinGate.js";
+import { hasConfirmedAge, replyWithAgeGate } from "@features/age-gate/ageGateRules.js";
 import {
 	buyInModal,
 	chargeJoiner,
@@ -218,8 +219,17 @@ function settingsContextOf(game: SettingsGame, config: unknown): SettingsContext
  * seconds, so the press makes only the two reads the modal needs, IN PARALLEL: the host's open
  * room and the GuildConfig row, which answers the reach, the bot switch and the rated channel at
  * once. Nothing renders and nothing else is fetched before showModal.
+ *
+ * ⚠️ THE AGE GATE RUNS FIRST (2026-11 item 302), before even the guild check: this is the one
+ * door every "new table" picker and every Host a game button posts through (gameRoomHandlers,
+ * arcadeHost's blackjack table, partyGames, miniGameInChallenges), so gating it here covers a
+ * DM invoked command the same way as a guild one. No draft, modal, or card on a false result.
  */
 export async function offerChallengeDraft(interaction: ModalOpeningInteraction, game: GameSlug): Promise<void> {
+	if (!(await hasConfirmedAge(interaction.user.id))) {
+		await replyWithAgeGate(interaction);
+		return;
+	}
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.outsideGuild] });
@@ -833,6 +843,12 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 	// outside the band is refused, and a host who approves each joiner gets a request.
 	const verdict = await judgeJoin(room, actorId, { alreadyApproved: false });
 	if (verdict.kind === "refuse") {
+		// The age gate (2026-11 item 302) is global and ahead of the network notice; the
+		// member sees the yes/no prompt, or the permanent block if they already declined.
+		if (verdict.reason === "noAgeConfirmation") {
+			await replyWithAgeGate(interaction);
+			return;
+		}
 		// A network table needs the network notice first (2026-10 item 244 Phase 5b); the
 		// member presses Join again once they accept it.
 		if (verdict.reason === "noConsent") {
@@ -893,6 +909,8 @@ export async function acceptBuyIn(interaction: ButtonInteraction, room: IGameRoo
 	if ((room.buyInPaidBy ?? []).includes(actorId)) return notice(gameRoomsCopy.holdem.buyInAlreadyPaid);
 	// A table that plays free seats every pool member at Start, so the invited member is in already.
 	if (!(await isChipDraft(room))) return notice(gameRoomsCopy.holdem.acceptFreeTable);
+	// Checked before the charge, so a member who must answer first is never charged for a seat.
+	if (!(await hasConfirmedAge(actorId))) return replyWithAgeGate(interaction);
 
 	const unpaid = await chargeJoiner(room, actorId);
 	if (unpaid) return notice(unpaid);
@@ -1058,6 +1076,21 @@ function startRefusal(room: IGameRoom): string | null {
 // lists a table while it gathers, so only the seat cap is checked there. A ranked Monopoly match
 // seats only its payers (2026-10 item 276, D4), so it is refused the same way when too few paid.
 async function startSeatRefusal(room: IGameRoom): Promise<string | null> {
+	return (await ageSeatRefusal(room)) ?? (await gameSeatRefusal(room));
+}
+
+// ⚠️ THE ONE AGE CHECK AN INVITED MEMBER MEETS (2026-11 item 302). The host's picker puts a member
+// in the pool with no press of their own, and a free table seats the whole pool, so without this
+// Start would walk past the gate and past a decline. The same words serve both, so the host never
+// learns a member declined. Every Start path reads this, its confirm and the end of the count too.
+async function ageSeatRefusal(room: IGameRoom): Promise<string | null> {
+	const pool = room.spectatorIds ?? [];
+	const confirmed = await Promise.all(pool.map((userId) => hasConfirmedAge(userId)));
+	const waiting = pool.filter((_, index) => !confirmed[index]);
+	return waiting.length > 0 ? gameRoomsCopy.board.startNeedsAge(waiting) : null;
+}
+
+async function gameSeatRefusal(room: IGameRoom): Promise<string | null> {
 	if (room.game === "monopoly") return monopolyPaidSeatRefusal(room);
 	if (room.game === "blackjack") return blackjackRankedSeatRefusal(room);
 	if (room.game !== "holdem") return null;

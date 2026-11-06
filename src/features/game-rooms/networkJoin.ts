@@ -6,6 +6,7 @@ import { networkBanStore } from "@db/stores/networkBanStore.js";
 import { networkConsentStore } from "@db/stores/networkConsentStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { registerButton, registerSelectMenu } from "@handlers/interactionRegistry.js";
+import { replyWithAgeGate } from "@features/age-gate/ageGateRules.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { judgeJoin } from "./joinGate.js";
@@ -47,6 +48,9 @@ const words = rokCommanderCopy.arcadeNetwork;
 /** What a request for a seat came to. The caller turns it into a private reply. */
 export type SeatRequestOutcome =
 	| { kind: "consent" }
+	// The age gate (2026-11 item 302) is global and ahead of the network notice; the
+	// caller answers with replyWithAgeGate, ephemeral, never the board's public answer.
+	| { kind: "ageGate" }
 	| { kind: "refused"; text: string }
 	| { kind: "asked" }
 	| { kind: "seated"; channelId: string }
@@ -99,7 +103,8 @@ function isListable(room: IGameRoom, fromGuildId: string): boolean {
 	return takingPlayers(room) !== null;
 }
 
-function refusalFor(room: IGameRoom, reason: "kicked" | "outsideBand" | "noConsent"): SeatRequestOutcome {
+function refusalFor(room: IGameRoom, reason: "kicked" | "outsideBand" | "noConsent" | "noAgeConfirmation"): SeatRequestOutcome {
+	if (reason === "noAgeConfirmation") return { kind: "ageGate" };
 	if (reason === "noConsent") return { kind: "consent" };
 	if (reason === "kicked") return { kind: "refused", text: words.joinRefusals.removed };
 	return { kind: "refused", text: words.joinRefusals.outsideBand(gameRoomsCopy.gameLabel(room.game)) };
@@ -147,8 +152,8 @@ export async function seatAcceptedRemotePlayer(client: Client, room: IGameRoom, 
 	return seatAcceptedPlayer(client, opened.room, userId, member?.displayName ?? rokCommanderCopy.arcadeSatellites.unknownPlayer);
 }
 
-/** The private words for an outcome. The consent outcome is answered with the notice instead, by each caller. */
-export function describeSeatRequest(outcome: Exclude<SeatRequestOutcome, { kind: "consent" }>): string {
+/** The private words for an outcome. The consent and age gate outcomes are answered with their own prompt instead, by each caller. */
+export function describeSeatRequest(outcome: Exclude<SeatRequestOutcome, { kind: "consent" } | { kind: "ageGate" }>): string {
 	if (outcome.kind === "refused") return outcome.text;
 	if (outcome.kind === "asked") return words.asked;
 	if (outcome.kind === "alreadySeated") return words.alreadySeated(outcome.channelId);
@@ -170,6 +175,10 @@ export async function handleNetworkBoardSelect(interaction: StringSelectMenuInte
 	const outcome = await requestNetworkSeat(interaction.client, interaction.guild, interaction.user.id, target.hostGuildId, target.roomId);
 	if (outcome.kind === "consent") {
 		await answer.send(consentPrompt({ kind: "join", ...target }));
+		return;
+	}
+	if (outcome.kind === "ageGate") {
+		await replyWithAgeGate(interaction);
 		return;
 	}
 	await answer.send({ content: describeSeatRequest(outcome) });
@@ -210,6 +219,14 @@ export async function handleNetworkConsentButton(interaction: ButtonInteraction)
 	// The board request carries on. Acknowledged first, for the same three seconds.
 	await interaction.deferUpdate();
 	const outcome = await requestNetworkSeat(interaction.client, interaction.guild, interaction.user.id, parsed.next.hostGuildId, parsed.next.roomId);
+	// The age gate (2026-11 item 302) is global and ahead of the network notice; the
+	// network consent just accepted still stands, so this is said first, then the age
+	// gate's own ephemeral prompt follows rather than being folded into this edit.
+	if (outcome.kind === "ageGate") {
+		await interaction.editReply({ content: words.consent.accepted, embeds: [], components: [] });
+		await replyWithAgeGate(interaction);
+		return;
+	}
 	// The consent row was just written, so "consent" cannot come back unless the write was
 	// lost; the member is told they are on the network and can pick the table again.
 	const text = outcome.kind === "consent" ? words.consent.accepted : `${words.consent.accepted}\n\n${describeSeatRequest(outcome)}`;

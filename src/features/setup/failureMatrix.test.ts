@@ -22,7 +22,8 @@ import { Collection, DiscordAPIError, RESTJSONErrorCodes, type Client, type Guil
 //   R7  OnboardingCheck regression   guarded: OnboardingCheck.test.ts, both guilds
 //   R8  backfill DMs every owner     driven: one send per guild, spaced, one failure no stop
 //   R9  em dash in new copy          driven: both packs, setupCopy and the new sources
-//   R10 consumer reads a null id     driven: every on demand field has a builder
+//   R10 consumer reads a null id     driven: every on demand field has a card, and no
+//                                    consumer builds one (2026-11 item 289)
 //   R11 Enable stub sends a DM       driven: the handler source has no DM or private reply;
 //                                    the stub itself is retired (2026-11 item 285 debug pass)
 // Owner manual (no seam a test can reach): the live DM and chip render in Discord, the
@@ -260,6 +261,7 @@ describe("R9: a new copy line carries an em or en dash", () => {
 		for (const file of [
 			"features/setup/setupInvitation.ts",
 			"features/setup/onDemandChannel.ts",
+			"features/setup/removeChannel.ts",
 			"features/setup/tutorialCards.ts",
 			"features/setup/arcadeControlCards.ts",
 			"features/setup/renameInfoStep.ts",
@@ -272,22 +274,19 @@ describe("R9: a new copy line carries an em or en dash", () => {
 });
 
 describe("R10: a consumer still reads a null notice board channel id", () => {
-	it("gives every on demand field a builder: a tutorial card, or one of the three feature triggers", () => {
+	it("gives every on demand field a step card, the one way to build it", () => {
 		const tutorialFields = new Set<string>(Object.values(TUTORIAL_CHANNELS));
-		const featureTriggered = new Set(["leaderboardChannelId", "nextDecreeChannelId", "commandOutputChannelId"]);
 		const everyField = GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.categoryField === "categoryId").map((spec) => spec.configField);
 
-		const withoutBuilder = everyField.filter((field) => isOnDemandField(field) && !tutorialFields.has(field) && !featureTriggered.has(field));
+		const withoutCard = everyField.filter((field) => isOnDemandField(field) && !tutorialFields.has(field));
 
-		expect(withoutBuilder).toEqual([]);
-		// A field a trigger names must itself be on demand, or its ensure call would throw.
-		for (const field of featureTriggered) expect(isOnDemandField(field), field).toBe(true);
+		expect(withoutCard).toEqual([]);
 	});
 
-	it("keeps each feature trigger wired to the one helper", () => {
-		expect(sourceOf("features/leveling/LevelsBoard.ts")).toContain('ensureOnDemandChannel(guild, "leaderboardChannelId")');
-		expect(sourceOf("features/schedule/NextUpBoard.ts")).toContain('"nextDecreeChannelId"');
-		expect(sourceOf("utils/answerInChannel.ts")).toContain('ensureOnDemandChannel(guild, "commandOutputChannelId")');
+	it.each(["features/leveling/LevelsBoard.ts", "features/schedule/NextUpBoard.ts", "utils/answerInChannel.ts"])("leaves %s no way to build a channel", (file) => {
+		const source = sourceOf(file);
+		expect(source).not.toContain("ensureOnDemandChannel");
+		expect(source).not.toContain("onDemandChannel.js");
 	});
 });
 

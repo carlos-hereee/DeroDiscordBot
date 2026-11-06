@@ -29,11 +29,11 @@ describe("the asset manifest", () => {
 		}
 	});
 
-	it("declares the fourteen Monopoly slots, all PNGs in the monopoly folder", () => {
-		// The board base, six tokens, house, hotel, two card backs, the jail stamp and
-		// the winner and bankrupt banners: the owner's asset spec, one slot per file.
+	it("declares the fifteen Monopoly slots, all PNGs in the monopoly folder", () => {
+		// The board base, the logo, six tokens, house, hotel, two card backs, the jail
+		// stamp and the winner and bankrupt banners: the owner's asset spec, one slot per file.
 		const monopoly = (Object.keys(GAME_ASSET_FILES) as GameAssetKey[]).filter((key) => key.startsWith("monopoly"));
-		expect(monopoly).toHaveLength(14);
+		expect(monopoly).toHaveLength(15);
 		for (const key of monopoly) expect(GAME_ASSET_FILES[key]).toMatch(/^monopoly\/[a-z0-9-]+\.png$/);
 	});
 });

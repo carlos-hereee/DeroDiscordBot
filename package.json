@@ -1,6 +1,6 @@
 {
 	"name": "dero-discord-bot",
-	"version": "2.0.0",
+	"version": "2.0.1",
 	"description": "This is a discord bot, it will be used to display commander builds ie. talent tress",
 	"main": "./dist/main.js",
 	"scripts": {
