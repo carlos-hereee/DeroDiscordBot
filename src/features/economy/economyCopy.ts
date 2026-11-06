@@ -32,6 +32,20 @@ export function coins(amount: number): string {
 const relative = (at: Date): string => `<t:${Math.floor(at.getTime() / 1000)}:R>`;
 
 export const economyCopy = {
+	// ── /platform birthday-gift, the owner's side (what the member reads is in the copy packs) ──
+	birthdayGift: {
+		title: "🎂 Birthday gift",
+		command: {
+			description: "Set chips aside for a member to collect once with the birthday code",
+			memberOption: "The member the gift is for",
+			chipsOption: "How many chips they collect",
+		},
+		notOwner: "Only the platform owner can set a birthday gift.",
+		notABot: "A bot has no wallet to collect a gift with. Pick a member.",
+		saved: (userId: string, amount: number): string =>
+			`<@${userId}> can collect **${chips(amount)}** once by entering this in \`/secret-code\`:\n\`${BOT_CONSTANTS.ECONOMY.BIRTHDAY_GIFT_CODE}\`\nRun this again before they do to change the amount.`,
+	},
+
 	// ── /claim ──
 	claim: {
 		title: "🪙 Chips",

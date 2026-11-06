@@ -3,7 +3,7 @@ import type { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 
 // ── /platform ──────────────────────────────────────────────────────────────
 // The platform owner's command keeps its own check: ADMIN_COMMANDS never sees it, so
-// all three of its doors, the network group, analytics and the Verse, must refuse everyone but
+// all four of its doors, the network group, analytics, the Verse and the birthday gift, must refuse everyone but
 // CREATOR_DISCORD_ID before they read or write anything.
 
 const mocks = vi.hoisted(() => ({
@@ -58,10 +58,10 @@ beforeEach(() => {
 });
 
 describe("/platform", () => {
-	it("holds the network group, analytics and the Verse, with no Discord default permission", () => {
+	it("holds the network group, analytics, the Verse and the birthday gift, with no Discord default permission", () => {
 		const json = data.toJSON();
 		expect(json.default_member_permissions).toBeUndefined();
-		expect((json.options ?? []).map((option) => option.name)).toEqual(["network", "analytics", "verse"]);
+		expect((json.options ?? []).map((option) => option.name)).toEqual(["network", "analytics", "verse", "birthday-gift"]);
 	});
 
 	it.each([
@@ -87,6 +87,13 @@ describe("/platform", () => {
 		await execute(fake);
 		expect(firstText(reply)).toContain("Only the platform owner can read the Verse");
 		expect(mocks.buildVerse).not.toHaveBeenCalled();
+		expect(mocks.buildReport).not.toHaveBeenCalled();
+	});
+
+	it("refuses /platform birthday-gift to anybody but the platform owner, never reaching analytics", async () => {
+		const { fake, reply } = interaction("admin-1", null, "birthday-gift");
+		await execute(fake);
+		expect(firstText(reply)).toContain("Only the platform owner can set a birthday gift");
 		expect(mocks.buildReport).not.toHaveBeenCalled();
 	});
 

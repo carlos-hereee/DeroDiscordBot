@@ -4,11 +4,13 @@ import { renderAnalyticsCopy } from "@features/renderer/renderAnalyticsCopy.js";
 import { addNetworkBanSubcommands, runNetworkBanSubcommand } from "@features/game-rooms/networkBanSubcommands.js";
 import { addRenderAnalyticsOptions, runRenderAnalyticsSubcommand } from "@features/renderer/renderAnalyticsSubcommand.js";
 import { addVerseSubcommand, runVerseSubcommand } from "@features/platform/verseSubcommand.js";
+import { addBirthdayGiftSubcommand, runBirthdayGiftSubcommand } from "@features/economy/birthdayGiftSubcommand.js";
 
 // ── /platform ─────────────────────────────────────────────────────────
 // What:  the platform owner's tools: the `network` group (ban and unban a member or
-//        a server from every network table), `analytics` (render cache analytics) and
-//        `verse` (the Verse's counts, 2026-10 item 257 Phase 3b).
+//        a server from every network table), `analytics` (render cache analytics),
+//        `verse` (the Verse's counts, 2026-10 item 257 Phase 3b) and `birthday-gift`
+//        (chips a member collects once through /secret-code).
 // Who:   the platform owner ONLY. Each handler checks isPlatformOwner first thing in
 //        its own run, before reading anything; an unset CREATOR_DISCORD_ID refuses
 //        everyone. It carries no Discord default permission, so it shows in every
@@ -22,7 +24,8 @@ export const data = new SlashCommandBuilder()
 	.setDescription(networkCopy.command.platformDescription)
 	.addSubcommandGroup((group) => addNetworkBanSubcommands(group.setName("network").setDescription(networkCopy.command.description)))
 	.addSubcommand((sub) => addRenderAnalyticsOptions(sub.setName("analytics").setDescription(renderAnalyticsCopy.command.analyticsDescription)))
-	.addSubcommand((sub) => addVerseSubcommand(sub));
+	.addSubcommand((sub) => addVerseSubcommand(sub))
+	.addSubcommand((sub) => addBirthdayGiftSubcommand(sub));
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
 	if (interaction.options.getSubcommandGroup(false) === "network") {
@@ -31,6 +34,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	}
 	if (interaction.options.getSubcommand(false) === "verse") {
 		await runVerseSubcommand(interaction);
+		return;
+	}
+	if (interaction.options.getSubcommand(false) === "birthday-gift") {
+		await runBirthdayGiftSubcommand(interaction);
 		return;
 	}
 	await runRenderAnalyticsSubcommand(interaction);

@@ -98,6 +98,12 @@ export async function returnChips(key: WalletKey, amount: number): Promise<void>
 	await chipWalletStore.credit(key, amount);
 }
 
+/** Pay a gift, once ever: true when this call paid it, false when it was already paid. */
+export async function payChipGift(key: WalletKey, amount: number, giftId: string): Promise<boolean> {
+	if (!isWholeChipAmount(amount)) return false;
+	return (await chipWalletStore.creditGift(key, amount, giftId)) !== null;
+}
+
 /** A positive whole number of chips: the only amount a wallet ever moves. */
 export function isWholeChipAmount(amount: number): boolean {
 	return Number.isSafeInteger(amount) && amount > 0;

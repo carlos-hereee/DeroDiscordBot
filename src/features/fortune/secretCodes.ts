@@ -9,6 +9,7 @@
 //   • major      THE-GOLDEN-NOD         0.43  surfaced to PRO/BUSINESS subscribers
 //   • exclusive  SILENT-COULD-BE-MIDAS  0.83  hand-delivered by the owner
 import { fortuneBuffStore } from "@db/stores/fortuneBuffStore.js";
+import { canonicalPhrase } from "@utils/canonicalPhrase.js";
 
 const CODES: ReadonlyArray<{ code: string; weight: number }> = [
 	{ code: "GILDED-BY-SILENT", weight: 0.19 },
@@ -16,17 +17,11 @@ const CODES: ReadonlyArray<{ code: string; weight: number }> = [
 	{ code: "SILENT-COULD-BE-MIDAS", weight: 0.83 },
 ];
 
-// Forgiving match: uppercase and drop everything but letters and digits, so the
-// exact phrasing a member sees ("GILDED BY SILENT" in the announcement, spaces
-// and all) matches the hyphenated constant just the same. Removes the top source
-// of "the code does not work" confusion for a phrase people retype by hand.
-const canon = (raw: string): string => raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
-
 // The matching code entry for a phrase, or null if it matches nothing. Exported
 // so a unit test can assert the map without touching the DB.
 export function matchCode(raw: string): { code: string; weight: number } | null {
-	const key = canon(raw);
-	return CODES.find((c) => canon(c.code) === key) ?? null;
+	const key = canonicalPhrase(raw);
+	return CODES.find((c) => canonicalPhrase(c.code) === key) ?? null;
 }
 
 export type RedeemOutcome =

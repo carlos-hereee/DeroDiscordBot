@@ -307,6 +307,15 @@ export const rokCommanderCopy = {
 		button: "✅ Confirm",
 	},
 
+	// What a member reads on entering the birthday code in /secret-code (economy/chipGift.ts).
+	// `chips` arrives worded, because the amount differs per gift and the message does not.
+	birthdayGift: {
+		title: "🎂 Happy birthday",
+		paid: (chips: string): string =>
+			`🎂 Happy birthday! The creator has awarded you **${chips}**. Congratulations, and may the year ahead treat you like royalty. Your chips are in your wallet now.`,
+		collected: "🎂 Your birthday chips are already in your wallet. Each gift is collected once. Happy birthday again!",
+	},
+
 	// The title over a private text answer shown as a notice modal (2026-10 item 254
 	// Phase 5b), one per feature whose copy lives only in the packs. Discord cuts a modal
 	// title at 45 characters. Both packs carry the same words: a title names the feature.

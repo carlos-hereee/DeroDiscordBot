@@ -1029,6 +1029,10 @@ export const BOT_CONSTANTS = {
 		// the round existed. The first claim's 25,000 is the base the multiplier applies to
 		// (risk R11 in that plan). The coins the round pays are DERO_COINS.CLAIM's table.
 		CLAIM_ROUND_MULTIPLIERS: { won: 2, tie: 1.5, lost: 1 },
+		// The birthday code entered in /secret-code (owner request, 2026-11). One code for every
+		// recipient, and safe in source: it pays only a member who has a gift waiting from
+		// /platform birthday-gift, so knowing it is worth nothing to anyone else.
+		BIRTHDAY_GIFT_CODE: "UP DOWN UP DOWN LEFT LEFT UP RIGHT A B SELECT START",
 		// Owner decision 2026-10-24: a server's vault starts here the first time anything reads it.
 		VAULT_STARTING_CHIPS: 100_000,
 		// Owner decision 2026-10-24 (the plan's data model): the vault keeps its 50 most recent grants.

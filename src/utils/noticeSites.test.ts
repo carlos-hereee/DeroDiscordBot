@@ -517,6 +517,10 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/leveling/xpSubcommands.ts", within: "runXpSubcommand", anchor: "sections: [levelingCopy.errors.botMember", kind: "state" },
 	{ file: "features/leveling/xpSubcommands.ts", within: "runXpSubcommand", anchor: "showErrorNotice(interaction, levelingCopy.errors.noData", kind: "failure" },
 
+	// ── economy/birthdayGiftSubcommand.ts ──
+	{ file: "features/economy/birthdayGiftSubcommand.ts", within: "runBirthdayGiftSubcommand", anchor: "copy.notOwner", kind: "state" },
+	{ file: "features/economy/birthdayGiftSubcommand.ts", within: "runBirthdayGiftSubcommand", anchor: "copy.notABot", kind: "state" },
+	{ file: "features/economy/birthdayGiftSubcommand.ts", within: "runBirthdayGiftSubcommand", anchor: "copy.saved(member.id, amount)", kind: "private", why: "names who the owner is gifting and at what amount, with the code to hand them, for the owner's eyes only" },
 	// ── platform/verseSubcommand.ts ──
 	{ file: "features/platform/verseSubcommand.ts", within: "runVerseSubcommand", kind: "state" },
 

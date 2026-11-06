@@ -75,6 +75,24 @@ export const chipWalletStore = {
 	},
 
 	/**
+	 * Pay a gift once: the chips and the gift's receipt in ONE write, creating the wallet when the
+	 * member has none. Null when this gift was already paid, which surfaces as the upsert colliding
+	 * with the unique index, like claimFirst.
+	 */
+	async creditGift(key: WalletKey, amount: number, giftId: string): Promise<IChipWallet | null> {
+		try {
+			return await ChipWallet.findOneAndUpdate(
+				{ ...globalRow(key), paidGifts: { $ne: giftId } },
+				{ $inc: { balance: amount }, $push: { paidGifts: giftId } },
+				{ upsert: true, new: true }
+			).lean<IChipWallet>();
+		} catch (error) {
+			if (isDuplicateKey(error)) return null;
+			throw error;
+		}
+	},
+
+	/**
 	 * Take chips with a receipt (2026-10 item 276): the debit and the receipt in ONE write, so a
 	 * receipt exists exactly when the chips were taken. Null when the balance does not cover them,
 	 * or this receipt is already open. The receipt list keeps the newest CHIP_RECEIPT_CAP.
