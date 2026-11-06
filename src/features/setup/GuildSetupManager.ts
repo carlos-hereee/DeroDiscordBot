@@ -50,7 +50,6 @@ import { buildMemberControlButtons, buildIcebreakerButton, buildFortuneButton, b
 import { buildVoiceRoomControlRow } from "@features/voice/voiceRoomControls.js";
 import { allowDeroVoiceRooms, replaceDeroVoiceRoom } from "@features/voice/deroVoiceRooms.js";
 import { DOMAIN_CHANNEL_FIELDS, HEADQUARTERS_DOMAINS, syncAllHeadquarters, syncHeadquartersChannel } from "./headquartersCards.js";
-import { buildDeroGifAttachment } from "@base/copy/brand.js";
 import {
 	communityOverwritesFor,
 	dependsOnCommunityState,
@@ -3543,13 +3542,13 @@ export class GuildSetupManager {
 			nextDecreeChannel.send({ embeds: [ChannelContent.nextDecreeIntro(copyConfig)] }),
 			postIntroUnlessOwnerContent(welcomeChannel, "welcomeChannelId"),
 			postIntroUnlessOwnerContent(rulesChannel, "rulesChannelId"),
-			// Standalone invite card in #command-center: short pitch + Dero gif + the
+			// Standalone invite card in #command-center: short pitch + Dero's v2 pose + the
 			// Summon button. Its own message so the wide button is not crammed into
 			// the command guide's row. refreshIntroEmbeds maintains it on boot.
 			commandsChannel.send({
 				embeds: [ChannelContent.inviteCard(copyConfig)],
 				components: GuildSetupManager.inviteCardComponents(copyConfig),
-				files: [buildDeroGifAttachment()],
+				files: [ChannelContent.inviteCardImage().attachment],
 			}),
 			meetingVoiceChannel.send({ embeds: [ChannelContent.voiceRoomIntro(copyConfig)], components: GuildSetupManager.resolveIntroComponents("meetingVoiceChannelId", copyConfig) ?? [] }),
 			commandOutputChannel.send({ embeds: [ChannelContent.commandOutputIntro(copyConfig)] }),
@@ -4035,7 +4034,7 @@ export class GuildSetupManager {
 						try {
 							// attachments: [] drops the old upload so the re-attached file
 							// (attachment://) resolves to the fresh one rather than duplicating.
-							await cardMessage.edit({ embeds: [cardEmbed], components: cardComponents, files: [buildDeroGifAttachment()], attachments: [] });
+							await cardMessage.edit({ embeds: [cardEmbed], components: cardComponents, files: [ChannelContent.inviteCardImage().attachment], attachments: [] });
 							edited += 1;
 						} catch (error) {
 							console.warn(LOG_MESSAGES.setup.introRefreshEditFailed("invite card", guild.id), error);
@@ -4050,7 +4049,7 @@ export class GuildSetupManager {
 					// No card yet (legacy guild migrating onto this feature), post
 					// and track (no pin: command-center is read-only).
 					try {
-						const message = await channel.send({ embeds: [cardEmbed], components: cardComponents, files: [buildDeroGifAttachment()] });
+						const message = await channel.send({ embeds: [cardEmbed], components: cardComponents, files: [ChannelContent.inviteCardImage().attachment] });
 						nextIntroIds.inviteCardId = message.id;
 						needsPersist = true;
 						reposted += 1;

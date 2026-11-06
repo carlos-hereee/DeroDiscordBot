@@ -53,8 +53,8 @@ export const DERO_GIF_URL = "https://www.companyuno.com/dero/dero-default.gif";
 // the SPA's HTML until that web app ships. Two sizes for two jobs:
 //   • the 85 KB still PNG, the per-announcement go-live thumbnail, where the
 //     ~2.8 MB gif would be far too heavy to re-upload every time.
-//   • the ~2.8 MB animated gif, the invite card, a post-once pinned message
-//     where the upload happens rarely and the animation is worth it.
+//   • the ~2.8 MB animated gif, the invite card's fallback while the v2 pose is
+//     not on disk (ChannelContent.inviteCardImage).
 export const DERO_IMAGE_FILE = "dero-avatar-512.png";
 export const DERO_IMAGE_REF = `attachment://${DERO_IMAGE_FILE}`;
 

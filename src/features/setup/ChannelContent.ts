@@ -1,7 +1,7 @@
 import { EmbedBuilder, ButtonBuilder, ButtonStyle, type AttachmentBuilder } from "discord.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
-import { DERO_GIF_URL, COLORS, DERO_GIF_REF } from "@base/copy/brand.js";
+import { DERO_GIF_URL, COLORS, DERO_GIF_REF, buildDeroGifAttachment } from "@base/copy/brand.js";
 import { deroArtAttachment } from "@features/renderer/deroArt.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { CUT_CARD_PENETRATION } from "@features/games/blackjackState.js";
@@ -66,16 +66,25 @@ export const ChannelContent = {
 	// ── invite card ──────────────────────────────────────────────────
 	// What:  a standalone "summon Dero" growth card, pinned in #command-center as
 	//        its OWN message so the wide invite button gets its own embed instead
-	//        of crowding the command guide's button row. Short pitch + the bundled
-	//        animated Dero gif (setImage attachment://) + the Summon button. The
-	//        caller must also upload the gif file (buildDeroGifAttachment).
+	//        of crowding the command guide's button row. Short pitch + the v2 Dero
+	//        pose (setImage attachment://) + the Summon button. The caller must also
+	//        upload the file inviteCardImage names.
 	// Who:   populateChannels (initial post) + refreshIntroEmbeds (maintains it).
 	// How:   brand-indigo (COLORS.DERO) so it reads as a Dero card, not a channel
 	//        intro. The pitch is the guild's pack (channelContent.inviteCard), so a
 	//        template switch rewrites it through refreshIntroEmbeds.
 	inviteCard(guildConfig?: ICopyConfig | null): EmbedBuilder {
 		const card = getPluginCopy(guildConfig).channelContent.inviteCard;
-		return infoEmbed(card.title, card.description, COLORS.DERO).setImage(DERO_GIF_REF);
+		return infoEmbed(card.title, card.description, COLORS.DERO).setImage(ChannelContent.inviteCardImage().ref);
+	},
+
+	/**
+	 * The invite card's image and the file it needs: the v2 pose, or the bundled v1 gif while the
+	 * pose is not on disk, so a missing file can never leave the card with an empty image slot.
+	 * The embed's ref and the file sent with it both come from here, so they cannot disagree.
+	 */
+	inviteCardImage(): { ref: string; attachment: AttachmentBuilder } {
+		return deroArtAttachment("invite") ?? { ref: DERO_GIF_REF, attachment: buildDeroGifAttachment() };
 	},
 
 	// ── invite button ────────────────────────────────────────────────
