@@ -7,6 +7,7 @@ import { botLogStore } from "@db/stores/botLogStore.js";
 import { featureAnnouncedEvent } from "@base/constants/BOT_LOG_EVENTS.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
+import { isDev } from "@utils/config.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 
 // ── postFeatureAnnouncement ──────────────────────────────────────────
@@ -142,7 +143,10 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			// Idempotency: has this guild already seen this version?
 			// botLogStore.has is a single-document indexed lookup, cheap
 			// enough to run once per guild per boot without batching.
-			const alreadyAnnounced = await botLogStore.has(guild.id, eventKey);
+			// A dev bot skips this so every boot reposts while the owner iterates on release copy,
+			// with no reset-feature-announcement run. isDev, never a weaker check: production
+			// must stay once per version, or every restart posts in every server.
+			const alreadyAnnounced = !isDev && (await botLogStore.has(guild.id, eventKey));
 			if (alreadyAnnounced) {
 				skippedAlready += 1;
 				continue;
