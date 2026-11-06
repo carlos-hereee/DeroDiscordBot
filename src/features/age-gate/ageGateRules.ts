@@ -24,7 +24,7 @@ import { infoEmbed } from "@utils/embedBuilder.js";
 // (confirmed, declined, missing) through replyWithAgeGate, never on the boolean alone, so
 // a declined member always sees the permanent block text and never the yes/no prompt again.
 
-/** The customId prefix of the age gate's two buttons, following `<prefix>:<arg>`. */
+/** The customId prefix of the age gate's buttons, following `<prefix>:<arg>`. */
 export const AGE_GATE_PREFIX = "ageGate";
 
 const words = rokCommanderCopy.ageGate;
@@ -54,6 +54,15 @@ export function ageGatePrompt(): { embeds: EmbedBuilder[]; components: ActionRow
 	return { embeds: [ageGateEmbed()], components: [row] };
 }
 
+/** The second step after I'm under 18: nothing is saved until its first button is pressed. */
+export function ageGateDeclineConfirm(): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
+	const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+		new ButtonBuilder().setCustomId(`${AGE_GATE_PREFIX}:noConfirm`).setLabel(words.declineConfirm.confirmLabel).setStyle(ButtonStyle.Danger),
+		new ButtonBuilder().setCustomId(`${AGE_GATE_PREFIX}:back`).setLabel(words.declineConfirm.backLabel).setStyle(ButtonStyle.Secondary)
+	);
+	return { embeds: [infoEmbed(words.declineConfirm.title, words.declineConfirm.body, COLORS.ARCADE as ColorResolvable)], components: [row] };
+}
+
 /** The permanent block for a declined member: plain text, no buttons, no embed. */
 export function ageGateBlockedNotice(): { content: string; embeds: []; components: [] } {
 	return { content: words.blocked, embeds: [], components: [] };
@@ -77,26 +86,37 @@ export async function replyWithAgeGate(interaction: RepliableInteraction): Promi
 }
 
 /**
- * I'm 18 or older, or I'm under 18, on the ephemeral prompt. "yes" cannot resume the
- * command or press that asked for the gate: that interaction is a separate, now stale one,
- * so the member is told to press or type it again rather than have a fragile replay
- * mechanism attempt to reconstruct it. "no" edits this same ephemeral message in place to
- * the permanent block, with its buttons removed.
+ * The buttons on the ephemeral prompt. "yes" cannot resume the command or press that asked
+ * for the gate: that interaction is a separate, now stale one, so the member is told to
+ * press or type it again rather than have a fragile replay mechanism attempt to reconstruct
+ * it. "no" and "back" move between the prompt and its confirm step and save nothing, and only
+ * "noConfirm" saves a decline. Every button reads the row or the guarded write first, because
+ * a prompt can sit open behind a decline made elsewhere, and a declined member only ever
+ * sees the block.
  */
 async function handleAgeGateButton(interaction: ButtonInteraction): Promise<void> {
 	const answer = interaction.customId.split(":")[1];
-	const now = new Date();
+	const version = BOT_CONSTANTS.AGE_GATE.CONFIRMATION_VERSION;
 	if (answer === "yes") {
-		await ageConfirmationStore.accept(interaction.user.id, BOT_CONSTANTS.AGE_GATE.CONFIRMATION_VERSION, now);
-		await interaction.update({ content: words.confirmedPressAgain, embeds: [], components: [] });
+		const saved = await ageConfirmationStore.accept(interaction.user.id, version, new Date());
+		await interaction.update(saved ? { content: words.confirmedPressAgain, embeds: [], components: [] } : ageGateBlockedNotice());
 		return;
 	}
-	if (answer !== "no") return;
-	await ageConfirmationStore.decline(interaction.user.id, BOT_CONSTANTS.AGE_GATE.CONFIRMATION_VERSION, now);
-	await interaction.update(ageGateBlockedNotice());
+	if (answer === "noConfirm") {
+		await ageConfirmationStore.decline(interaction.user.id, version, new Date());
+		await interaction.update(ageGateBlockedNotice());
+		return;
+	}
+	if (answer !== "no" && answer !== "back") return;
+	const row = await ageConfirmationStore.findByUserId(interaction.user.id);
+	if (row?.status === "declined") {
+		await interaction.update(ageGateBlockedNotice());
+		return;
+	}
+	await interaction.update(answer === "no" ? ageGateDeclineConfirm() : ageGatePrompt());
 }
 
-/** Register the age gate's two buttons. Called once at boot from main.ts, beside the other register*Handlers calls. */
+/** Register the age gate's buttons. Called once at boot from main.ts, beside the other register*Handlers calls. */
 export function registerAgeGateHandlers(): void {
 	registerButton(AGE_GATE_PREFIX, handleAgeGateButton);
 }

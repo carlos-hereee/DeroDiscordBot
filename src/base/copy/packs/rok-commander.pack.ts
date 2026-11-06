@@ -1364,7 +1364,7 @@ export const rokCommanderCopy = {
 		public: {
 			title: "⚔️ A NEW BOARD IN THE ARCADE",
 			description:
-				"Warriors.\n\nA small update, one day after the great one.\n\n**A new board.** The long board game in the arcade has new art and a logo of its own on its challenge card and match opener. Start a match from 🕹️games or with `/mini-game`.\n\n**Your keepers' setup.** Setting me up now goes one step at a time, and the forms that were failing work again.\n\nWant something I do not do yet? Press the Suggestion Box below.\n\nRise well, warriors.",
+				"Warriors.\n\nA small update, one day after the great one.\n\nDue to the nature of some games, the arcade is now 18 and over. The realm has placed an age limit on the arcade. The first time you start or join a game, I will ask you to confirm your age. It is one press, and you only answer once. We apologize for the inconvenience.\n\n**A new board.** The long board game in the arcade has new art and a logo of its own on its challenge card and match opener. Start a match from 🕹️games or with `/mini-game`.\n\n**Your keepers' setup.** Setting me up now goes one step at a time, and the forms that were failing work again.\n\nWant something I do not do yet? Press the Suggestion Box below.\n\nRise well, warriors.",
 		},
 		innerSanctum: {
 			title: "🏛️ THE ORACLE EXPLAINS WHAT CHANGED",
@@ -1775,9 +1775,16 @@ export const rokCommanderCopy = {
 			acceptLabel: "I'm 18 or older",
 			declineLabel: "I'm under 18",
 		},
+		// The second step before a decline saves, because a member cannot undo one themselves.
+		declineConfirm: {
+			title: "Are you sure?",
+			body: "If you confirm you are under 18, you will not be able to play, and you cannot change this answer yourself.",
+			confirmLabel: "Yes, I'm under 18",
+			backLabel: "Go back",
+		},
 		// The original command or press is a separate, now stale interaction, so this is
 		// the honest answer rather than a fragile attempt to replay it.
 		confirmedPressAgain: "Confirmed. Run that command again to play.",
-		blocked: "Sorry, Dero is only for players 18 and older.",
+		blocked: "Sorry, Dero is only for players 18 and older. If you answered by mistake, email support@companyuno.com.",
 	},
 };

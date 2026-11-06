@@ -1023,7 +1023,7 @@ export const generalEventsCopy: IPluginCopy = {
 		public: {
 			title: "⚔️ A NEW BOARD IN THE ARCADE",
 			description:
-				"Warriors.\n\nA small update, one day after the great one.\n\n**A new board.** The long board game in the arcade has new art and a logo of its own on its challenge card and match opener. Start a match from 🕹️games or with `/mini-game`.\n\n**Your keepers' setup.** Setting me up now goes one step at a time, and the forms that were failing work again.\n\nWant something I do not do yet? Press the Suggestion Box below.\n\nRise well, warriors.",
+				"Warriors.\n\nA small update, one day after the great one.\n\nDue to the nature of some games, the arcade is now 18 and over. The realm has placed an age limit on the arcade. The first time you start or join a game, I will ask you to confirm your age. It is one press, and you only answer once. We apologize for the inconvenience.\n\n**A new board.** The long board game in the arcade has new art and a logo of its own on its challenge card and match opener. Start a match from 🕹️games or with `/mini-game`.\n\n**Your keepers' setup.** Setting me up now goes one step at a time, and the forms that were failing work again.\n\nWant something I do not do yet? Press the Suggestion Box below.\n\nRise well, warriors.",
 		},
 		innerSanctum: {
 			title: "🏛️ THE ORACLE EXPLAINS WHAT CHANGED",
