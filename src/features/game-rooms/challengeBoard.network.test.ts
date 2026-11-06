@@ -21,6 +21,9 @@ vi.mock("@db/stores/networkBanStore.js", () => ({ networkBanStore: { findAgainst
 vi.mock("./RoomProvisioner.js", () => ({ RoomProvisioner: { open: vi.fn() }, describeRoomOpenFailure: () => "nope" }));
 vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedValue(null), describeSoloOpenFailure: () => "nope" }));
 vi.mock("./challengeCardRenderer.js", () => ({ renderChallengeCard: vi.fn().mockResolvedValue(null), challengeCardView: vi.fn().mockResolvedValue({}) }));
+// The age gate (2026-11 item 302) runs in offerChallengeDraft and joinChallenge; every case
+// here is a confirmed member unless a case says otherwise.
+vi.mock("@features/age-gate/ageGateRules.js", () => ({ hasConfirmedAge: vi.fn(async () => true), replyWithAgeGate: vi.fn() }));
 
 import { chooseVisibility, joinChallenge, confirmStartMatch } from "./challengeBoard.js";
 import { openerCardEmbed } from "./challengeBoardEmbeds.js";

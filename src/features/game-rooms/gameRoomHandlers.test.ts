@@ -12,6 +12,9 @@ vi.mock("./roomLifecycle.js", () => ({
 	roomLifecycle: { archiveNow: vi.fn(), finish: vi.fn() },
 }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+// The age gate (2026-11 item 302) runs in offerChallengeDraft (through gameRoomHandlers'
+// per game button); every case here is a confirmed member unless a case says otherwise.
+vi.mock("@features/age-gate/ageGateRules.js", () => ({ hasConfirmedAge: vi.fn(async () => true), replyWithAgeGate: vi.fn() }));
 
 import { _handleGameRoomButton, _handleGameRoomConfirm } from "./gameRoomHandlers.js";
 import { parseGameRoomCustomId } from "./gameRoomActions.js";
