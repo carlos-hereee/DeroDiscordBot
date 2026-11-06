@@ -3,6 +3,7 @@ import type { ButtonBuilder } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { GuildSetupManager, isAdminRolePending } from "./GuildSetupManager.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
+import { buildEnterCodeButton } from "@features/secret-codes/secretCodeEntry.js";
 import { buildSelfDestructButton } from "@features/setup/selfDestruct.js";
 import { buildAdminControlButtons, buildMemberControlButtons, buildProfileButtons } from "@features/power-ups/PowerUps.js";
 
@@ -28,8 +29,8 @@ const rowIds = (field: string, adminRoleId: string | null = SET_ADMIN_ROLE): Arr
 	(internals.resolveIntroComponents(field, null, adminRoleId) ?? []).map((row) => row.toJSON().components.map((component) => component.custom_id));
 
 describe("the guides' buttons", () => {
-	it("give #command-center the member buttons: Account, Levels, Achievements, Suggestion Box and Toggle pings, and no Fortune", () => {
-		expect(rowIds("commandsChannelId").flat()).toEqual(idsOf([...buildProfileButtons(), buildSuggestionBoxButton(), ...buildMemberControlButtons()]));
+	it("give #command-center the member buttons: Account, Levels, Achievements, Suggestion Box, Enter a code and Toggle pings, and no Fortune", () => {
+		expect(rowIds("commandsChannelId").flat()).toEqual(idsOf([...buildProfileButtons(), buildSuggestionBoxButton(), buildEnterCodeButton(), ...buildMemberControlButtons()]));
 	});
 
 	// 2026-10 item 254: the Summon Dero card is posted in #command-center, so its Fortune

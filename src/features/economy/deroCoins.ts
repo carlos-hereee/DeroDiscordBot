@@ -12,8 +12,8 @@ import { utcDayKey, utcDayStart } from "@utils/utcMonthKey.js";
 //        result and the daily claim pay, into one global wallet per member.
 // Who:   features/games/gameXp.ts beside every game's XP award (awardForResult), the
 //        Hold'em placements in roomHoldemHandlers.ts, the daily claim round in
-//        features/economy/chipClaim.ts (awardForClaim), and the /account card
-//        (readCoinBalance).
+//        features/economy/chipClaim.ts (awardForClaim), a release's Claim button
+//        (awardReleaseGift), and the /account card (readCoinBalance).
 // Does NOT: spend coins, or decide amounts inline: every number
 //        is BOT_CONSTANTS.DERO_COINS, the owner's to tune.
 // How:   ① insert the CoinAward row; ② only when that insert succeeded, $inc the wallet.
@@ -177,6 +177,28 @@ export async function awardForClaim(claim: { guildId: string; userId: string; ou
 	} catch (error) {
 		console.error(`[economy] paying the daily claim's Dero coins to ${claim.userId} in guild ${claim.guildId} failed`, error);
 		return 0;
+	}
+}
+
+/** What a press of a release's Claim button did. `unknown` is a gift DERO_COINS does not list. */
+export type ReleaseGiftOutcome = { status: "paid"; amount: number } | { status: "already" } | { status: "unknown" } | { status: "failed" };
+
+/**
+ * Pay a release's apology coins, once per member per gift across every server. Each gift takes
+ * a claim row of its own, keyed so no UTC day key can ever equal it, which keeps the existing
+ * unique claim index as the guard and leaves the daily claim's own row untouched. Never throws.
+ */
+export async function awardReleaseGift(gift: { guildId: string; userId: string; giftKey: string; now: Date }): Promise<ReleaseGiftOutcome> {
+	const amount = BOT_CONSTANTS.DERO_COINS.RELEASE_GIFTS[gift.giftKey];
+	if (!amount) return { status: "unknown" };
+	try {
+		const inserted = await deroCoinStore.insertAward({ userId: gift.userId, guildId: gift.guildId, amount, source: "claim", claimKey: `release:${gift.giftKey}`, at: gift.now });
+		if (!inserted) return { status: "already" };
+		await deroCoinStore.credit(gift.userId, amount);
+		return { status: "paid", amount };
+	} catch (error) {
+		console.error(`[economy] paying release gift ${gift.giftKey} to ${gift.userId} in guild ${gift.guildId} failed`, error);
+		return { status: "failed" };
 	}
 }
 

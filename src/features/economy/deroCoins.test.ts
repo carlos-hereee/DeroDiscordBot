@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@db/stores/deroCoinStore.js", () => ({ deroCoinStore: mocks }));
 
-import { awardForClaim, awardForResult, claimKeyFor, coinAmountFor, coinTierOf, readCoinBalance } from "./deroCoins.js";
+import { awardForClaim, awardForResult, awardReleaseGift, claimKeyFor, coinAmountFor, coinTierOf, readCoinBalance } from "./deroCoins.js";
 
 const NOW = new Date("2026-10-27T15:00:00Z");
 const BOT = "dero-bot-red";
@@ -124,6 +124,34 @@ describe("awardForResult", () => {
 		mocks.insertAward.mockRejectedValue(new Error("db down"));
 		await expect(awardForResult({ guildId: "g1", game: "rps", resultKey: "room1", players: [{ userId: "u1", outcome: "won" }], now: NOW })).resolves.toBeUndefined();
 		expect(mocks.credit).not.toHaveBeenCalled();
+	});
+});
+
+describe("awardReleaseGift", () => {
+	const gift = { guildId: "g1", userId: "u1", giftKey: "age-limit-apology", now: NOW };
+
+	it("pays the listed coins, on a claim row of its own that no UTC day key can equal", async () => {
+		await expect(awardReleaseGift(gift)).resolves.toEqual({ status: "paid", amount: 5 });
+		expect(mocks.insertAward).toHaveBeenCalledWith(expect.objectContaining({ userId: "u1", amount: 5, source: "claim", claimKey: "release:age-limit-apology" }));
+		expect(mocks.credit).toHaveBeenCalledWith("u1", 5);
+	});
+
+	it("pays nothing on a second press, in this server or another", async () => {
+		mocks.insertAward.mockResolvedValue(false);
+		await expect(awardReleaseGift({ ...gift, guildId: "g2" })).resolves.toEqual({ status: "already" });
+		expect(mocks.credit).not.toHaveBeenCalled();
+	});
+
+	it("pays nothing for a gift the table does not list", async () => {
+		await expect(awardReleaseGift({ ...gift, giftKey: "made-up" })).resolves.toEqual({ status: "unknown" });
+		expect(mocks.insertAward).not.toHaveBeenCalled();
+	});
+
+	it("never throws to the button", async () => {
+		const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		mocks.insertAward.mockRejectedValue(new Error("the network dropped"));
+		await expect(awardReleaseGift(gift)).resolves.toEqual({ status: "failed" });
+		logged.mockRestore();
 	});
 });
 

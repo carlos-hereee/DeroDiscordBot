@@ -1,5 +1,10 @@
 import type { IEmbedField, IRankName } from "../types.js";
 import { COLORS, FOOTER, AUTHOR } from "../brand.js";
+import { BOT_CONSTANTS } from "../../constants/BOT_CONSTANTS.js";
+
+// Shown in the release post, read from the table the Claim button pays from, so the two
+// cannot disagree.
+const APOLOGY_COINS = BOT_CONSTANTS.DERO_COINS.RELEASE_GIFTS["age-limit-apology"];
 
 // ── ROK Commander copy pack ───────────────────────────────────────────────
 // What:  the canonical "kingdom voice" copy for the original ROK Commander
@@ -1373,12 +1378,12 @@ export const rokCommanderCopy = {
 		public: {
 			title: "⚔️ A NEW BOARD IN THE ARCADE",
 			description:
-				"Warriors.\n\nA small update, one day after the great one.\n\nDue to the nature of some games, the arcade is now 18 and over. The realm has placed an age limit on the arcade. The first time you start or join a game, I will ask you to confirm your age. It is one press, and you only answer once. We apologize for the inconvenience.\n\n**A new board.** The long board game in the arcade has new art and a logo of its own on its challenge card and match opener. Start a match from 🕹️games or with `/mini-game`.\n\n**Your keepers' setup.** Setting me up now goes one step at a time, and the forms that were failing work again.\n\nWant something I do not do yet? Press the Suggestion Box below.\n\nRise well, warriors.",
+				`Warriors.\n\nA small update.\n\nDue to the nature of some games, the arcade is now 18 and over. The realm has placed an age limit on the arcade. The first time you start or join a game, I will ask you to confirm your age. It is one press, and you only answer once. We apologize for the inconvenience.\n\n**A gift for your patience.** Press Claim below and I will add ${APOLOGY_COINS} Dero coins to your wallet. Each member claims them once.\n\n**A new board.** The long board game in the arcade has new art and a logo of its own on its challenge card and match opener. Start a match from 🕹️games or with \`/mini-game\`.\n\n**Your keepers' setup.** Setting me up now goes one step at a time, and the forms that were failing work again.\n\nGot an idea for my next trick? Drop it in the Suggestion Box below.\n\nRise well, warriors.`,
 		},
 		innerSanctum: {
 			title: "🏛️ THE ORACLE EXPLAINS WHAT CHANGED",
 			description:
-				"Those who hold the reins.\n\nVersion 2.0.1 is a small one, and nearly all of it is about setup.\n\n**One card at a time.** ⚙️dero-config, 🧭onboarding, 🎰arcade-control and 🛠️server-config each show the next step on its own card, and the steps card's buttons jump to any step. The settings chart and the switches appear once a channel's steps are finished, and a server that already has them keeps them.\n\n**Every step can be skipped.** A skipped step says so on its card, and you can come back to it.\n\n**Nothing is built unless you ask.** A level up, an upcoming event or a member's command no longer creates a channel, and a rebuild leaves alone the channels you left out and an arcade you switched off.\n\n**A ready channel can be removed.** A notice board channel's card offers Remove behind a confirm. A channel I built is deleted, and Add this channel brings an empty one back. A channel that was already yours stays with its messages, and I stop using it.\n\n**Fixes.** Button forms with a dropdown save again. Turn the arcade on and `/arcade on` now build the arcade while auto heal is off, and a partly built arcade can be pressed again to finish.\n\n**New art.** The long board game has a new board and a logo of its own.",
+				`Those who hold the reins.\n\nVersion 2.0.1 is small: an age limit on the arcade, and a better setup.\n\n**The arcade is now 18 and over.** The first time a member starts or joins a game, I ask them to confirm their age, once. Invited members confirm too, and a match cannot start until they have. As an apology, the public post's Claim button gives each member ${APOLOGY_COINS} Dero coins.\n\n**One card at a time.** ⚙️dero-config, 🧭onboarding, 🎰arcade-control and 🛠️server-config each show the next step on its own card, and the steps card's buttons jump to any step. The settings chart and the switches appear once a channel's steps are finished, and a server that already has them keeps them.\n\n**Every step can be skipped.** A skipped step says so on its card, and you can come back to it.\n\n**Nothing is built unless you ask.** A level up, an upcoming event or a member's command no longer creates a channel, and a rebuild leaves alone the channels you left out and an arcade you switched off.\n\n**A ready channel can be removed.** A notice board channel's card offers Remove behind a confirm. A channel I built is deleted, and Add this channel brings an empty one back. A channel that was already yours stays with its messages, and I stop using it.\n\n**Fixes.** Button forms with a dropdown save again. Turn the arcade on and \`/arcade on\` now build the arcade while auto heal is off, and a partly built arcade can be pressed again to finish.\n\n**New art.** The long board game has a new board and a logo of its own.`,
 		},
 	},
 

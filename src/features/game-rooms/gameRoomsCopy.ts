@@ -962,6 +962,8 @@ export const gameRoomsCopy = {
 		alreadyJoined: "You already joined this one.",
 		hostCannotJoin: "You are the host. You are already in.",
 		poolEmpty: "Nobody has joined yet, so there is nobody to play against.",
+		startNeedsAge: (userIds: readonly string[]): string =>
+			`${userIds.map((userId) => `<@${userId}>`).join(" ")} must confirm their age before this match can start. They can do that by starting any game from 🕹️games or with \`/mini-game\`. You can also change who is invited.`,
 		poolFull: (max: number): string => `This challenge already has ${max} members. Start it or call it off.`,
 		needVisibility: "Choose who can see the room first.",
 		draftGone: "That challenge is no longer open.",

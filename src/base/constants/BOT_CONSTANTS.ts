@@ -916,6 +916,12 @@ export const BOT_CONSTANTS = {
 		// not a base times ECONOMY.CLAIM_ROUND_MULTIPLIERS, because no multiplier of 1
 		// rounds to the owner's 2 and 3 (owner decision of 2026-10-28).
 		CLAIM: { lost: 1, tie: 2, won: 3 },
+		// What a release's Claim button pays, once per member across every server, by gift. Owner
+		// decision 2026-11-06: games say sorry for a hotfix with currency. A gift stays listed
+		// after its release, because its button stays on that old post and keeps paying.
+		RELEASE_GIFTS: { "age-limit-apology": 5 } as Readonly<Record<string, number>>,
+		// The gift the next announcement's Claim button offers. Null posts no button.
+		CURRENT_RELEASE_GIFT: "age-limit-apology" as string | null,
 	},
 
 	// ── PINGABLE ──────────────────────────────────────────────────
@@ -1009,6 +1015,9 @@ export const BOT_CONSTANTS = {
 	// server vault admins grant from. Every amount below is an owner decision of 2026-10-24
 	// (the plan's chip economy rounds) unless its line says otherwise. Chips are never
 	// sold, bought or cashed out of Discord: they are a scorekeeping currency only.
+	// The longest code /secret-code and its Enter a code modal accept.
+	SECRET_CODE_MAX_LENGTH: 100,
+
 	ECONOMY: {
 		// The ChipWallet row whose guildId is this sentinel is a member's one global
 		// wallet (2026-10 item 267 Session 1a). The rows with a real guildId are the per

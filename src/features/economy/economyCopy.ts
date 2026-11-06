@@ -46,6 +46,16 @@ export const economyCopy = {
 			`<@${userId}> can collect **${chips(amount)}** once by entering this in \`/secret-code\`:\n\`${BOT_CONSTANTS.ECONOMY.BIRTHDAY_GIFT_CODE}\`\nRun this again before they do to change the amount.`,
 	},
 
+	// ── a release announcement's Claim button (announcements/releaseCoinGift.ts) ──
+	releaseGift: {
+		title: "🪙 Dero coins",
+		buttonLabel: "Claim",
+		paid: (amount: number): string => `**${coins(amount)}** added to your wallet. Thank you for your patience.`,
+		already: "You already claimed these Dero coins. Each member claims them once, in any server.",
+		closed: "This gift is no longer on offer.",
+		failed: "Those coins did not reach your wallet. Press Claim again in a moment.",
+	},
+
 	// ── /claim ──
 	claim: {
 		title: "🪙 Chips",

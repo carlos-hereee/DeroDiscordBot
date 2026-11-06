@@ -85,6 +85,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { hasConfirmedAge } from "@features/age-gate/ageGateRules.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { _runStartCountdownsOut } from "./startCountdown.js";
 import { startCountdownState } from "./startCountdownState.js";
@@ -267,6 +268,20 @@ describe("starting the match", () => {
 
 		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
 		expect(reply.content).toMatch(/nobody has joined/i);
+	});
+
+	// The host's picker seats a member with no press of their own, so Start is where an invited
+	// member meets the age gate (2026-11 item 302).
+	it("refuses to start while an invited member has not confirmed their age, naming only them", async () => {
+		vi.mocked(hasConfirmedAge).mockImplementation(async (userId) => userId !== "b");
+		const interaction = makeButton(HOST, members);
+		await startMatch(interaction, makeRoom({ visibility: "invite", spectatorIds: ["a", "b"] }));
+		vi.mocked(hasConfirmedAge).mockImplementation(async () => true);
+
+		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
+		expect(reply.content).toBe(gameRoomsCopy.board.startNeedsAge(["b"]));
+		expect(reply.content).not.toContain("<@a>");
+		expect(RoomProvisioner.open).not.toHaveBeenCalled();
 	});
 
 	// One candidate needs no question. More than one does, and asking is what makes

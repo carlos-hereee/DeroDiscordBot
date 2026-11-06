@@ -42,8 +42,13 @@ export const fortuneCopy = {
 // Same feature-local pattern as fortuneCopy above: centralized, no hardcoded
 // strings in the handler. Dero voice, always shown ephemerally.
 export const secretCodeCopy = {
-	commandDescription: "Redeem a secret code for a permanent luck buff on your readings",
-	codeOptionDescription: "The secret phrase you have uncovered",
+	commandDescription: "Enter a secret code to redeem what it holds",
+	codeOptionDescription: "The code you were given or have uncovered",
+
+	// The Enter a code button on #command-center and the modal it opens.
+	buttonLabel: "Enter a code",
+	modalTitle: "Enter a code",
+	modalFieldLabel: "Your code",
 
 	// percent is the user's resulting effective ultra chance.
 	granted: (percent: number): string =>

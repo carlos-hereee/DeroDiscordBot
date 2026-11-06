@@ -356,8 +356,8 @@ const INVENTORY: readonly NoticeEntry[] = [
 	// ── commands/fun/rating.ts ──
 	{ file: "commands/fun/rating.ts", within: "execute", kind: "state" },
 
-	// ── commands/fun/secret-code.ts ──
-	{ file: "commands/fun/secret-code.ts", within: "execute", kind: "private", why: "what a secret code did is the member's own secret: posted in a channel it would give the code away to everyone who saw it work" },
+	// ── secret-codes/secretCodeEntry.ts ──
+	{ file: "features/secret-codes/secretCodeEntry.ts", within: "answerSecretCode", kind: "private", why: "what a secret code did is the member's own secret: posted in a channel it would give the code away to everyone who saw it work" },
 
 	// ── commands/admin/creator-lab-live-link.ts ──
 	{ file: "commands/admin/creator-lab-live-link.ts", within: "execute", kind: "state", count: 3 },
@@ -517,6 +517,8 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/leveling/xpSubcommands.ts", within: "runXpSubcommand", anchor: "sections: [levelingCopy.errors.botMember", kind: "state" },
 	{ file: "features/leveling/xpSubcommands.ts", within: "runXpSubcommand", anchor: "showErrorNotice(interaction, levelingCopy.errors.noData", kind: "failure" },
 
+	// ── announcements/releaseCoinGift.ts ──
+	{ file: "features/announcements/releaseCoinGift.ts", within: "handleReleaseGiftClaim", kind: "private", why: "what one member's press paid into their own wallet, on a public post everyone presses" },
 	// ── economy/birthdayGiftSubcommand.ts ──
 	{ file: "features/economy/birthdayGiftSubcommand.ts", within: "runBirthdayGiftSubcommand", anchor: "copy.notOwner", kind: "state" },
 	{ file: "features/economy/birthdayGiftSubcommand.ts", within: "runBirthdayGiftSubcommand", anchor: "copy.notABot", kind: "state" },

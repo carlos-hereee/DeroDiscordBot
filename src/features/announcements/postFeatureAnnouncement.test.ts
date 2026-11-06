@@ -19,7 +19,7 @@ vi.mock("@features/suggestion-box/SuggestionBox.js", async () => {
 	return { buildSuggestionBoxButton: () => new ButtonBuilder().setCustomId("suggestion").setLabel("Suggest").setStyle(ButtonStyle.Primary) };
 });
 
-import { postFeatureAnnouncements } from "./postFeatureAnnouncement.js";
+import { linkReleaseChannels, postFeatureAnnouncements } from "./postFeatureAnnouncement.js";
 
 const makeChannel = () => {
 	const channel = Object.create(TextChannel.prototype) as TextChannel;
@@ -47,7 +47,25 @@ beforeEach(() => {
 	mocks.findByGuildId.mockResolvedValue({ setupComplete: true, announcementsChannelId: "announcements", adminChannelId: "admin" });
 });
 
+describe("linkReleaseChannels", () => {
+	it("links a channel the server has and leaves one it lacks as a plain name", () => {
+		expect(linkReleaseChannels("⚙️dero-config and 🧭onboarding", { deroConfigChannelId: "111", onboardingConfigChannelId: null })).toBe("<#111> and 🧭onboarding");
+	});
+});
+
 describe("postFeatureAnnouncements", () => {
+	it("puts Claim beside the Suggestion Box on the public post only, and links the admin post's channels", async () => {
+		mocks.has.mockResolvedValue(false);
+		mocks.findByGuildId.mockResolvedValue({ setupComplete: true, announcementsChannelId: "announcements", adminChannelId: "admin", serverConfigChannelId: "222" });
+		const { publicSend, adminSend } = await boot();
+
+		const publicPost = publicSend.mock.calls[0][0] as { components: { toJSON(): { components: { label?: string }[] } }[] };
+		expect(publicPost.components[0].toJSON().components.map((button) => button.label)).toEqual(["Claim", "Suggest"]);
+		const adminPost = adminSend.mock.calls[0][0] as { components?: unknown[]; embeds: { data: { description: string } }[] };
+		expect(adminPost.components).toBeUndefined();
+		expect(adminPost.embeds[0].data.description).toContain("<#222>");
+	});
+
 	it("posts nothing to a guild that already has this version outside dev", async () => {
 		const { publicSend, adminSend } = await boot();
 		expect(publicSend).not.toHaveBeenCalled();

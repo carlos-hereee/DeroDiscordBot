@@ -14,6 +14,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		archiveDraft: vi.fn(),
 	},
 }));
+vi.mock("@features/age-gate/ageGateRules.js", () => ({ hasConfirmedAge: vi.fn(async () => true), replyWithAgeGate: vi.fn() }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { debitWithReceipt: vi.fn(), refundReceipt: vi.fn(), closeReceipt: vi.fn(), credit: vi.fn() } }));
 vi.mock("./RoomProvisioner.js", () => ({ RoomProvisioner: { open: vi.fn() }, describeRoomOpenFailure: () => "nope" }));
@@ -32,6 +33,8 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // Every buy in happens on the card, so the room deals as it opens: the card's Start refuses a
 // table that could not deal a hand, and an Invite only card's invited members pay through
 // Accept and buy in, on the same ledger Join uses, charged once and refunded once (risk R7).
+
+import { hasConfirmedAge, replyWithAgeGate } from "@features/age-gate/ageGateRules.js";
 
 const storeMock = gameRoomStore as unknown as Record<"findByRoomId" | "update" | "holdBuyInCharge" | "recordBuyInCharge" | "releaseBuyInCharges" | "takeBuyInPaid" | "archiveDraft", ReturnType<typeof vi.fn>>;
 const configMock = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
@@ -162,6 +165,15 @@ describe("Call it off", () => {
 });
 
 describe("Accept and buy in", () => {
+	it("asks an unconfirmed invited member their age and charges nothing", async () => {
+		vi.mocked(hasConfirmedAge).mockResolvedValueOnce(false);
+		const interaction = press(INVITED);
+		await acceptBuyIn(interaction, holdemDraft());
+
+		expect(replyWithAgeGate).toHaveBeenCalledWith(interaction);
+		expect(walletMock.debitWithReceipt).not.toHaveBeenCalled();
+	});
+
 	it("charges an invited member the buy in once and records it on the ledger", async () => {
 		const interaction = press(INVITED);
 		await acceptBuyIn(interaction, holdemDraft());

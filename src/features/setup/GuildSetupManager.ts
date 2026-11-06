@@ -37,6 +37,7 @@ import { ChannelContent } from "./ChannelContent.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import type { IPluginCopy } from "@base/copy/types.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
+import { buildEnterCodeButton } from "@features/secret-codes/secretCodeEntry.js";
 import { buildSelfDestructButton } from "@features/setup/selfDestruct.js";
 import { ADMIN_COMMAND_BUTTON_PREFIX } from "@features/command-buttons/adminGuideButtons.js";
 import { buildArcadeHostRow, buildHangmanCategoryStartRow } from "@features/games/arcadeHost.js";
@@ -1512,13 +1513,13 @@ export class GuildSetupManager {
 		switch (field) {
 			case "commandsChannelId":
 				// #command-center guide, two rows: the three /account views, then
-				// Suggestion Box and Toggle pings. Each answers privately. The invite
+				// Suggestion Box, Enter a code and Toggle pings. Each answers privately. The invite
 				// button and the Icebreaker button are NOT here: they live on the
 				// standalone Summon Dero card (inviteCardComponents). Fortune left both
 				// for the 🕹️games daily row (2026-10 item 254), since it is a game.
 				return [
 					new ActionRowBuilder<ButtonBuilder>().addComponents(...buildProfileButtons()),
-					new ActionRowBuilder<ButtonBuilder>().addComponents(buildSuggestionBoxButton(), ...buildMemberControlButtons()),
+					new ActionRowBuilder<ButtonBuilder>().addComponents(buildSuggestionBoxButton(), buildEnterCodeButton(), ...buildMemberControlButtons()),
 				];
 			case "adminChannelId":
 				// 🔒inner-sanctum, the owner's channel, carries the owner only Self destruct

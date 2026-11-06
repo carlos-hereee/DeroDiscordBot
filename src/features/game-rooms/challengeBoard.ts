@@ -909,6 +909,8 @@ export async function acceptBuyIn(interaction: ButtonInteraction, room: IGameRoo
 	if ((room.buyInPaidBy ?? []).includes(actorId)) return notice(gameRoomsCopy.holdem.buyInAlreadyPaid);
 	// A table that plays free seats every pool member at Start, so the invited member is in already.
 	if (!(await isChipDraft(room))) return notice(gameRoomsCopy.holdem.acceptFreeTable);
+	// Checked before the charge, so a member who must answer first is never charged for a seat.
+	if (!(await hasConfirmedAge(actorId))) return replyWithAgeGate(interaction);
 
 	const unpaid = await chargeJoiner(room, actorId);
 	if (unpaid) return notice(unpaid);
@@ -1074,6 +1076,21 @@ function startRefusal(room: IGameRoom): string | null {
 // lists a table while it gathers, so only the seat cap is checked there. A ranked Monopoly match
 // seats only its payers (2026-10 item 276, D4), so it is refused the same way when too few paid.
 async function startSeatRefusal(room: IGameRoom): Promise<string | null> {
+	return (await ageSeatRefusal(room)) ?? (await gameSeatRefusal(room));
+}
+
+// ⚠️ THE ONE AGE CHECK AN INVITED MEMBER MEETS (2026-11 item 302). The host's picker puts a member
+// in the pool with no press of their own, and a free table seats the whole pool, so without this
+// Start would walk past the gate and past a decline. The same words serve both, so the host never
+// learns a member declined. Every Start path reads this, its confirm and the end of the count too.
+async function ageSeatRefusal(room: IGameRoom): Promise<string | null> {
+	const pool = room.spectatorIds ?? [];
+	const confirmed = await Promise.all(pool.map((userId) => hasConfirmedAge(userId)));
+	const waiting = pool.filter((_, index) => !confirmed[index]);
+	return waiting.length > 0 ? gameRoomsCopy.board.startNeedsAge(waiting) : null;
+}
+
+async function gameSeatRefusal(room: IGameRoom): Promise<string | null> {
 	if (room.game === "monopoly") return monopolyPaidSeatRefusal(room);
 	if (room.game === "blackjack") return blackjackRankedSeatRefusal(room);
 	if (room.game !== "holdem") return null;
