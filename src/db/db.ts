@@ -1,10 +1,17 @@
 import mongoose from "mongoose";
-import { uri } from "@utils/config.js";
+import { isDev, uri } from "@utils/config.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
+import { reachesProductionDatabase } from "./productionDatabaseGuard.js";
 
 export async function connectMongoose(): Promise<void> {
 	if (!uri) {
 		console.error(LOG_MESSAGES.db.missingUri);
+		process.exit(1);
+	}
+	// isDev, never !isProduction: a Railway boot with NODE_ENV unset must still start, so the
+	// guard can only ever stop a process that says it is development.
+	if (isDev && reachesProductionDatabase(uri)) {
+		console.error(LOG_MESSAGES.db.productionUriInDev);
 		process.exit(1);
 	}
 

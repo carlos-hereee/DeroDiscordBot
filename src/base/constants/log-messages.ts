@@ -260,6 +260,7 @@ export const LOG_MESSAGES = {
 	// ── db ─────────────────────────────────────────────────────────────
 	db: {
 		missingUri: "[ERROR] MONGOOSE_URI environment variable is not set.",
+		productionUriInDev: "[ERROR] MONGOOSE_URI points at the production cluster and NODE_ENV is development. Refusing to boot: point .env at the dev cluster.",
 		connected: "\n\n✅ Connected to MongoDB",
 		// Connection lifecycle. Mongoose auto-reconnects by default; these just
 		// make the transitions visible in Railway logs so a flaky Atlas link is

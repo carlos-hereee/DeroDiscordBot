@@ -1019,6 +1019,11 @@ export const BOT_CONSTANTS = {
 	// server vault admins grant from. Every amount below is an owner decision of 2026-10-24
 	// (the plan's chip economy rounds) unless its line says otherwise. Chips are never
 	// sold, bought or cashed out of Discord: they are a scorekeeping currency only.
+	// The production Atlas cluster's host suffix, which a dev boot refuses (db/productionDatabaseGuard.ts).
+	// A host, not a credential, and a constant rather than an env value so a missing .env line
+	// cannot switch the guard off. Update it if production ever moves cluster.
+	PRODUCTION_DATABASE_CLUSTER: "3p9glw9.mongodb.net",
+
 	// The longest code /secret-code and its Enter a code modal accept.
 	SECRET_CODE_MAX_LENGTH: 100,
 
