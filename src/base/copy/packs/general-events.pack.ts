@@ -1158,4 +1158,8 @@ export const generalEventsCopy: IPluginCopy = {
 	// And the network board, consent and door words (2026-10 item 244 Phase 5b), for
 	// the same reason again.
 	arcadeNetwork: rokCommanderCopy.arcadeNetwork,
+
+	// The age gate (2026-11 item 302) is a legal confirmation, not flavor text, so every
+	// voice reads it the same.
+	ageGate: rokCommanderCopy.ageGate,
 };

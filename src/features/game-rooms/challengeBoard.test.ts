@@ -63,6 +63,9 @@ vi.mock("@features/economy/chipWallet.js", async (importOriginal) => ({
 // sees the text card alone; the view is a fixed fake so no case needs avatars.
 const cardMocks = vi.hoisted(() => ({ renderChallengeCard: vi.fn(), challengeCardView: vi.fn() }));
 vi.mock("./challengeCardRenderer.js", () => cardMocks);
+// The age gate (2026-11 item 302) runs in offerChallengeDraft and joinChallenge; every case
+// here is a confirmed member unless a case says otherwise.
+vi.mock("@features/age-gate/ageGateRules.js", () => ({ hasConfirmedAge: vi.fn(async () => true), replyWithAgeGate: vi.fn() }));
 
 import {
 	openInvitePicker,

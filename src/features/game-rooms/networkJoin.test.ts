@@ -28,6 +28,9 @@ vi.mock("./networkBoard.js", async (importOriginal) => ({
 	...(await importOriginal<typeof import("./networkBoard.js")>()),
 	scheduleNetworkBoardRefresh: mocks.scheduleRefresh,
 }));
+// The age gate (2026-11 item 302) runs inside judgeJoin, which requestNetworkSeat calls for
+// every request; every case here is a confirmed member unless a case says otherwise.
+vi.mock("@features/age-gate/ageGateRules.js", () => ({ hasConfirmedAge: vi.fn(async () => true), replyWithAgeGate: vi.fn() }));
 
 import { handleNetworkBoardSelect, handleNetworkConsentButton, requestNetworkSeat, seatAcceptedRemotePlayer } from "./networkJoin.js";
 import { consentAcceptId } from "./networkRules.js";

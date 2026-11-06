@@ -64,6 +64,7 @@ import { cardStateFor, challengeCardLink, editOpenerCard, readChallengeChannelId
 import { isSharedBlackjackTable } from "./chipMatch.js";
 import { asChallengeReach, isWithinReach, readChallengeReach } from "./challengeReach.js";
 import { isKicked, judgeJoin } from "./joinGate.js";
+import { hasConfirmedAge, replyWithAgeGate } from "@features/age-gate/ageGateRules.js";
 import {
 	buyInModal,
 	chargeJoiner,
@@ -218,8 +219,17 @@ function settingsContextOf(game: SettingsGame, config: unknown): SettingsContext
  * seconds, so the press makes only the two reads the modal needs, IN PARALLEL: the host's open
  * room and the GuildConfig row, which answers the reach, the bot switch and the rated channel at
  * once. Nothing renders and nothing else is fetched before showModal.
+ *
+ * ⚠️ THE AGE GATE RUNS FIRST (2026-11 item 302), before even the guild check: this is the one
+ * door every "new table" picker and every Host a game button posts through (gameRoomHandlers,
+ * arcadeHost's blackjack table, partyGames, miniGameInChallenges), so gating it here covers a
+ * DM invoked command the same way as a guild one. No draft, modal, or card on a false result.
  */
 export async function offerChallengeDraft(interaction: ModalOpeningInteraction, game: GameSlug): Promise<void> {
+	if (!(await hasConfirmedAge(interaction.user.id))) {
+		await replyWithAgeGate(interaction);
+		return;
+	}
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.outsideGuild] });
@@ -833,6 +843,12 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 	// outside the band is refused, and a host who approves each joiner gets a request.
 	const verdict = await judgeJoin(room, actorId, { alreadyApproved: false });
 	if (verdict.kind === "refuse") {
+		// The age gate (2026-11 item 302) is global and ahead of the network notice; the
+		// member sees the yes/no prompt, or the permanent block if they already declined.
+		if (verdict.reason === "noAgeConfirmation") {
+			await replyWithAgeGate(interaction);
+			return;
+		}
 		// A network table needs the network notice first (2026-10 item 244 Phase 5b); the
 		// member presses Join again once they accept it.
 		if (verdict.reason === "noConsent") {

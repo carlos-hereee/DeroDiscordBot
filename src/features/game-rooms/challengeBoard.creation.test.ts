@@ -44,6 +44,9 @@ vi.mock("./hostControls.js", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("./hostControls.js")>();
 	return { ...actual, applyApproval: vi.fn(actual.applyApproval), applyRatingBand: vi.fn(actual.applyRatingBand), applySpectatorMode: vi.fn(actual.applySpectatorMode) };
 });
+// The age gate (2026-11 item 302) runs first in offerChallengeDraft; every case here is a
+// confirmed member unless a case says otherwise.
+vi.mock("@features/age-gate/ageGateRules.js", () => ({ hasConfirmedAge: vi.fn(async () => true), replyWithAgeGate: vi.fn() }));
 
 import { confirmChallengeDraft, confirmSettingsEdit, offerChallengeDraft, offerToFreeSlot, openSettingsEditor } from "./challengeBoard.js";
 import { applyApproval, applyRatingBand, applySpectatorMode } from "./hostControls.js";

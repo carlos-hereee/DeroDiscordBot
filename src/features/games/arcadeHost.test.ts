@@ -25,6 +25,9 @@ vi.mock("@features/game-rooms/challengeBoard.js", () => ({
 // A solo Blackjack table's buy in at the press (2026-10 item 267); its wallet rules have their own suite.
 const PAID_SEATS = { buyIn: 1000, userIds: ["member-1"], charged: true };
 vi.mock("@features/game-rooms/holdemDraftBuyIn.js", () => ({ chargeSoloTable: vi.fn(async () => ({ ok: true, seats: PAID_SEATS })) }));
+// The age gate (2026-11 item 302) runs first in openSoloRoomForMember and offerChallengeDraft;
+// every case here is a confirmed member unless a case says otherwise.
+vi.mock("@features/age-gate/ageGateRules.js", () => ({ hasConfirmedAge: vi.fn(async () => true), replyWithAgeGate: vi.fn() }));
 
 import { buildHangmanCategoryStartRow, registerArcadeHostHandlers } from "./arcadeHost.js";
 import { chargeSoloTable } from "@features/game-rooms/holdemDraftBuyIn.js";

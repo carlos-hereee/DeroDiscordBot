@@ -13,6 +13,7 @@ import { refreshTableCard } from "./challengeCard.js";
 import { isSharedBlackjackTable } from "./chipMatch.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { judgeJoin } from "./joinGate.js";
+import { replyWithAgeGate } from "@features/age-gate/ageGateRules.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { roomTrail } from "./roomTrail.js";
 
@@ -71,6 +72,12 @@ export async function joinBlackjackTable(interaction: ButtonInteraction, room: I
 	if (seatRefusal) return notice(LATE_SEAT_REFUSALS[seatRefusal]);
 	const verdict = await judgeJoin(room, userId, { alreadyApproved: false });
 	if (verdict.kind === "refuse") {
+		// The age gate (2026-11 item 302) answers ephemerally, where the same text modal
+		// notice() shows cannot carry buttons.
+		if (verdict.reason === "noAgeConfirmation") {
+			await replyWithAgeGate(interaction);
+			return;
+		}
 		return notice(verdict.reason === "kicked" ? hostWords.kick.refusedRejoin : hostWords.band.refused(gameRoomsCopy.gameLabel(room.game)));
 	}
 	if (verdict.kind === "ask") {

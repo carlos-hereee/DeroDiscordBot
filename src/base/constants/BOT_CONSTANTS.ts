@@ -464,6 +464,17 @@ export const BOT_CONSTANTS = {
 		BAN_REASON_MAX_LENGTH: 200,
 	},
 
+	// ── age gate (2026-11 item 302, ElevenLabs Startup Grant compliance) ──
+	// What:  the one version number the global 18+ confirmation gate runs on.
+	// Who:   features/age-gate/ageGateRules.ts. Unrelated to any version number the
+	//        client website tracks for its own Terms acceptance; the two never compare.
+	AGE_GATE: {
+		// Raise this when the gate's wording changes what a member is agreeing to: every
+		// row below it then reads as not confirmed, EXCEPT a "declined" row, which is
+		// never current at any version (ageGateRules.isAgeConfirmed).
+		CONFIRMATION_VERSION: 1,
+	},
+
 	// ── dero voice ───────────────────────────────────────────────
 	// What:  every number and provider string the voice feature runs on: the
 	//        monthly spend cap, the /dero-config input bounds, the speech call's

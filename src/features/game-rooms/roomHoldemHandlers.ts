@@ -47,6 +47,7 @@ import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isClockExpired, pausedDeadline, roomDrawingKey, withDrawingPause } from "./drawingPause.js";
 import { judgeJoin } from "./joinGate.js";
+import { replyWithAgeGate } from "@features/age-gate/ageGateRules.js";
 import { labelEmbedForRoom, labelForRoom, relayMove, relayState } from "./satelliteRooms.js";
 import { consentPrompt } from "./networkRules.js";
 import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
@@ -391,6 +392,12 @@ export async function handleBuyIn(interaction: ButtonInteraction, room: IGameRoo
 	// the band and the host's answer on the way in, so they are not asked twice.
 	const verdict = await judgeJoin(room, userId, { alreadyApproved: room.playerIds.includes(userId) });
 	if (verdict.kind === "refuse") {
+		// The age gate (2026-11 item 302) is global and ahead of the network notice; the
+		// member sees the yes/no prompt, or the permanent block if they already declined.
+		if (verdict.reason === "noAgeConfirmation") {
+			await replyWithAgeGate(interaction);
+			return;
+		}
 		// A network table's seat needs the network notice first (2026-10 item 244 Phase 5b):
 		// the member gets the notice where it was pressed (2026-10 item 257 Phase 5), and presses
 		// Buy in again once they accept it.

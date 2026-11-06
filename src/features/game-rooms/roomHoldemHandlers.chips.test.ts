@@ -13,6 +13,9 @@ vi.mock("@features/ratings/recordMatchRatings.js", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@features/ratings/recordMatchRatings.js")>()),
 	recordMatchRatings: vi.fn(),
 }));
+// The age gate (2026-11 item 302) runs inside judgeJoin, which handleBuyIn calls for every
+// press; every case here is a confirmed member unless a case says otherwise.
+vi.mock("@features/age-gate/ageGateRules.js", () => ({ hasConfirmedAge: vi.fn(async () => true), replyWithAgeGate: vi.fn() }));
 
 import { handleBuyIn, handleLeaveTable, removeFromTable } from "./roomHoldemHandlers.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";

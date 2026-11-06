@@ -1764,4 +1764,20 @@ export const rokCommanderCopy = {
 				`🏷️ <@${userId}>, your server tag belongs to **${server}**, which is not on the network yet. Ask its admins to open it with /arcade reach, and its rated wins can count toward a server ranking.`,
 		},
 	},
+
+	// The global 18+ confirmation gate (2026-11 item 302, ElevenLabs Startup Grant
+	// compliance). Plain and practical rather than in the kingdom voice, since this is a
+	// legal confirmation, not flavor text; general-events reuses these words unchanged.
+	ageGate: {
+		prompt: {
+			title: "Age check",
+			body: "Dero is for players 18 and older. Please confirm your age to play.",
+			acceptLabel: "I'm 18 or older",
+			declineLabel: "I'm under 18",
+		},
+		// The original command or press is a separate, now stale interaction, so this is
+		// the honest answer rather than a fragile attempt to replay it.
+		confirmedPressAgain: "Confirmed. Run that command again to play.",
+		blocked: "Sorry, Dero is only for players 18 and older.",
+	},
 };

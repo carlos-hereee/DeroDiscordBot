@@ -36,6 +36,7 @@ import { refreshAllLeaderboards } from "@features/leaderboard/LeaderboardBoard.j
 import { registerScheduleControlHandlers } from "@features/schedule/ScheduleControls.js";
 import { registerSuggestionBoxHandlers } from "@features/suggestion-box/SuggestionBox.js";
 import { registerArcadeHostHandlers } from "@features/games/arcadeHost.js";
+import { registerAgeGateHandlers } from "@features/age-gate/ageGateRules.js";
 import { registerSoloLuckHandlers } from "@features/games/soloLuck.js";
 import { registerClaimRoundHandlers } from "@features/economy/chipClaim.js";
 import { registerCoinMarketHandlers } from "@features/economy/coinMarketPanel.js";
@@ -380,6 +381,10 @@ process.on("uncaughtException", (err) => {
 	registerLeaderboardChannelHandlers();
 	registerScheduleControlHandlers();
 	registerSuggestionBoxHandlers();
+	// The global 18+ confirmation gate's yes/no buttons (2026-11 item 302), on the one
+	// "ageGate" prefix. Registered early, like the rest, so a prompt posted by an earlier
+	// deploy keeps answering.
+	registerAgeGateHandlers();
 	// The Host a game buttons and the hangman category start on the 🕹️games intro.
 	// Registered by customId PREFIX at the client level, like every other handler
 	// here, so the buttons keep working on a card posted by an earlier deploy,

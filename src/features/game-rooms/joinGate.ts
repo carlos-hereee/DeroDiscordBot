@@ -1,5 +1,6 @@
 import { playerRatingStore } from "@db/stores/playerRatingStore.js";
 import { fitsBand, isRatedGame, UNRATED_STANDING, type RatingStanding } from "@features/ratings/ratingEngine.js";
+import { hasConfirmedAge } from "@features/age-gate/ageGateRules.js";
 import { hasNetworkConsent } from "./networkConsent.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -9,7 +10,9 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 //        their rating sits outside the host's band, asked to wait when the host
 //        approves each joiner, admitted otherwise. At a network table (Phase 5b) a
 //        member who has not accepted the network notice is refused first, because a
-//        seat there shows their name and moves in other servers.
+//        seat there shows their name and moves in other servers. A member who has not
+//        confirmed their age (2026-11 item 302) is refused before even that, since the
+//        age gate is global and unconditional, never specific to a room or a server.
 // Who:   every door into a room: the challenge card's Join, Hold'em's Buy in and
 //        Take a seat inside the room, and the network board's request for a seat
 //        from another server (networkJoin, Phase 5b). ONE function, so no door can forget a
@@ -18,8 +21,12 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // Does NOT: write anything, check seats, pool caps or turn order (each door's own
 //        job), or decide who the host is (the caller's gate).
 
-/** Why a join was refused. "noConsent" sends the member to the network notice rather than away. */
-export type JoinRefusal = "kicked" | "outsideBand" | "noConsent";
+/**
+ * Why a join was refused. "noConsent" sends the member to the network notice rather than
+ * away. "noAgeConfirmation" sends the member to the age gate's ephemeral prompt instead of
+ * the room's own refusal text; see replyWithAgeGate.
+ */
+export type JoinRefusal = "kicked" | "outsideBand" | "noConsent" | "noAgeConfirmation";
 
 /** What a join attempt earns: in, a request for the host, or a refusal and why. */
 export type JoinVerdict = { kind: "admit" } | { kind: "ask" } | { kind: "refuse"; reason: JoinRefusal };
@@ -65,18 +72,22 @@ export async function fitsRoomBand(room: JoinGateRoom, joinerId: string): Promis
 
 /**
  * Judge one join attempt, in this order: ① a removed member is refused, whoever they
- * are; ② at a network table, a member without network consent is refused, even one the
- * room already let in, since consent is about what other servers see, not about the
- * host's say; ③ a member the room already let in (the draft's pool, or a live room's
- * players) is admitted without asking twice, since they passed the band and the host's
- * answer on the way in; ④ a rating outside the band is refused; ⑤ a room whose host
- * approves each joiner asks; ⑥ everybody else is admitted.
+ * are; ② a member who has not confirmed their age (2026-11 item 302) is refused next,
+ * before even network consent, since the age gate is global and applies to every room,
+ * network or not, and a member already let in is asked for it too, since being in the
+ * pool never satisfies it; ③ at a network table, a member without network consent is
+ * refused, even one the room already let in, since consent is about what other servers
+ * see, not about the host's say; ④ a member the room already let in (the draft's pool, or
+ * a live room's players) is admitted without asking twice, since they passed the band and
+ * the host's answer on the way in; ⑤ a rating outside the band is refused; ⑥ a room whose
+ * host approves each joiner asks; ⑦ everybody else is admitted.
  *
  * The band comes before the approval on purpose: asking the host to answer a request
  * the band would refuse anyway only spends their attention on a no.
  */
 export async function judgeJoin(room: JoinGateRoom, joinerId: string, options: { alreadyApproved: boolean }): Promise<JoinVerdict> {
 	if (isKicked(room, joinerId)) return { kind: "refuse", reason: "kicked" };
+	if (!(await hasConfirmedAge(joinerId))) return { kind: "refuse", reason: "noAgeConfirmation" };
 	// Only a network table reads consent, so every server room keeps its old cost: no read.
 	if (room.network && !(await hasNetworkConsent(joinerId))) return { kind: "refuse", reason: "noConsent" };
 	if (options.alreadyApproved) return { kind: "admit" };
