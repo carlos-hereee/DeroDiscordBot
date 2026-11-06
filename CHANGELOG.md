@@ -16,6 +16,11 @@ This file starts at v1.4.0. Earlier releases predate the changelog convention; t
 
 A patch still posts in every set up server, so 2.0.1 carries its own short announcement in place of the 2.0.0 post.
 
+* **The arcade is now 18 and over.** The first time a member starts or joins a game, Dero asks them to confirm their age, once, across every server. Invited members confirm too, and a match cannot start until they have.
+* **A Claim button on the announcement.** Each member can claim 5 Dero coins once, as an apology for the hotfix.
+* **Enter a code on the command center.** A new button does the same job as `/secret-code`, which now holds more than luck codes.
+* **Gifts from the creator.** The platform owner can set a one time chip gift for a member, who collects it with a code.
+* **Dero coin claims survive a crash.** The daily claim and the Claim button finish on the next press or the next boot, and cannot pay twice.
 * **Setup walks you through one card at a time.** `⚙️dero-config`, `🧭onboarding`, `🎰arcade-control` and `🛠️server-config` each show the next step on its own card, with the steps card as a table of contents that jumps to any step. The settings chart and the switches appear once a channel's steps are finished, and a server that already has them keeps them.
 * **Every step can be skipped.** A skipped step says so on its own card, and you can always come back and make edits.
 * **A ready channel can be removed.** A notice board channel's card offers Remove behind a confirm. A channel Dero built is deleted, and Add this channel brings an empty one back. A channel that was already yours stays with its messages, and Dero stops using it.
