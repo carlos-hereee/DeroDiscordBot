@@ -37,7 +37,7 @@
 		"express": "^5.2.1",
 		"gifenc": "^1.0.3",
 		"mongodb": "^6.18.0",
-		"mongoose": "^8.17.1",
+		"mongoose": "^8.24.7",
 		"node-cron": "^4.2.1",
 		"openskill": "^5.0.1",
 		"opusscript": "^0.0.8",
