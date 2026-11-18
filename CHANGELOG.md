@@ -14,6 +14,8 @@ This file starts at v1.4.0. Earlier releases predate the changelog convention; t
 
 ### Next (not yet released)
 
+### 2.0.2 (2026-11-18)
+
 * **Configure Onboarding no longer stops at "add more channels".** When a server has too few channels where everyone can post, Dero now offers to open some of your own read only channels to everyone, create new ones with the names and emoji you choose (suggestions are filled in for you), or both. You review the change, confirm, and Dero goes straight on to drafting your Onboarding questions. The new channels are yours: Dero does not manage, rebuild or remove them.
 * **This release tells admins, and only admins.** Every set up server gets one note in 🔒inner-sanctum saying Configure Onboarding is fixed and where to pick it up again. Nothing is posted in #announcements, because members were not affected.
 
