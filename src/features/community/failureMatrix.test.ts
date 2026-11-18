@@ -758,3 +758,123 @@ describe("R11: a raid on the welcome log", () => {
 		expect(greetAllowed(guildId)).toBe(true);
 	});
 });
+
+// ── 2026-11 item 367: the Onboarding channel gap ────────────────────────────
+// Mitigation: the gap Confirm stops at Discord's first refusal and undoes nothing,
+// saying exactly what now exists; the press refuses up front when Dero lacks Manage
+// Channels, so no picks are collected that Dero could not write.
+
+describe("item 367: the Onboarding channel gap", () => {
+	const GAP_ROW = { adminRoleId: ADMIN_ROLE, memberRoleId: MEMBER_ROLE, introChannelId: "intro" };
+
+	function gapGuild(options: { manageChannels: boolean; createRefusedAfter?: number }) {
+		const guildId = nextGuildId("gap");
+		const sendable = (id: string) => ({
+			id,
+			name: id,
+			type: ChannelType.GuildText,
+			parentId: null,
+			position: 0,
+			permissionsFor: () => ({ has: () => true }),
+		});
+		const cache = new Map<string, unknown>(["intro", "chat-1", "chat-2"].map((id) => [id, sendable(id)]));
+		let created = 0;
+		return {
+			id: guildId,
+			ownerId: OWNER,
+			features: ["COMMUNITY"],
+			client: { user: { id: BOT } },
+			roles: { everyone: { id: EVERYONE }, cache: new Map([[MEMBER_ROLE, { id: MEMBER_ROLE, name: "Member", position: 2 }]]) },
+			members: {
+				me: { id: BOT, permissions: { has: (flag: bigint) => flag !== PermissionFlagsBits.ManageChannels || options.manageChannels }, roles: { highest: { position: 5 } } },
+				cache: new Map(),
+				fetch: vi.fn(async () => null),
+			},
+			channels: {
+				cache,
+				create: vi.fn(async (input: { name: string }) => {
+					created += 1;
+					if (options.createRefusedAfter !== undefined && created > options.createRefusedAfter) throw missingPermissions();
+					const channel = { ...sendable(`made-${created}`), name: input.name };
+					cache.set(channel.id, channel);
+					return channel;
+				}),
+			},
+		};
+	}
+
+	function gapPress(guild: ReturnType<typeof gapGuild>, customId: string, submission: unknown) {
+		const state = { deferred: false };
+		return {
+			id: `gap-press-${customId}-${guild.id}`,
+			customId,
+			guild,
+			guildId: guild.id,
+			user: { id: OWNER },
+			client: { channels: { fetch: vi.fn(async () => null) } },
+			get deferred() {
+				return state.deferred;
+			},
+			replied: false,
+			isModalSubmit: () => false,
+			isMessageComponent: () => true,
+			reply: vi.fn(async () => undefined),
+			followUp: vi.fn(async () => undefined),
+			deferReply: vi.fn(async () => {
+				state.deferred = true;
+			}),
+			deferUpdate: vi.fn(async () => {
+				state.deferred = true;
+			}),
+			editReply: vi.fn(async () => undefined),
+			showModal: vi.fn(async () => undefined),
+			awaitModalSubmit: vi.fn(async () => submission ?? Promise.reject(new Error("dismissed"))),
+		};
+	}
+
+	it("a refusal partway stops there, deletes nothing, and says exactly what exists now", async () => {
+		mocks.findByGuildId.mockResolvedValue({ ...GAP_ROW });
+		const guild = gapGuild({ manageChannels: true, createRefusedAfter: 1 });
+		const submission = {
+			id: "gap-sub",
+			customId: "community:gapmodal:x",
+			guild,
+			guildId: guild.id,
+			user: { id: OWNER },
+			client: { channels: { fetch: vi.fn(async () => null) } },
+			deferred: false,
+			replied: false,
+			isModalSubmit: () => true,
+			isMessageComponent: () => false,
+			fields: { fields: new Set(["gap_category", "gap_names"]), getStringSelectValues: () => ["none"], getTextInputValue: () => "💬 chat\n🎬 clips" },
+			reply: vi.fn(async () => undefined),
+			followUp: vi.fn(async () => undefined),
+		};
+		await handleCommunityButton(gapPress(guild, COMMUNITY_CUSTOM_IDS.configure, submission) as unknown as ButtonInteraction);
+		const confirmPress = gapPress(guild, COMMUNITY_CUSTOM_IDS.gapConfirm, null);
+		await handleCommunityButton(confirmPress as unknown as ButtonInteraction);
+
+		expect(guild.channels.create).toHaveBeenCalledTimes(2);
+		expect(guild.channels.cache.has("made-1")).toBe(true);
+		const told = descriptionOf(confirmPress.editReply) ?? "";
+		expect(told).toContain(communityCopy.onboardingGap.failures.missingPermission);
+		expect(told).toContain("<#made-1>");
+		expect(told).toContain("undid nothing");
+		expect(auditRows(BOT_LOG_EVENTS.ONBOARDING_CHANNELS_FILLED)).toEqual([
+			expect.objectContaining({ outcome: "refused-permissions", discordCode: 50013, createdChannelIds: ["made-1"], requestedCreateCount: 2 }),
+		]);
+	});
+
+	it("without Manage Channels the press shows today's notice plus the missing permission, and collects nothing", async () => {
+		mocks.findByGuildId.mockResolvedValue({ ...GAP_ROW });
+		const guild = gapGuild({ manageChannels: false });
+		const interaction = gapPress(guild, COMMUNITY_CUSTOM_IDS.configure, null);
+		await handleCommunityButton(interaction as unknown as ButtonInteraction);
+
+		expect(noticeTextOf(interaction.showModal)).toBe(
+			`${communityCopy.onboarding.preconditions.tooFewSendableChannels(3, 5)}\n\n${communityCopy.onboardingGap.missingManageChannels}`
+		);
+		expect(interaction.awaitModalSubmit).not.toHaveBeenCalled();
+		expect(guild.channels.create).not.toHaveBeenCalled();
+	});
+});

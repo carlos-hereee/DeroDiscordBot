@@ -1176,4 +1176,11 @@ export const generalEventsCopy: IPluginCopy = {
 	// The age gate (2026-11 item 302) is a legal confirmation, not flavor text, so every
 	// voice reads it the same.
 	ageGate: rokCommanderCopy.ageGate,
+
+	// The Onboarding channel gap (2026-11 item 367) in the streamer voice: the category
+	// and the names box suggestions a short server gets, the same rules as the kingdom pack.
+	onboardingChannelGap: {
+		categoryName: "💬 COMMUNITY",
+		suggestions: ["💬chat", "🎬clips", "🎮gaming", "🖼️media", "🎵music", "🙌shoutouts", "😂memes"],
+	},
 };

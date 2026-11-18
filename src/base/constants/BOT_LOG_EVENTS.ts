@@ -218,6 +218,11 @@ export const BOT_LOG_EVENTS = {
 	// Onboarding answers, which Discord alone stores.
 	ONBOARDING_CONFIGURED_BY_BOT: "onboarding_configured_by_bot",
 	ONBOARDING_PRECONDITION_FAILED: "onboarding_precondition_failed",
+	// One row per gap Confirm (2026-11 item 367, onboardingChannelGap): the channels Dero
+	// opened to everyone or created so Onboarding has its 5 sendable channels, written
+	// on success, on a refused recheck and on a write Discord stopped partway.
+	// ⚠️ PRIVACY: ids, counts and outcome codes only, NEVER a channel name the owner typed.
+	ONBOARDING_CHANNELS_FILLED: "onboarding_channels_filled",
 	// ── the admin audit trail (post-launch plan item 11) ──────────
 	// One row per admin action, keyed `admin_log:<kind>` (schedule.create,
 	// config.change, selfdestruct.attempt and so on), written by

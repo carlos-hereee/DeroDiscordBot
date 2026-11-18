@@ -43,7 +43,7 @@ const NOTICE_WRAPPERS: readonly { file: string; name: string; calledFrom?: reado
 	{ file: "features/community/enableCommunity.ts", name: "replyError" },
 	{ file: "features/dero-brain/holdemRulesCard.ts", name: "replyPrivately" },
 	{ file: "features/setup/rulesEdit.ts", name: "replyPrivately" },
-	{ file: "features/community/configureOnboarding.ts", name: "replyOnboardingError", calledFrom: ["features/community/promptEditModal.ts"] },
+	{ file: "features/community/configureOnboarding.ts", name: "replyOnboardingError", calledFrom: ["features/community/promptEditModal.ts", "features/community/onboardingChannelGap.ts"] },
 ];
 
 /**
@@ -395,7 +395,9 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/community/communityButtons.ts", within: "replyRefusal", kind: "state" },
 
 	// ── community/configureOnboarding.ts ──
-	{ file: "features/community/configureOnboarding.ts", within: "handleConfigureOnboardingButton", count: 2, kind: "state" },
+	{ file: "features/community/configureOnboarding.ts", within: "handleConfigureOnboardingButton", kind: "state" },
+	// Steps 2 to 4, shared with the channel gap's Confirm (2026-11 item 367): a draft Discord would refuse.
+	{ file: "features/community/configureOnboarding.ts", within: "draftOnboardingReview", kind: "state" },
 	{ file: "features/community/configureOnboarding.ts", within: "handleConfirmOnboarding", count: 2, kind: "state" },
 	// The confirm modal's Submit (2026-10 item 263 R3-20): expired, or a check that changed since Confirm.
 	{ file: "features/community/configureOnboarding.ts", within: "handleWriteOnboarding", count: 2, kind: "state" },
@@ -409,6 +411,10 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/community/enableCommunity.ts", within: "handleConfirm", kind: "state" },
 	{ file: "features/community/enableCommunity.ts", within: "replyError", kind: "state" },
 
+	// ── community/onboardingChannelGap.ts (2026-11 item 367) ──
+	{ file: "features/community/onboardingChannelGap.ts", within: "openChannelGapModal", kind: "state", why: "Dero lacks Manage Channels, so the gap modal is not offered" },
+	{ file: "features/community/onboardingChannelGap.ts", within: "handleChannelGapSubmit", count: 2, kind: "race", why: "the gap modal's Submit: the config gone, or an admin role taken away while the modal stood open" },
+	{ file: "features/community/onboardingChannelGap.ts", within: "handleChannelGapConfirm", count: 2, kind: "state", why: "picks expired, or a precondition that failed again after the channels were written" },
 	// ── community/promptEditModal.ts ──
 	{ file: "features/community/promptEditModal.ts", within: "handlePickPrompt", kind: "state" },
 	{ file: "features/community/promptEditModal.ts", within: "handlePickOption", kind: "state" },
@@ -700,7 +706,7 @@ const CHANNEL_ERROR_INVENTORY: readonly NoticeEntry[] = [
 	{ file: "commands/utility/dero.ts", within: "tell", anchor: "tellCopy.failed", kind: "failure" },
 	{ file: "commands/utility/dero.ts", within: "bringDeroIntoCall", anchor: "callCopy.connectFailed", kind: "failure" },
 	{ file: "commands/utility/dero.ts", within: "bringDeroIntoCall", anchor: "tellCopy.failed", kind: "failure" },
-	{ file: "features/community/configureOnboarding.ts", within: "handleConfigureOnboardingButton", anchor: "communityCopy.onboarding.readFailed", kind: "failure" },
+	{ file: "features/community/configureOnboarding.ts", within: "draftOnboardingReview", anchor: "communityCopy.onboarding.readFailed", kind: "failure" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "provisionFromDraft", anchor: "gameRoomsCopy.errors.createFailed", kind: "failure", why: "a blackjack table whose board could not be dealt" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "answerOpenRefusal", kind: "failure", why: "only ROOM_OPEN_FAILURES reach it: a permission Dero lacks, a create Discord refused" },
 	{ file: "features/game-rooms/partyGames.ts", within: "hostHangman", anchor: "gameRoomsCopy.partyGames.noChannel", kind: "failure", why: "the round's board could not post in the channel found (startHangmanRound answered failed)" },

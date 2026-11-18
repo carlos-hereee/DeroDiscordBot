@@ -1801,4 +1801,14 @@ export const rokCommanderCopy = {
 		confirmedPressAgain: "Confirmed. Run that command again to play.",
 		blocked: "Sorry, Dero is only for players 18 and older. If you answered by mistake, email support@companyuno.com.",
 	},
+
+	// The Onboarding channel gap (2026-11 item 367): when a server has too few channels
+	// everyone can post in, Configure Onboarding prefills its names box from these and
+	// offers this category for the new ones. Emoji first and attached, Dero's style, one
+	// channel per entry. None may read like a welcome or rules channel, or Dero's boot
+	// repair could adopt it into a managed slot and lock it (onboardingChannelGap.test pins it).
+	onboardingChannelGap: {
+		categoryName: "🍺 THE COMMONS",
+		suggestions: ["🍺tavern", "🛡️alliance-chat", "🗺️scouting", "📜war-stories", "🎲games-hall", "🏹hunting-grounds", "🖼️banners"],
+	},
 };

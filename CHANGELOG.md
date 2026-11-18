@@ -12,6 +12,10 @@ This file starts at v1.4.0. Earlier releases predate the changelog convention; t
 
 **This entry ships as 2.0.0** (owner decision 2026-10-24), a major version rather than the 1.7.0 it was prepared as: Dero's voice, its new look, the arcade, server against server rankings and Community Onboarding land together, and the command names listed under Removed stop working.
 
+### Next (not yet released)
+
+* **Configure Onboarding no longer stops at "add more channels".** When a server has too few channels where everyone can post, Dero now offers to open some of your own read only channels to everyone, create new ones with the names and emoji you choose (suggestions are filled in for you), or both. You review the change, confirm, and Dero goes straight on to drafting your Onboarding questions. The new channels are yours: Dero does not manage, rebuild or remove them.
+
 ### 2.0.1 (2026-11-04)
 
 A patch still posts in every set up server, so 2.0.1 carries its own short announcement in place of the 2.0.0 post.

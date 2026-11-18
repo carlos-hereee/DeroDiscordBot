@@ -47,6 +47,10 @@ export const COMMUNITY_CUSTOM_IDS = {
 	// one press that writes Onboarding, routed as a modal or a button under its own prefix.
 	writeOnboarding: `${COMMUNITY_CONFIRM_PREFIX}:onboarding`,
 	cancelOnboarding: `${COMMUNITY_PREFIX}:cancelOnboarding`,
+	// The Onboarding channel gap review's two buttons (2026-11 item 367). Its modal's Submit
+	// is answered by an awaitModalSubmit collector on the press, never routed here.
+	gapConfirm: `${COMMUNITY_PREFIX}:gapConfirm`,
+	gapCancel: `${COMMUNITY_PREFIX}:gapCancel`,
 } as const;
 
 /** The action a community customId names, the part after the prefix. */
@@ -100,6 +104,14 @@ export function buildConfirmEnableRow(): ActionRowBuilder<ButtonBuilder> {
 	return new ActionRowBuilder<ButtonBuilder>().addComponents(
 		new ButtonBuilder().setCustomId(COMMUNITY_CUSTOM_IDS.confirm).setLabel(communityCopy.buttons.confirm).setEmoji("✅").setStyle(ButtonStyle.Success)
 	);
+}
+
+/** The Onboarding channel gap review's row: Confirm and Cancel when the picks can be written, Cancel alone when they cannot. */
+export function buildChannelGapReviewRow(canConfirm: boolean): ActionRowBuilder<ButtonBuilder> {
+	const cancel = new ButtonBuilder().setCustomId(COMMUNITY_CUSTOM_IDS.gapCancel).setLabel(communityCopy.onboardingGap.buttons.cancel).setStyle(ButtonStyle.Secondary);
+	if (!canConfirm) return new ActionRowBuilder<ButtonBuilder>().addComponents(cancel);
+	const confirm = new ButtonBuilder().setCustomId(COMMUNITY_CUSTOM_IDS.gapConfirm).setLabel(communityCopy.onboardingGap.buttons.confirm).setEmoji("✅").setStyle(ButtonStyle.Success);
+	return new ActionRowBuilder<ButtonBuilder>().addComponents(confirm, cancel);
 }
 
 /** The offer that follows Community being on: the Configure Onboarding button alone. */
