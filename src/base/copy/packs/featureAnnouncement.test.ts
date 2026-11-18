@@ -14,8 +14,10 @@ import { generalEventsCopy } from "./general-events.pack.js";
 // poster appends to the title; no long dash; every slash command it names really
 // exists; and the copy stays professional (owner decision 2026-10-21): it never
 // says where Dero's brain runs or that Dero can be offline, and it never promises
-// always on voice either (2026-10 item 216, risk R9). The last block pins the
-// current release's own content and is rewritten with it.
+// always on voice either (2026-10 item 216, risk R9). A release may carry no public
+// block (null), which posts the inner-sanctum embed alone, so every check walks only
+// the embeds the release has. The last block pins the current release's own content
+// and is rewritten with it.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMMANDS = join(HERE, "..", "..", "..", "commands");
@@ -70,10 +72,11 @@ const PACKS = [
 	{ name: "general-events", copy: generalEventsCopy },
 ] as const;
 
-const EMBEDS = PACKS.flatMap(({ name, copy }) => [
-	{ label: `${name} public`, ...copy.featureAnnouncement.public },
-	{ label: `${name} inner sanctum`, ...copy.featureAnnouncement.innerSanctum },
-]);
+const EMBEDS = PACKS.flatMap(({ name, copy }) => {
+	const { public: members, innerSanctum: admins } = copy.featureAnnouncement;
+	const memberEmbeds = members ? [{ label: `${name} public`, ...members }] : [];
+	return [...memberEmbeds, { label: `${name} inner sanctum`, ...admins }];
+});
 
 const registeredCommands = new Set(
 	readdirSync(COMMANDS, { withFileTypes: true })
@@ -97,9 +100,10 @@ describe("the release announcement", () => {
 		expect(LONG_DASH.test(`${title}\n${description}`)).toBe(false);
 	});
 
+	// A release may name no command at all (the item 367 note points at a button), so this
+	// checks only that every command it does name is registered.
 	it.each(EMBEDS)("$label names only commands that exist", ({ description }) => {
 		const named = [...description.matchAll(NAMED_COMMAND)].map((match) => match[1]);
-		expect(named.length).toBeGreaterThan(0);
 		expect(named.filter((command) => !registeredCommands.has(command))).toEqual([]);
 	});
 
@@ -123,15 +127,16 @@ describe("the release announcement", () => {
 		},
 	);
 
-	it("is 2.0.1's short patch note, not the 2.0.0 launch copy, and stays off the name item 293 is changing", () => {
+	it("is the item 367 hotfix's admin only note: no public block, the apology, the fix and where to press", () => {
 		const { public: members, innerSanctum: admins } = rokCommanderCopy.featureAnnouncement;
-		expect(admins.description).toContain("Version 2.0.1");
-		expect(admins.description).toContain("`/arcade on`");
-		expect(members.description).toContain("`/mini-game`");
-		for (const text of [members.description, admins.description]) {
-			expect(text.length).toBeLessThan(PATCH_NOTE_MAX);
-			expect(text).not.toContain("Monopoly");
-			expect(text).not.toContain("Dero City");
-		}
+		expect(members).toBeNull();
+		expect(admins.title).toBe("🧭 CONFIGURE ONBOARDING IS FIXED");
+		expect(admins.description.split("\n\n")).toEqual([
+			"Sorry to anyone who hit this.",
+			"Configure Onboarding is fixed. If it stopped you before by asking you to add more channels, it no longer dead ends: Dero now offers to open some of your own channels to everyone or create new ones, then carries straight on with your Onboarding questions.",
+			"Press Configure Onboarding in 🧭onboarding to pick up where you left off.",
+		]);
+		expect(`${admins.title}\n${admins.description}`).not.toMatch(UNPREPARED);
+		expect(admins.description.length).toBeLessThan(PATCH_NOTE_MAX);
 	});
 });
