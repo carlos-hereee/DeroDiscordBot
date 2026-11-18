@@ -6,6 +6,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { featureAnnouncedEvent } from "@base/constants/BOT_LOG_EVENTS.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
+import type { IReleaseEmbed } from "@base/copy/types.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { buildReleaseGiftButton } from "@features/announcements/releaseCoinGift.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
@@ -38,6 +39,7 @@ import { infoEmbed } from "@utils/embedBuilder.js";
 //        ③ for each guild: skip if setupComplete is false (new guilds
 //           see the intro embed instead). skip if the version has
 //           already been logged. otherwise post public + inner-sanctum
+//           (inner-sanctum alone when the copy's public block is null)
 //           and log success.
 //        ④ failures on either post are swallowed with a log. the
 //           botLogStore write only fires after BOTH posts succeed so
@@ -175,13 +177,22 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 				continue;
 			}
 
-			// Resolve target channels. Both must exist and be TextChannels
-			// for the announcement to fire, a missing announcements
-			// channel is either a brand-new guild (caught above) or a
-			// destroyed homebase (ensureHomebase's problem, not ours).
-			const announcementsChannelId = config.announcementsChannelId;
+			// Resolve copy in this guild's pack voice. Both packs carry the same block, but
+			// reading it and the colors from the guild's resolved pack keeps one source per guild.
+			const packCopy = getPluginCopy(config);
+			const c = packCopy.featureAnnouncement;
+
+			// A null public block is an admin only release (2026-11 item 367): members were not
+			// affected, so #announcements is never read, fetched or posted to, and the one
+			// inner-sanctum post decides the record on its own.
+			const publicCopy = c.public;
+			const announcementsChannelId = publicCopy ? config.announcementsChannelId : null;
 			const adminChannelId = config.adminChannelId;
-			if (!announcementsChannelId || !adminChannelId) {
+
+			// Resolve target channels. Every channel this release posts in must exist and be a
+			// TextChannel: a missing one is a brand new guild (caught above) or a destroyed
+			// homebase (ensureHomebase's problem, not ours).
+			if (!adminChannelId || (publicCopy && !announcementsChannelId)) {
 				// Not a failure, just nothing to do. Do not log so the
 				// next boot (when ensureHomebase has rebuilt) re-attempts.
 				console.warn(`[feature-announcement] guild ${guild.id} missing announcement channels; deferring`);
@@ -189,22 +200,16 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 				continue;
 			}
 
-			const announcementsChannel = await client.channels.fetch(announcementsChannelId).catch(() => null);
+			const announcementsChannel = announcementsChannelId ? await client.channels.fetch(announcementsChannelId).catch(() => null) : null;
 			const adminChannel = await client.channels.fetch(adminChannelId).catch(() => null);
-			if (!(announcementsChannel instanceof TextChannel) || !(adminChannel instanceof TextChannel)) {
+			const publicChannelReady = !publicCopy || announcementsChannel instanceof TextChannel;
+			if (!publicChannelReady || !(adminChannel instanceof TextChannel)) {
 				console.warn(`[feature-announcement] guild ${guild.id} channels missing or wrong type; deferring`);
 				deferredNoChannels += 1;
 				continue;
 			}
 
-			// Resolve copy in this guild's pack voice. The public block diverges
-			// by pack (kingdom vs plain English); the inner-sanctum changelog and
-			// the colors are shared, but reading them from the same resolved pack
-			// keeps a single source per guild.
-			const packCopy = getPluginCopy(config);
-			const c = packCopy.featureAnnouncement;
-
-			// ── ① public announcement ─────────────────────────────
+			// ── ① public announcement, skipped for an admin only release ─────
 			// Posted WITHOUT a role ping per the owner's preference for
 			// inner-sanctum-style quiet posts. The embed itself is loud
 			// enough; a role ping here would feel like spam on every
@@ -214,28 +219,9 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			// allowedMentions: { parse: [] } is belt-and-suspenders,
 			// if a future edit ever adds a raw @everyone to the copy,
 			// this prevents accidental mass notifications.
-			// Inject the release version into the title from BOT_VERSION (package.json),
-			// the single source of truth this announcement is keyed to, so the title
-			// always reads the right version with no hardcoded version in the copy packs.
-			const publicEmbed = infoEmbed(`${c.public.title} (v${BOT_VERSION})`, linkReleaseChannels(c.public.description, config), packCopy.COLORS.ANNOUNCEMENTS);
-
-			// Suggestion Box rides the PUBLIC announcement only. A release post is the
-			// one moment a member is already reading about what changed, which is when
-			// "what should we build next" actually gets answers; #command-center's copy
-			// of this button is passive and only found by someone already looking.
-			// Safe to attach anywhere: registerSuggestionBoxHandlers (main.ts) dispatches
-			// by customId PREFIX at the client level, so the button is not bound to the
-			// message or channel it was built in. The admin send deliberately omits it,
-			// admins have the same button in #command-center and the inner-sanctum post
-			// is a changelog, not a call to action.
-			// The Claim button rides beside it while a release offers a gift (releaseCoinGift.ts).
-			const giftButton = buildReleaseGiftButton(BOT_CONSTANTS.DERO_COINS.CURRENT_RELEASE_GIFT);
-			const suggestionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(...(giftButton ? [giftButton] : []), buildSuggestionBoxButton());
-			await announcementsChannel.send({
-				embeds: [publicEmbed],
-				components: [suggestionRow],
-				allowedMentions: { parse: [] },
-			});
+			if (publicCopy && announcementsChannel instanceof TextChannel) {
+				await postPublicAnnouncement(announcementsChannel, publicCopy, config, packCopy.COLORS.ANNOUNCEMENTS);
+			}
 
 			// ── ② inner-sanctum admin update ───────────────────────
 			// Plain voice, no ping, same allowedMentions guard. Posted
@@ -276,4 +262,39 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			`(not-setup ${skippedNotSetup}, joined-after-ship ${skippedJoinedAfter}, already-sent ${skippedAlready}), ` +
 			`deferred ${deferredNoChannels}, failed ${failed}`
 	);
+}
+
+/**
+ * Post the members' release embed in #announcements, with the release gift's Claim button
+ * (while a release offers one) beside the Suggestion Box. Called only for a release whose
+ * copy has a public block.
+ */
+async function postPublicAnnouncement(
+	channel: TextChannel,
+	copy: IReleaseEmbed,
+	config: Parameters<typeof linkReleaseChannels>[1],
+	color: Parameters<typeof infoEmbed>[2],
+): Promise<void> {
+	// Inject the release version into the title from BOT_VERSION (package.json),
+	// the single source of truth this announcement is keyed to, so the title
+	// always reads the right version with no hardcoded version in the copy packs.
+	const publicEmbed = infoEmbed(`${copy.title} (v${BOT_VERSION})`, linkReleaseChannels(copy.description, config), color);
+
+	// Suggestion Box rides the PUBLIC announcement only. A release post is the
+	// one moment a member is already reading about what changed, which is when
+	// "what should we build next" actually gets answers; #command-center's copy
+	// of this button is passive and only found by someone already looking.
+	// Safe to attach anywhere: registerSuggestionBoxHandlers (main.ts) dispatches
+	// by customId PREFIX at the client level, so the button is not bound to the
+	// message or channel it was built in. The admin send deliberately omits it,
+	// admins have the same button in #command-center and the inner-sanctum post
+	// is a changelog, not a call to action.
+	// The Claim button rides beside it while a release offers a gift (releaseCoinGift.ts).
+	const giftButton = buildReleaseGiftButton(BOT_CONSTANTS.DERO_COINS.CURRENT_RELEASE_GIFT);
+	const suggestionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(...(giftButton ? [giftButton] : []), buildSuggestionBoxButton());
+	await channel.send({
+		embeds: [publicEmbed],
+		components: [suggestionRow],
+		allowedMentions: { parse: [] },
+	});
 }

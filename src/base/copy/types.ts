@@ -33,6 +33,14 @@ export interface IRankName {
 	many: string;
 }
 
+// One embed of the release announcement. `public` in the pack's featureAnnouncement
+// block takes `IReleaseEmbed | null`: null makes postFeatureAnnouncement post the
+// inner-sanctum embed alone, for a release members were not affected by.
+export interface IReleaseEmbed {
+	title: string;
+	description: string;
+}
+
 // The structural contract every copy pack must satisfy. Derived from the
 // rok-commander pack so adding a new key to that pack automatically widens
 // the shape every other pack must implement. If a key is too rok-specific

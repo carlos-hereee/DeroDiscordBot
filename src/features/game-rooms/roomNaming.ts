@@ -31,8 +31,9 @@ const COLLISION_SUFFIX_MAX = 99;
 
 // Strip to Discord's safe channel alphabet. The character class collapses any RUN of
 // unsafe characters into a single hyphen, so "Sir  Reginald!!!" yields "sir-reginald"
-// rather than "sir--reginald---".
-function slugify(input: string): string {
+// rather than "sir--reginald---". Exported for the Onboarding channel gap's new channel
+// names (2026-11 item 367, D3), so Dero made channel names follow one rule.
+export function slugify(input: string): string {
 	return input
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")
@@ -41,7 +42,7 @@ function slugify(input: string): string {
 
 // Truncation can land mid-hyphen ("sir-reginald-the-" → trailing hyphen), which Discord
 // accepts but reads as a typo. Always re-trim after a slice.
-function trimHyphens(input: string): string {
+export function trimHyphens(input: string): string {
 	return input.replace(/^-+|-+$/g, "");
 }
 

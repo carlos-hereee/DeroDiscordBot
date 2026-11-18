@@ -1,11 +1,6 @@
-import type { IEmbedField, IPluginCopy } from "../types.js";
+import type { IEmbedField, IPluginCopy, IReleaseEmbed } from "../types.js";
 import { COLORS, FOOTER, AUTHOR } from "../brand.js";
-import { BOT_CONSTANTS } from "../../constants/BOT_CONSTANTS.js";
 import { rokCommanderCopy } from "./rok-commander.pack.js";
-
-// Shown in the release post, read from the table the Claim button pays from, so the two
-// cannot disagree.
-const APOLOGY_COINS = BOT_CONSTANTS.DERO_COINS.RELEASE_GIFTS["age-limit-apology"];
 
 // ── general-events copy pack (streamer-plugin spec Phase 2 scaffold) ─────
 // What:  the plain-English / streamer-tone alternative to rok-commander.
@@ -1014,16 +1009,13 @@ export const generalEventsCopy: IPluginCopy = {
 	// bearing precisely because breaking it fails silently, so DIFF the two
 	// blocks after any edit instead of trusting that you pasted into both.
 	featureAnnouncement: {
-		// ── release 2.0.1 ── setup one card at a time, form and arcade fixes, new board art ──
-		// A patch still posts: postFeatureAnnouncement keys on the exact version, so
-		// this block goes to every set up guild once at any bump. It is rewritten for
-		// each release, because leaving the last one here reposts that whole
-		// announcement (2.0.0's is in git and the CHANGELOG). Keep it short and to
-		// what changed since the last release.
-		//
-		// The public block calls the game "the long board game" and names only
-		// `/mini-game`, because 2026-11 item 293 renames Monopoly and is not built, so
-		// neither the old name nor the new one is safe in a post nobody can take back.
+		// ── the 2026-11 item 367 hotfix: an admin only note ──
+		// This release fixes Configure Onboarding stopping at "add more channels", which
+		// only admins could hit, so the post goes to 🔒inner-sanctum alone. `public` is
+		// null because members were not affected, and a null public makes
+		// postFeatureAnnouncement skip #announcements, its Claim and Suggestion Box
+		// buttons included. The next release must write a fresh block here: one left in
+		// place reposts this note to every set up guild under the new version.
 		//
 		// Release copy stays professional and never says where Dero's brain runs or
 		// when it is offline, and it never promises always on voice (owner decision
@@ -1034,15 +1026,11 @@ export const generalEventsCopy: IPluginCopy = {
 		// reaffirmed 2026-08-11). featureAnnouncement.test.ts fails when the two
 		// drift, when a description passes Discord's 4096 character embed limit,
 		// or when a long dash slips in.
-		public: {
-			title: "⚔️ A NEW BOARD IN THE ARCADE",
-			description:
-				`Warriors.\n\nA small update.\n\nDue to the nature of some games, the arcade is now 18 and over. The realm has placed an age limit on the arcade. The first time you start or join a game, I will ask you to confirm your age. It is one press, and you only answer once. We apologize for the inconvenience.\n\n**A gift for your patience.** Press Claim below and I will add ${APOLOGY_COINS} Dero coins to your wallet. Each member claims them once.\n\n**A new board.** The long board game in the arcade has new art and a logo of its own on its challenge card and match opener. Start a match from 🕹️games or with \`/mini-game\`.\n\n**Your keepers' setup.** Setting me up now goes one step at a time, and the forms that were failing work again.\n\nGot an idea for my next trick? Drop it in the Suggestion Box below.\n\nRise well, warriors.`,
-		},
+		public: null as IReleaseEmbed | null,
 		innerSanctum: {
-			title: "🏛️ THE ORACLE EXPLAINS WHAT CHANGED",
+			title: "🧭 Configure Onboarding Is Fixed!",
 			description:
-				`Those who hold the reins.\n\nVersion 2.0.1 is small: an age limit on the arcade, and a better setup.\n\n**The arcade is now 18 and over.** The first time a member starts or joins a game, I ask them to confirm their age, once. Invited members confirm too, and a match cannot start until they have. As an apology, the public post's Claim button gives each member ${APOLOGY_COINS} Dero coins.\n\n**A tutorial is here, to teach you how to use the system.** ⚙️dero-config, 🧭onboarding, 🎰arcade-control and 🛠️server-config each show the next step on its own card, and the steps card's buttons jump to any step. The settings chart and the switches appear once a channel's steps are finished, and a server that already has them keeps them.\n\n**Every step can be skipped.** A skipped step says so on its card, and you can come back to it.\n\n**Nothing is built unless you ask.** A level up, an upcoming event or a member's command no longer creates a channel, and a rebuild leaves alone the channels you left out and an arcade you switched off.\n\n**A ready channel can be removed.** A notice board channel's card offers Remove behind a confirm. A channel I built is deleted, and Add this channel brings an empty one back. A channel that was already yours stays with its messages, and I stop using it.\n\n**Fixes.** Button forms with a dropdown save again. Turn the arcade on and \`/arcade on\` now build the arcade while auto heal is off, and a partly built arcade can be pressed again to finish.`,
+				"Sorry to anyone who hit this, and thank you to the server owner who reported it.\n\n**What went wrong**\nDiscord only turns on Onboarding when at least 5 text, announcement or forum channels let everyone both see and post. Dero's notice board channels are read only for members, so many servers came up short of Discord's minimum, and Configure Onboarding stopped with no way forward.\n\n**What changed**\nWhen your server is short, Configure Onboarding now offers to:\n- let everyone post in some of your existing read only channels\n- create new channels with the names you choose\n- or do both\n\nYou see a private review first. Nothing changes until you press Confirm, and then Dero carries straight on with your Onboarding questions.\n\n⚠️ **Heads up:** anything you open or create can be seen and posted in by everyone, including people who have not finished Onboarding yet.\n\n**Next step**\nAlready set up Onboarding by hand? You are all set. Otherwise, press Configure Onboarding in 🧭onboarding to pick up where you left off.",
 		},
 	},
 
@@ -1176,4 +1164,11 @@ export const generalEventsCopy: IPluginCopy = {
 	// The age gate (2026-11 item 302) is a legal confirmation, not flavor text, so every
 	// voice reads it the same.
 	ageGate: rokCommanderCopy.ageGate,
+
+	// The Onboarding channel gap (2026-11 item 367) in the streamer voice: the category
+	// and the names box suggestions a short server gets, the same rules as the kingdom pack.
+	onboardingChannelGap: {
+		categoryName: "💬 COMMUNITY",
+		suggestions: ["💬chat", "🎬clips", "🎮gaming", "🖼️media", "🎵music", "🙌shoutouts", "😂memes"],
+	},
 };

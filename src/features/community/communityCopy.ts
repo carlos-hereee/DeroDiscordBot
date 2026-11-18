@@ -418,4 +418,119 @@ export const communityCopy = {
 		// The reason Discord's audit log shows beside the Onboarding change.
 		auditReason: "Configured by Dero via Configure Onboarding",
 	},
+
+	// ── the Onboarding channel gap (2026-11 item 367) ──
+	// When Configure Onboarding finds too few channels everyone can post in, Dero offers
+	// to open some of the server's own channels or create new ones, in one modal, a
+	// review and a Confirm. Modal labels are capped at 45 characters, descriptions at 100.
+	onboardingGap: {
+		modal: {
+			title: "Add channels for Onboarding",
+			intro: (count: number, minimum: number, needed: number): string =>
+				`You have ${count} ${count === 1 ? "channel" : "channels"} everyone can post in, and Discord needs ${minimum} before Onboarding can turn on. Add at least ${needed} by opening some of your own channels, creating new ones, or both.`,
+			openLabel: "Open your own channels to everyone",
+			openDescription: "Channels everyone can already see but not post in.",
+			openPlaceholder: "Pick channels to open (optional)",
+			categoryLabel: "Category for new channels",
+			categoryDescription: "Where the channels you name below are created.",
+			categoryNew: (name: string): string => `New category: ${name}`,
+			categoryNone: "No category",
+			namesLabel: "New channels, one per line",
+			namesDescription: "Emoji first, then the name, like 💬 off-topic. Leave it empty to create none.",
+		},
+		// The modal could not open: today's refusal, plus how to fix it by hand.
+		addByHand: "You can also add channels where everyone can post in Server Settings, then press Configure Onboarding again.",
+		missingManageChannels:
+			"I also need the Manage Channels permission to open or create channels for you. Grant it in Server Settings, Roles, then press Configure Onboarding again.",
+
+		// One plain sentence per refused line of the names box. Nothing is written.
+		names: {
+			tooManyLines: (max: number): string => `You can create at most ${max} new channels at once. Remove a line and try again.`,
+			customEmoji: (line: number): string => `Line ${line}: Discord cannot put server emoji in channel names. Use a standard emoji instead.`,
+			emptyName: (line: number): string => `Line ${line}: the name needs at least one letter or number after the emoji.`,
+			tooLong: (line: number, max: number): string => `Line ${line}: that name is longer than Discord's ${max} character limit.`,
+			duplicate: (line: number, name: string): string => `Line ${line}: ${name} is already on an earlier line.`,
+			exists: (line: number, name: string): string => `Line ${line}: a channel named ${name} already exists in this server.`,
+			reserved: (line: number, name: string): string => `Line ${line}: Dero reserves names like ${name} for its own welcome or rules channel. Pick another name.`,
+		},
+
+		review: {
+			title: "Review: channels for Onboarding",
+			description: (summary: IOnboardingGapSummary): string => {
+				const lines = ["Here is what Confirm changes:", ""];
+				if (summary.openChannelIds.length > 0) lines.push(`• Open to everyone: ${summary.openChannelIds.map((id) => `<#${id}>`).join(", ")}`);
+				if (summary.newChannelNames.length > 0) lines.push(`• Create in ${summary.categoryLabel}: ${summary.newChannelNames.join(", ")}`);
+				if (summary.openChannelIds.length === 0 && summary.newChannelNames.length === 0) lines.push("• Nothing picked yet.");
+				lines.push(`• Channels everyone can post in: ${summary.countBefore} now, ${summary.countAfter} after, of the ${summary.minimum} Discord needs.`);
+				lines.push("", "Everyone, including people who have not finished Onboarding, can see and post in these channels, because Discord requires that.");
+				lines.push("", "Nothing changes until you press Confirm. Then I draft your Onboarding questions right away.");
+				return lines.join("\n");
+			},
+			// Picks that do not reach the minimum: what is still missing, and no Confirm.
+			shortfall: (missing: number): string =>
+				`Still ${missing} short. Press Configure Onboarding again and pick or name ${missing} more ${missing === 1 ? "channel" : "channels"}. Nothing was changed.`,
+			refused: (reason: string): string => `${reason} Nothing was changed. Press Configure Onboarding to try again.`,
+		},
+		buttons: {
+			confirm: "Confirm",
+			cancel: "Cancel",
+		},
+
+		// Confirm's recheck against the live server, which can have changed since the review.
+		recheck: {
+			channelGone: "A channel you picked to open is gone or can no longer be opened by me. Press Configure Onboarding to pick again.",
+			categoryGone: "The category you picked is gone or is now one of Dero's own. Press Configure Onboarding to pick again.",
+			nameTaken: (name: string): string => `A channel named ${name} exists now. Press Configure Onboarding to pick another name.`,
+		},
+
+		// A write Discord refused, in this flow's words (describeRefusal).
+		failures: {
+			missingPermission: "Discord refused: Dero is missing Manage Channels or Manage Roles. Grant both in Server Settings, Roles, then press Confirm again.",
+			rejected: (discordMessage: string): string => `Discord refused a channel change.\n\nDiscord said: ${discordMessage}`,
+			unconfirmed: "Dero could not get an answer from Discord, so it cannot tell whether the last channel change landed. Check your channel list.",
+		},
+		// Said after a write stopped partway: what exists now. Nothing is rolled back.
+		partial: (done: IOnboardingGapProgress): string => {
+			const lines = ["I stopped at that refusal and undid nothing."];
+			lines.push(done.openedChannelIds.length > 0 ? `• Opened to everyone: ${done.openedChannelIds.map((id) => `<#${id}>`).join(", ")}` : "• No channel was opened.");
+			if (done.categoryId) lines.push(`• Category created: <#${done.categoryId}>`);
+			lines.push(done.createdChannelIds.length > 0 ? `• Created: ${done.createdChannelIds.map((id) => `<#${id}>`).join(", ")}` : "• No channel was created.");
+			lines.push("Press Configure Onboarding again once the cause is fixed; it counts what exists now.");
+			return lines.join("\n");
+		},
+		// Opening a channel was accepted, but everyone still cannot post there.
+		openUnconfirmed: (channelId: string): string =>
+			`I opened <#${channelId}>, but everyone still cannot post there. A role or category setting may still block it; check its permissions in Server Settings.`,
+
+		result: {
+			title: "Channels ready for Onboarding",
+			description: (opened: number, created: number, sendable: number): string =>
+				`Opened ${opened} and created ${created}. Everyone can now post in ${sendable} channels. Drafting your Onboarding questions next.`,
+			// The private answer's first line, when 🧭onboarding is missing and the draft follows in the same reply.
+			line: (opened: number, created: number, sendable: number): string =>
+				`✅ Opened ${opened} and created ${created}. Everyone can now post in ${sendable} channels.`,
+		},
+		expired: "Those channel picks expired. Press Configure Onboarding to start over.",
+		cancelled: "Cancelled. No channel was changed.",
+		adminLogDetail: (opened: number, created: number): string => `opened ${opened}, created ${created}`,
+		// The reason Discord's audit log shows beside each channel change.
+		auditReason: "Added by Dero via Configure Onboarding, so Onboarding has enough channels everyone can post in",
+	},
 };
+
+/** What the gap review lists before Confirm. */
+export interface IOnboardingGapSummary {
+	openChannelIds: readonly string[];
+	newChannelNames: readonly string[];
+	categoryLabel: string;
+	countBefore: number;
+	countAfter: number;
+	minimum: number;
+}
+
+/** What a gap write left in place when Discord stopped it partway. */
+export interface IOnboardingGapProgress {
+	openedChannelIds: readonly string[];
+	categoryId: string | null;
+	createdChannelIds: readonly string[];
+}

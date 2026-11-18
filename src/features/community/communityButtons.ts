@@ -26,6 +26,7 @@ import {
 	handlePickOption,
 	handlePickPrompt,
 } from "./promptEditModal.js";
+import { handleChannelGapCancel, handleChannelGapConfirm } from "./onboardingChannelGap.js";
 
 // ── communityButtons ─────────────────────────────────────────────────
 // What:  the one router every `community:<action>` press goes through, the Onboarding
@@ -147,6 +148,12 @@ async function routeButton(interaction: ButtonInteraction, action: CommunityActi
 			return;
 		case "cancelOnboarding":
 			await handleCancelOnboarding(interaction, guild);
+			return;
+		case "gapConfirm":
+			await handleChannelGapConfirm(interaction, guild, config);
+			return;
+		case "gapCancel":
+			await handleChannelGapCancel(interaction, guild);
 			return;
 		// The two selects reach routeSelect; the router refuses them as buttons first.
 		case "pickPrompt":

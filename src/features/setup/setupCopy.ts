@@ -152,6 +152,7 @@ export const setupCopy = {
 			welcomeLog: "welcome log",
 			rulesChannel: "rules channel",
 			onboarding: "Discord Onboarding",
+			onboardingChannels: "Onboarding channels",
 			refreshStandings: "standings refreshed",
 			postHangman: "hangman round posted",
 			// /server channels hide and show, and /leveling settings (post-launch plan item 9).

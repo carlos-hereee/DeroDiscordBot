@@ -3,7 +3,7 @@ import { botLogStore } from "@db/stores/botLogStore.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
-import { beginChannelAnswer } from "@utils/answerInChannel.js";
+import { beginChannelAnswer, type PendingChannelAnswer } from "@utils/answerInChannel.js";
 import { showConfirm, showNotice, showPendingNotice } from "@utils/textModal.js";
 import { communityCopy } from "./communityCopy.js";
 import { COMMUNITY_CUSTOM_IDS, buildOnboardingReviewRows } from "./communityControls.js";
@@ -20,6 +20,10 @@ import {
 	type PendingOnboardingDraft,
 } from "./onboardingDraft.js";
 import { fetchOnboardingSnapshot } from "./onboardingChannels.js";
+// A cycle on purpose: the gap module calls draftOnboardingReview and replyOnboardingError
+// from here, and this press opens its modal. Both sides only call each other at run
+// time, never at load, so ESM resolves it.
+import { openChannelGapModal } from "./onboardingChannelGap.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 
@@ -146,6 +150,14 @@ export async function handleConfigureOnboardingButton(interaction: ButtonInterac
 	const precondition = checkOnboardingPreconditions(guild, config);
 	if (!precondition.ok) {
 		auditRefusedPress(guild.id, interaction.user.id, "open", precondition);
+		// Too few channels everyone can post in is the one refusal Dero can fix on the spot
+		// (2026-11 item 367): the gap modal opens instead of the notice, and its Confirm
+		// comes back to draftOnboardingReview below. Only here, at the press: the rechecks at
+		// Confirm and Write keep the plain notice.
+		if (precondition.code === "too-few-sendable-channels") {
+			await openChannelGapModal(interaction, guild, config, precondition.reason);
+			return;
+		}
 		await replyOnboardingError(interaction, precondition.reason, config);
 		return;
 	}
@@ -155,7 +167,21 @@ export async function handleConfigureOnboardingButton(interaction: ButtonInterac
 	// (2026-10 item 257 Phase 5); its controls answer only the admin who drafted it,
 	// because the draft is kept per guild and per presser.
 	const answer = await beginChannelAnswer(interaction, "onboarding");
+	await draftOnboardingReview(interaction, guild, config, answer);
+}
 
+/**
+ * Steps ② to ④ once the preconditions passed: read the live Onboarding config, draft over
+ * it, and post the review through `answer`. Called by the Configure Onboarding press and by
+ * the channel gap's Confirm (onboardingChannelGap). It never acknowledges the interaction:
+ * each caller already did, through beginChannelAnswer, so every press is answered once.
+ */
+export async function draftOnboardingReview(
+	interaction: ButtonInteraction,
+	guild: Guild,
+	config: IConfigureOnboardingConfig,
+	answer: PendingChannelAnswer
+): Promise<void> {
 	const current = await readLiveOnboarding(guild);
 	if ("readError" in current) {
 		await answer.send({ embeds: [errorEmbed(communityCopy.onboarding.readFailed(current.readError), config)] });

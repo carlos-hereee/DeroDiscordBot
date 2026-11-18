@@ -118,6 +118,8 @@ function press(guild: FakeGuild, userId: string, customId: string) {
 		deferUpdate: vi.fn(async () => undefined),
 		update: vi.fn(async () => undefined),
 		showModal: vi.fn(async () => undefined),
+		// The channel gap modal's collector (2026-11 item 367): nobody submits here.
+		awaitModalSubmit: vi.fn(async () => Promise.reject(new Error("no submit"))),
 	} as unknown as ButtonInteraction & Record<"reply" | "deferReply" | "editReply" | "deferUpdate" | "update" | "showModal", ReturnType<typeof vi.fn>>;
 }
 
@@ -211,15 +213,18 @@ describe("pressing Configure Onboarding", () => {
 		expect(refusalText(interaction)).toBe(rokCommanderCopy.responses.noWizardPowers);
 	});
 
-	it("refuses a server with only 3 sendable channels with the exact count, audits it, and reads nothing", async () => {
+	// 2026-11 item 367: this one refusal opens the channel gap modal instead of the notice
+	// (onboardingChannelGap.test covers the modal and its flow); the audit row is unchanged.
+	it("on a server with only 3 sendable channels opens the channel gap modal, audits the refusal, and reads nothing", async () => {
 		const guild = makeGuild({ sendableChannels: 3 });
 		const interaction = await openReview(guild);
 
 		expect(guild.fetchOnboarding).not.toHaveBeenCalled();
 		expect(interaction.deferReply).not.toHaveBeenCalled();
 		expect(interaction.reply).not.toHaveBeenCalled();
-		expect(refusalText(interaction)).toBe(copy.preconditions.tooFewSendableChannels(3, 5));
-		expect(refusalText(interaction)).toContain("You currently have 3; please add 2 more");
+		expect(noticeModals(interaction)).toEqual([]);
+		const modal = (interaction.showModal.mock.calls[0]![0] as { toJSON(): { custom_id: string } }).toJSON();
+		expect(modal.custom_id).toMatch(/^community:gapmodal:/);
 		expect(auditRows(BOT_LOG_EVENTS.ONBOARDING_PRECONDITION_FAILED)).toEqual([
 			{ actorId: OWNER, step: "open", code: "too-few-sendable-channels", reason: copy.preconditions.tooFewSendableChannels(3, 5) },
 		]);
