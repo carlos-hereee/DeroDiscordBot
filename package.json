@@ -32,7 +32,7 @@
 		"@discordjs/voice": "^0.19.2",
 		"@napi-rs/canvas": "^1.0.10",
 		"cors": "^2.8.6",
-		"discord.js": "^14.25.1",
+		"discord.js": "^14.28.0",
 		"dotenv": "^17.2.1",
 		"express": "^5.2.1",
 		"gifenc": "^1.0.3",
