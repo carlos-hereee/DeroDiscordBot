@@ -127,14 +127,17 @@ describe("the release announcement", () => {
 		},
 	);
 
-	it("is the item 367 hotfix's admin only note: no public block, the apology, the fix and where to press", () => {
+	it("is the item 367 hotfix's admin only note: no public block, the apology, why it broke, what changed, the warning and the next step", () => {
 		const { public: members, innerSanctum: admins } = rokCommanderCopy.featureAnnouncement;
 		expect(members).toBeNull();
-		expect(admins.title).toBe("🧭 CONFIGURE ONBOARDING IS FIXED");
+		expect(admins.title).toBe("🧭 Configure Onboarding Is Fixed!");
 		expect(admins.description.split("\n\n")).toEqual([
-			"Sorry to anyone who hit this.",
-			"Configure Onboarding is fixed. If it stopped you before by asking you to add more channels, it no longer dead ends: Dero now offers to open some of your own channels to everyone or create new ones, then carries straight on with your Onboarding questions.",
-			"Press Configure Onboarding in 🧭onboarding to pick up where you left off.",
+			"Sorry to anyone who hit this, and thank you to the server owner who reported it.",
+			"**What went wrong**\nDiscord only turns on Onboarding when at least 5 text, announcement or forum channels let everyone both see and post. Dero's notice board channels are read only for members, so many servers came up short of Discord's minimum, and Configure Onboarding stopped with no way forward.",
+			"**What changed**\nWhen your server is short, Configure Onboarding now offers to:\n- let everyone post in some of your existing read only channels\n- create new channels with the names you choose\n- or do both",
+			"You see a private review first. Nothing changes until you press Confirm, and then Dero carries straight on with your Onboarding questions.",
+			"⚠️ **Heads up:** anything you open or create can be seen and posted in by everyone, including people who have not finished Onboarding yet.",
+			"**Next step**\nAlready set up Onboarding by hand? You are all set. Otherwise, press Configure Onboarding in 🧭onboarding to pick up where you left off.",
 		]);
 		expect(`${admins.title}\n${admins.description}`).not.toMatch(UNPREPARED);
 		expect(admins.description.length).toBeLessThan(PATCH_NOTE_MAX);

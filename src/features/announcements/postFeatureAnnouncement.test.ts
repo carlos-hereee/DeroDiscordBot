@@ -131,8 +131,8 @@ describe("postFeatureAnnouncements for an admin only release (a null public bloc
 		expect(adminSend).toHaveBeenCalledTimes(1);
 		const adminPost = adminSend.mock.calls[0][0] as AdminPost;
 		expect(adminPost.components).toBeUndefined();
-		expect(adminPost.embeds[0].data.title).toMatch(/^🧭 CONFIGURE ONBOARDING IS FIXED \(v.+\)$/);
-		expect(adminPost.embeds[0].data.description).toContain("Press Configure Onboarding in <#333>");
+		expect(adminPost.embeds[0].data.title).toMatch(/^🧭 Configure Onboarding Is Fixed! \(v.+\)$/);
+		expect(adminPost.embeds[0].data.description).toContain("press Configure Onboarding in <#333>");
 		expect(mocks.log).toHaveBeenCalledTimes(1);
 	});
 

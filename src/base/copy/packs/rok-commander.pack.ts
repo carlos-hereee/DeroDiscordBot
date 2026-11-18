@@ -1369,9 +1369,9 @@ export const rokCommanderCopy = {
 		// or when a long dash slips in.
 		public: null as IReleaseEmbed | null,
 		innerSanctum: {
-			title: "🧭 CONFIGURE ONBOARDING IS FIXED",
+			title: "🧭 Configure Onboarding Is Fixed!",
 			description:
-				"Sorry to anyone who hit this.\n\nConfigure Onboarding is fixed. If it stopped you before by asking you to add more channels, it no longer dead ends: Dero now offers to open some of your own channels to everyone or create new ones, then carries straight on with your Onboarding questions.\n\nPress Configure Onboarding in 🧭onboarding to pick up where you left off.",
+				"Sorry to anyone who hit this, and thank you to the server owner who reported it.\n\n**What went wrong**\nDiscord only turns on Onboarding when at least 5 text, announcement or forum channels let everyone both see and post. Dero's notice board channels are read only for members, so many servers came up short of Discord's minimum, and Configure Onboarding stopped with no way forward.\n\n**What changed**\nWhen your server is short, Configure Onboarding now offers to:\n- let everyone post in some of your existing read only channels\n- create new channels with the names you choose\n- or do both\n\nYou see a private review first. Nothing changes until you press Confirm, and then Dero carries straight on with your Onboarding questions.\n\n⚠️ **Heads up:** anything you open or create can be seen and posted in by everyone, including people who have not finished Onboarding yet.\n\n**Next step**\nAlready set up Onboarding by hand? You are all set. Otherwise, press Configure Onboarding in 🧭onboarding to pick up where you left off.",
 		},
 	},
 
