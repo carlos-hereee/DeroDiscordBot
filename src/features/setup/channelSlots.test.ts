@@ -30,6 +30,13 @@ describe("HIDEABLE_CHANNELS", () => {
 		expect(values).toContain("arcadeChallengesChannelId");
 	});
 
+	// Member facing, so an admin may hide either without deleting it (2026-11 item 388).
+	it("offers 📝meeting-notes and ✅todos", () => {
+		const values = HIDEABLE_CHANNELS.map((entry) => entry.value);
+		expect(values).toContain("meetingNotesChannelId");
+		expect(values).toContain("todosChannelId");
+	});
+
 	it("still EXCLUDES introductions and both admin channels, on purpose", () => {
 		// Introductions is where new members are pointed, so hiding it defeats the
 		// greeter. Both admin channels are already invisible to members, so a

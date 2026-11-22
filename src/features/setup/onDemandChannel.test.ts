@@ -21,6 +21,9 @@ const { NOTICE_BOARD_FIELDS } = vi.hoisted(() => ({
 		"rulesChannelId",
 		"meetingVoiceChannelId",
 		"commandOutputChannelId",
+		// The opt in pair (2026-11 item 388): built only through this module.
+		"meetingNotesChannelId",
+		"todosChannelId",
 	],
 }));
 
@@ -143,6 +146,15 @@ describe("the allowlist", () => {
 		for (const field of NOTICE_BOARD_FIELDS) expect(isOnDemandField(field)).toBe(true);
 		expect(isOnDemandField("adminChannelId")).toBe(false);
 		expect(isOnDemandField("arcadeGamesChannelId")).toBe(false);
+	});
+
+	// 📝meeting-notes and ✅todos (2026-11 item 388): their step cards' Add this channel lands here.
+	it.each(["meetingNotesChannelId", "todosChannelId"])("builds the opt in %s under the notice board when asked", async (field) => {
+		const channel = await ensureOnDemandChannel(guildWith(live), field, { explicitRequest: true });
+
+		expect(mocks.repairOneChannel.mock.calls[0]![1]).toBe(category);
+		expect(mocks.repairOneChannel.mock.calls[0]![2]).toMatchObject({ configField: field, categoryField: "categoryId" });
+		expect(channel?.id).toBe(`built-${field}-1`);
 	});
 
 	it("throws for a field outside the notice board, before reading anything", async () => {

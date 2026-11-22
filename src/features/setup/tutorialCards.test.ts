@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ButtonStyle, type ButtonInteraction } from "discord.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
+import GuildConfigModel from "@db/models/GuildConfig.js";
 import { generalEventsCopy } from "@base/copy/packs/general-events.pack.js";
 
 // ── tutorialCards ───────────────────────────────────────────────────────────
@@ -83,8 +84,22 @@ beforeEach(() => {
 });
 
 describe("the cards", () => {
-	it("are the ten owner approved channels, in card order", () => {
-		expect(Object.keys(TUTORIAL_CHANNELS)).toEqual(["intro", "announcements", "schedule", "welcome", "rules", "commands", "meetingVoice", "commandOutput", "leaderboard", "nextDecree"]);
+	// Twelve since 📝meeting-notes and ✅todos joined last (2026-11 item 388).
+	it("are the twelve owner approved channels, in card order", () => {
+		expect(Object.keys(TUTORIAL_CHANNELS)).toEqual([
+			"intro",
+			"announcements",
+			"schedule",
+			"welcome",
+			"rules",
+			"commands",
+			"meetingVoice",
+			"commandOutput",
+			"leaderboard",
+			"nextDecree",
+			"meetingNotes",
+			"todos",
+		]);
 		expect(channelCards(null).map((card) => card.key)).toEqual([
 			"introChannelId",
 			"announcementsChannelId",
@@ -96,7 +111,16 @@ describe("the cards", () => {
 			"commandOutputChannelId",
 			"leaderboardChannelId",
 			"nextDecreeChannelId",
+			"meetingNotesChannelId",
+			"todosChannelId",
 		]);
+	});
+
+	// R4 of 2026-11 item 388's session notes: both maps are declared key by key, and an
+	// undeclared key is dropped in silence, so the card or the intro would repost every boot.
+	it.each(Object.values(TUTORIAL_CHANNELS))("declares %s in tutorialCardMessageIds and introMessageIds", (field) => {
+		expect(GuildConfigModel.schema.path(`tutorialCardMessageIds.${field}`), "tutorialCardMessageIds").toBeDefined();
+		expect(GuildConfigModel.schema.path(`introMessageIds.${field}`), "introMessageIds").toBeDefined();
 	});
 
 	it("render an open channel with Add this channel and Skip while the slot is empty", () => {

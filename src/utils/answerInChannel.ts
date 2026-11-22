@@ -51,6 +51,10 @@ export type AnswerAudience =
 	| "here"
 	/** a finished trade in Dero coins: 🏪dero-market */
 	| "market"
+	/** a meeting's notes and its consent notice: 📝meeting-notes (2026-11 item 388) */
+	| "meetingNotes"
+	/** a todo card or a todo's reminder: ✅todos (2026-11 item 388) */
+	| "todos"
 	/** Dero's own config and voice: ⚙️dero-config */
 	| "deroConfig"
 	/** Community and Onboarding: 🧭onboarding */
@@ -66,6 +70,8 @@ export type AnswerAudience =
 export interface AnswerChannelConfig extends ICopyConfig {
 	commandOutputChannelId?: string | null;
 	deroMarketChannelId?: string | null;
+	meetingNotesChannelId?: string | null;
+	todosChannelId?: string | null;
 	deroConfigChannelId?: string | null;
 	onboardingConfigChannelId?: string | null;
 	arcadeControlChannelId?: string | null;
@@ -127,6 +133,8 @@ export const RECORDS_ANSWERS = Symbol.for("dero.recordsAnswers");
 const AUDIENCE_FIELD: Record<Exclude<AnswerAudience, "here">, keyof AnswerChannelConfig> = {
 	member: "commandOutputChannelId",
 	market: "deroMarketChannelId",
+	meetingNotes: "meetingNotesChannelId",
+	todos: "todosChannelId",
 	deroConfig: "deroConfigChannelId",
 	onboarding: "onboardingConfigChannelId",
 	arcade: "arcadeControlChannelId",

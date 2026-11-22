@@ -246,7 +246,7 @@ export interface OnboardingFacts {
 }
 
 /**
- * 🧭onboarding: the ten channel steps first, then Community, the server's own channels,
+ * 🧭onboarding: the twelve channel steps first, then Community, the server's own channels,
  * Discord Onboarding and gating (2026-11 item 289). The own channels step names the channels
  * Dero adopted, so the choice lives here and no card posts in 🔒inner-sanctum (2026-10 item
  * 263 Phase 4b, R3-19); with none adopted it stays in place as done, its line saying there is

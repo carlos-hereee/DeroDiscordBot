@@ -104,11 +104,12 @@ describe("the step marks, read from a fixture config", () => {
 		expect(flows.map((step) => step.customId)).toEqual([COMMUNITY_CUSTOM_IDS.enable, CHOOSE_BUTTON_ID, COMMUNITY_CUSTOM_IDS.configure, null]);
 		const card = buildStepsCard(view);
 		expect(card.embeds[0]!.data.description).toContain(copy.onboarding.gatingNote);
-		expect(card.components.flatMap((row) => row.components)).toHaveLength(13);
+		expect(card.components.flatMap((row) => row.components)).toHaveLength(15);
 	});
 
 	// 2026-11 item 289: the owner's order, the channels first, each read from the row.
-	it("🧭onboarding: lists the ten channels first, then the four flows, each channel marked from its slot", () => {
+	// Twelve since 📝meeting-notes and ✅todos joined the channel steps last (2026-11 item 388).
+	it("🧭onboarding: lists the twelve channels first, then the four flows, each channel marked from its slot", () => {
 		const facts = { communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: false, adoptedLines: [] };
 		const view = onboardingView(facts, { introChannelId: "c-intro" });
 		expect(view.steps.map((step) => step.key)).toEqual([
@@ -122,22 +123,24 @@ describe("the step marks, read from a fixture config", () => {
 			"commandOutput",
 			"leaderboard",
 			"nextDecree",
+			"meetingNotes",
+			"todos",
 			"community",
 			"adopted",
 			"discordOnboarding",
 			"gating",
 		]);
-		expect(view.steps.slice(0, 10).every((step) => step.kind === "channel")).toBe(true);
+		expect(view.steps.slice(0, 12).every((step) => step.kind === "channel")).toBe(true);
 		expect(view.steps.slice(0, 2).map((step) => [step.done, step.customId])).toEqual([
 			[true, "hqstep:onboarding:tutorial-intro"],
 			[false, "hqstep:onboarding:tutorial-announcements"],
 		]);
 	});
 
-	it("🧭onboarding: three rows of step buttons hold all 13, and every other channel stays at two", () => {
+	it("🧭onboarding: three rows of step buttons hold all 15, and every other channel stays at two", () => {
 		const facts = { communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: false, adoptedLines: [] };
 		const rows = buildStepsCard(onboardingView(facts, {})).components;
-		expect(rows.map((row) => row.components.length)).toEqual([5, 5, 3]);
+		expect(rows.map((row) => row.components.length)).toEqual([5, 5, 5]);
 		expect(serverConfigView({}, noEvents).stepRows).toBeUndefined();
 		expect(buildStepsCard(serverConfigView({}, noEvents)).components).toHaveLength(2);
 	});
@@ -785,7 +788,9 @@ describe("the setup walk", () => {
 		const THREE_FIELDS = ["commandOutputChannelId", "leaderboardChannelId", "nextDecreeChannelId"] as const;
 		const allChannels = Object.fromEntries([...SEVEN_FIELDS, ...THREE_FIELDS].map((field) => [field, `c-${field}`]));
 
-		it("keeps every stored card and its chart, gains Remove, the three new cards and one flow card", async () => {
+		// The next open step after the ten old channels is 📝meeting-notes' card (2026-11 item 388),
+		// so an existing server is offered the opt in card before the flows.
+		it("keeps every stored card and its chart, gains Remove, the three new cards and the meeting notes card", async () => {
 			const { guild, send, messages, stored } = onboardingRig(allChannels);
 			const cardIds: Record<string, string> = {};
 			for (const field of SEVEN_FIELDS) cardIds[field] = await seed(send, field);
@@ -797,7 +802,7 @@ describe("the setup walk", () => {
 			await syncHeadquartersChannel(guild, "onboarding");
 
 			for (const message of before) expect(message.delete).not.toHaveBeenCalled();
-			expect(titlesOf(messages).slice(before.length)).toEqual(["💬 Dero Commands", "🏆 Leaderboard", "🔜 Upcoming Events", copy.onboarding.steps[0]]);
+			expect(titlesOf(messages).slice(before.length)).toEqual(["💬 Dero Commands", "🏆 Leaderboard", "🔜 Upcoming Events", "📝 Meeting Notes"]);
 			expect(buttonLabels(messages.get(cardIds.introChannelId!)!)).toEqual(["Channel ready", copy.stepCards.removeButton]);
 			expect(stored.settingsChartMessageIds?.onboardingConfigChannelId).toBe(chartId);
 		});

@@ -344,7 +344,7 @@ describe("Just delete channels, everything Dero built", () => {
 		const categories = MANAGED_CATEGORY_FIELDS.map((field) => `cat-${field}`);
 		expect(deleted).toEqual([...HOMEBASE_CHANNEL_FIELDS.map((field) => `ch-${field}`), ...categories]);
 		expect(deleted.at(-1)).toBe("cat-headquartersCategoryId");
-		for (const field of ["deroConfigChannelId", "onboardingConfigChannelId", "arcadeControlChannelId", "commandOutputChannelId"]) {
+		for (const field of ["deroConfigChannelId", "onboardingConfigChannelId", "arcadeControlChannelId", "commandOutputChannelId", "meetingNotesChannelId", "todosChannelId"]) {
 			expect(deleted, field).toContain(`ch-${field}`);
 		}
 		// Dero's two voice rooms come off his voice allow list (2026-10 item 257 Phase 2b).

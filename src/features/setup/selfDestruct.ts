@@ -137,6 +137,9 @@ export const HOMEBASE_CHANNEL_FIELDS = [
 	// 🛠️server-config (2026-10 item 263 Phase 4a)
 	"serverConfigChannelId",
 	"commandOutputChannelId",
+	// 📝meeting-notes and ✅todos (2026-11 item 388)
+	"meetingNotesChannelId",
+	"todosChannelId",
 ] as const;
 
 // Every managed category, deleted after every channel and in this order, 🏰 DERO

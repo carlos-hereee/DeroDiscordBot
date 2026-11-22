@@ -293,13 +293,43 @@ describe("every file the voice and brain code can reach", () => {
 	});
 });
 
+// ⚠️ THE ONE MODEL ALLOWED TO HOLD WHAT PEOPLE SAID (2026-11 item 388, owner decision D8 of the
+// plan's session notes). MeetingTranscriptSegment keeps the words of members who agreed to be
+// recorded in a Meeting Hall meeting (the plan body's decision D7), deleted by its TTL index
+// 30 days after they were written. It is named here by file, so its fields keep their plain
+// names and the guard still knows where the words live; every other model that names audio,
+// transcript or recording still fails. Even this one may never name audio or recording:
+// audio is never stored (the owner's direction in the same notes).
+const TRANSCRIPT_MODEL_ALLOWLIST: ReadonlySet<string> = new Set(["MeetingTranscriptSegment.ts"]);
+const AUDIO_FIELD = /audio|recording/i;
+
+/** The fields of one model file that break the privacy rule for that file. */
+function sensitiveFieldsOf(fileName: string, source: string): string[] {
+	const rule = TRANSCRIPT_MODEL_ALLOWLIST.has(fileName) ? AUDIO_FIELD : SENSITIVE_FIELD;
+	return fieldNamesIn(source).filter((field) => rule.test(field));
+}
+
 describe("every Mongoose model", () => {
-	it("has no field named like audio, transcript or recording", () => {
+	it("has no field named like audio, transcript or recording, outside the one allowlisted model", () => {
 		const models = join(SRC, "db", "models");
-		const fields = readdirSync(models)
-			.filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
-			.flatMap((name) => fieldNamesIn(readFileSync(join(models, name), "utf8")).map((field) => ({ model: name, field })));
+		const names = readdirSync(models).filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"));
+		const fields = names.flatMap((name) => fieldNamesIn(readFileSync(join(models, name), "utf8")));
 		expect(fields.length).toBeGreaterThan(50);
-		expect(fields.filter(({ field }) => SENSITIVE_FIELD.test(field))).toEqual([]);
+		const violations = names.flatMap((name) => sensitiveFieldsOf(name, readFileSync(join(models, name), "utf8")).map((field) => `${name}: ${field}`));
+		expect(violations).toEqual([]);
+	});
+
+	it("allowlists exactly one model, which exists", () => {
+		expect([...TRANSCRIPT_MODEL_ALLOWLIST]).toEqual(["MeetingTranscriptSegment.ts"]);
+		expect(existsSync(join(SRC, "db", "models", "MeetingTranscriptSegment.ts"))).toBe(true);
+	});
+
+	// The allowlist must not widen: a planted second model holding words still fails, and the
+	// allowlisted one still fails the moment it names audio or a recording.
+	it("still flags a planted second model, and audio in the allowlisted one", () => {
+		const planted = "const schema = new mongoose.Schema({ meetingTranscript: { type: String } });";
+		expect(sensitiveFieldsOf("MeetingNotesDraft.ts", planted)).toEqual(["meetingTranscript"]);
+		expect(sensitiveFieldsOf("MeetingTranscriptSegment.ts", "const schema = new mongoose.Schema({ audioUrl: { type: String } });")).toEqual(["audioUrl"]);
+		expect(sensitiveFieldsOf("MeetingTranscriptSegment.ts", "const schema = new mongoose.Schema({ transcriptText: { type: String } });")).toEqual([]);
 	});
 });

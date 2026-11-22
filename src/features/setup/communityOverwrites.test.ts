@@ -162,6 +162,13 @@ function todayCreateShape(field: string): readonly IOverwrite[] {
 
 // ── the non-Community snapshot ─────────────────────────────────────────
 
+
+// Every spec a build makes: all but the opt in ones, which only their step cards build
+// (IChannelSpec.optIn, 2026-11 item 388).
+function builtSpecs() {
+	return GuildSetupManager.CHANNEL_SPECS.filter((spec) => !spec.optIn);
+}
+
 describe("non-Community guilds keep today's overwrite shapes byte for byte", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -179,10 +186,14 @@ describe("non-Community guilds keep today's overwrite shapes byte for byte", () 
 		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID }, { force: true });
 
 		const calls = createCalls(guild);
-		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
+		for (const spec of builtSpecs()) {
 			const call = calls.find((entry) => entry.name === packNamesByField[spec.configField]);
 			expect(call, `${spec.configField} was never created`).toBeDefined();
 			expect(call!.permissionOverwrites, spec.configField).toEqual(todayCreateShape(spec.configField));
+		}
+		// 📝meeting-notes and ✅todos are opt in (2026-11 item 388): a full build makes neither.
+		for (const spec of GuildSetupManager.CHANNEL_SPECS.filter((entry) => entry.optIn)) {
+			expect(calls.find((entry) => entry.name === packNamesByField[spec.configField]), `${spec.configField} built unasked`).toBeUndefined();
 		}
 	});
 
@@ -193,7 +204,7 @@ describe("non-Community guilds keep today's overwrite shapes byte for byte", () 
 		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID }, { force: true });
 
 		const calls = createCalls(guild);
-		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
+		for (const spec of builtSpecs()) {
 			const call = calls.find((entry) => entry.name === packNamesByField[spec.configField]);
 			const expected =
 				spec.kind === "voice" ? [...TODAY.voice, TODAY.voiceMemberGrant, TODAY.voiceAdminGrant] : todayCreateShape(spec.configField);
@@ -524,7 +535,7 @@ describe("GuildSetupManager on a Community guild", () => {
 
 		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID }, { force: true });
 
-		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
+		for (const spec of builtSpecs()) {
 			const call = createCalls(guild).find((entry) => entry.name === packNamesByField[spec.configField]);
 			expect(call!.permissionOverwrites, spec.configField).toEqual(todayCreateShape(spec.configField));
 		}
@@ -546,7 +557,7 @@ describe("GuildSetupManager on a Community guild", () => {
 			voice: GATED.voice,
 			commandOutput: GATED.commandOutput.filter((entry) => entry.id !== ADMIN_ROLE_ID),
 		};
-		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
+		for (const spec of builtSpecs()) {
 			const call = calls.find((entry) => entry.name === packNamesByField[spec.configField]);
 			expect(call!.permissionOverwrites, spec.configField).toEqual(expectedByKind[overwriteKindOf(spec)]);
 		}

@@ -18,6 +18,9 @@ const CONFIG = {
 	commandOutputChannelId: "c-commands",
 	// 🏪dero-market, where a finished trade posts (2026-10 item 267 Session 2a).
 	deroMarketChannelId: "c-market",
+	// 📝meeting-notes and ✅todos (2026-11 item 388).
+	meetingNotesChannelId: "c-meeting-notes",
+	todosChannelId: "c-todos",
 	deroConfigChannelId: "c-dero-config",
 	onboardingConfigChannelId: "c-onboarding",
 	arcadeControlChannelId: "c-arcade",
@@ -73,6 +76,8 @@ describe("answerChannelId", () => {
 	const routes: Array<[AnswerAudience, string]> = [
 		["member", "c-commands"],
 		["market", "c-market"],
+		["meetingNotes", "c-meeting-notes"],
+		["todos", "c-todos"],
 		["deroConfig", "c-dero-config"],
 		["onboarding", "c-onboarding"],
 		["arcade", "c-arcade"],

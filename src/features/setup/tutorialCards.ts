@@ -27,7 +27,7 @@ import { setupCopy } from "./setupCopy.js";
 // Where: the build is onDemandChannel's, the one path that builds a notice board channel
 //        after install, and a card's Remove is removeChannel.ts, so a card cannot build or
 //        take away a channel any other way. Nothing here touches Discord's channels.
-// How:   ten channel cards, one per notice board channel, and the 17 flow steps of the four
+// How:   twelve channel cards, one per notice board channel, and the 17 flow steps of the four
 //        channels. A card's title never carries its mark, so a lost id still finds its card.
 
 /** The channels a tutorial card builds, in card order, keyed by the word its customId carries. */
@@ -42,6 +42,10 @@ export const TUTORIAL_CHANNELS = {
 	commandOutput: "commandOutputChannelId",
 	leaderboard: "leaderboardChannelId",
 	nextDecree: "nextDecreeChannelId",
+	// 📝meeting-notes and ✅todos (2026-11 item 388): opt in, so this card is the only way
+	// either is built, and adding it is how a server turns the feature on (owner decision D18).
+	meetingNotes: "meetingNotesChannelId",
+	todos: "todosChannelId",
 } as const satisfies Record<string, OnDemandField>;
 
 export type TutorialChannelKey = keyof typeof TUTORIAL_CHANNELS;
@@ -189,7 +193,7 @@ export function revealedSteps(
 
 // ── the cards ────────────────────────────────────────────────────────────────
 
-/** The ten channel steps as the row stands, each teaching from the guild's pack. */
+/** The twelve channel steps as the row stands, each teaching from the guild's pack. */
 export function channelSteps(row: TutorialRow | null, pack: IPluginCopy): SetupStep[] {
 	return (Object.keys(TUTORIAL_CHANNELS) as TutorialChannelKey[]).map((key) => {
 		const teaching = pack.channelContent.tutorial[key];

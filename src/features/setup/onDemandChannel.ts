@@ -42,7 +42,9 @@ export type OnDemandField =
 	| "welcomeChannelId"
 	| "rulesChannelId"
 	| "meetingVoiceChannelId"
-	| "commandOutputChannelId";
+	| "commandOutputChannelId"
+	| "meetingNotesChannelId"
+	| "todosChannelId";
 
 /** Options for one call. */
 export interface EnsureOptions {

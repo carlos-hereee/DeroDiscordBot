@@ -18,6 +18,8 @@ const { NOTICE_BOARD_FIELDS } = vi.hoisted(() => ({
 		"rulesChannelId",
 		"meetingVoiceChannelId",
 		"commandOutputChannelId",
+		"meetingNotesChannelId",
+		"todosChannelId",
 	],
 }));
 
@@ -117,6 +119,23 @@ beforeEach(() => {
 		// A second filled slot, so only the tidy tests reach the category.
 		announcementsChannelId: "c-announcements",
 	};
+});
+
+// 📝meeting-notes and ✅todos (2026-11 item 388): Remove is how a server turns either feature
+// off, and the opt out keeps the boot sweep and the delete watcher from building it back.
+describe("Remove on an opt in channel", () => {
+	it.each([
+		["meetingNotesChannelId", "onboarding:meetingNotes"],
+		["todosChannelId", "onboarding:todos"],
+	] as const)("deletes %s and writes the opt out", async (field, stepId) => {
+		mocks.row[field] = `c-${field}`;
+		channel(`c-${field}`);
+
+		await expect(removeNoticeBoardChannel(guild(), field, stepId)).resolves.toBe("deleted");
+
+		expect(mocks.row.userRemovedChannels).toEqual([field]);
+		expect(mocks.row[field]).toBeNull();
+	});
 });
 
 describe("Remove on a channel Dero built", () => {

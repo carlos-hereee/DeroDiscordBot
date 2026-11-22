@@ -1,5 +1,6 @@
 import type { AdminLogFamily, AdminLogKind } from "./adminLog.js";
 import type { BoardRefreshProblem } from "@base/interfaces/IBoardRefreshResult.js";
+import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 
 // ── setup admin copy ─────────────────────────────────────────────────────
 // Feature-local copy for the admin surfaces this folder owns, the sibling of
@@ -571,10 +572,12 @@ export const setupCopy = {
 			// Step 1, the server's timezone (2026-10 item 263 Phase 4c). Discord caps a modal
 			// title and a label at 45 characters.
 			timezone: {
-				modalTitle: "Server timezone",
-				intro:
-					"Times typed for party games and stream announcements are read in this zone, and a new weekly stream starts in it. The KvK season stays on UTC, the game's clock. Shown times already appear in each member's own time.",
-				selectLabel: "This server's timezone",
+				// The modal's own words live in the packs' timezoneModal.server, read by the
+				// shared modal in utils/timezoneModal.ts (2026-11 item 388); kept here by reference
+				// so this step's copy stays one object and cannot drift from the modal.
+				modalTitle: rokCommanderCopy.timezoneModal.server.title,
+				intro: rokCommanderCopy.timezoneModal.server.intro,
+				selectLabel: rokCommanderCopy.timezoneModal.server.selectLabel,
 				notAdmin: "Only the server owner or an admin can set the server's timezone.",
 				saved: (zone: string): string => `This server's timezone is now **${zone}**. Times typed from now on are read in it.`,
 				auditSubject: "server timezone",

@@ -270,6 +270,21 @@ export interface IChannelSpec {
 	// 🏰 DERO HEADQUARTERS made it three (2026-10 item 257 Phase 2a); the reasoning
 	// is unchanged, and a test asserts every spec names one of the three.
 	categoryField: "categoryId" | SecondaryCategoryField;
+	// ⚠️ OPT IN: only a step card's Add this channel (ensureOnDemandChannel) ever builds this
+	// slot while it is empty (2026-11 item 388, owner decision D2). Without it a new spec ARMS
+	// the boot repair sweep, which reads a legacy row's null as case ③ "missing, build it",
+	// and every server with a 🪧 NOTICE BOARD would get the channel unasked on the next boot.
+	// onDemandChannels cannot carry that rule, because it is written once, from the slots
+	// that existed when the notice board was first claimed. Every reader goes through
+	// waitsForStepCard, so the sweep, its auto heal count, a forced rebuild and the held
+	// board check cannot disagree. A slot that holds an id is a real channel and is
+	// repaired like any other.
+	optIn?: true;
+}
+
+/** True while an opt in spec's slot is empty: nothing but its step card may build it. */
+export function waitsForStepCard(spec: Pick<IChannelSpec, "configField" | "optIn">, row: unknown): boolean {
+	return spec.optIn === true && !((row ?? {}) as Record<string, unknown>)[spec.configField];
 }
 
 // Every spec's displayName from its nameKey in the default pack.
@@ -718,6 +733,7 @@ export class GuildSetupManager {
 			for (const spec of GuildSetupManager.CHANNEL_SPECS.filter((entry) => entry.categoryField === field)) {
 				if (removedSlots.has(spec.configField)) continue;
 				if (onDemandSlots.has(spec.configField) && !row[spec.configField]) continue;
+				if (waitsForStepCard(spec, row)) continue;
 				// A reused Headquarters with no admin role keeps its waiting slots for Set up Dero.
 				if (waitsForSetup(spec, row)) continue;
 				const storedId = row[spec.configField];
@@ -792,7 +808,11 @@ export class GuildSetupManager {
 	static holdsEveryNoticeBoardSlot(stored: unknown): boolean {
 		const row = stored as Record<string, unknown>;
 		const held = new Set(GuildSetupManager.heldNoticeBoardSlots(stored));
-		return GuildSetupManager.specFieldsUnder("categoryId").every((field) => held.has(field) && !row[field]);
+		// An empty opt in slot is held by its spec, whatever the lists say, so a legacy row
+		// that never listed it still has its empty board forgotten (2026-11 item 388).
+		return GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.categoryField === "categoryId").every(
+			(spec) => waitsForStepCard(spec, row) || (held.has(spec.configField) && !row[spec.configField])
+		);
 	}
 
 	// Whether any of Dero's own stored notice board channels may still exist (2026-10 item
@@ -1257,6 +1277,9 @@ export class GuildSetupManager {
 		// 🛠️server-config, the fourth config channel (2026-10 item 263 Phase 4a).
 		"serverConfigChannelId",
 		"commandOutputChannelId",
+		// 📝meeting-notes and ✅todos under the notice board (2026-11 item 388), opt in.
+		"meetingNotesChannelId",
+		"todosChannelId",
 	] as const;
 
 	// exported so ChannelDeleteWatcher can map a deleted channel id to its
@@ -1379,6 +1402,13 @@ export class GuildSetupManager {
 		// list); overwriteKindOf gives it its own member-writable shape, because members
 		// run their commands here (owner decision 7).
 		{ configField: "commandOutputChannelId", nameKey: "commandOutput", kind: "public", categoryField: "categoryId" },
+		// ── 📝meeting-notes and ✅todos (2026-11 item 388 Phase 1) ──
+		// optIn, so these two lines do NOT arm the boot repair sweep the way the specs above
+		// did: a server opts in by pressing Add this channel on the step card in 🧭onboarding,
+		// and the channel existing is the feature's switch (owner decisions D8 and D18).
+		// Public: members read the notes and press the todo cards' buttons, Dero writes.
+		{ configField: "meetingNotesChannelId", nameKey: "meetingNotes", kind: "public", categoryField: "categoryId", optIn: true },
+		{ configField: "todosChannelId", nameKey: "todos", kind: "public", categoryField: "categoryId", optIn: true },
 	]);
 
 	/** The config field of every managed channel parented under the given category. */
@@ -1476,6 +1506,11 @@ export class GuildSetupManager {
 				return ChannelContent.serverConfigIntro(guildConfig);
 			case "commandOutputChannelId":
 				return ChannelContent.commandOutputIntro(guildConfig);
+			// ── 📝meeting-notes and ✅todos (2026-11 item 388) ──
+			case "meetingNotesChannelId":
+				return ChannelContent.meetingNotesIntro(guildConfig);
+			case "todosChannelId":
+				return ChannelContent.todosIntro(guildConfig);
 		}
 	}
 
@@ -2326,6 +2361,7 @@ export class GuildSetupManager {
 				const storedId = stored[spec.configField] as string | null | undefined;
 				// A slot waiting for its first use, or for setup, is not missing, so it is not counted.
 				if (!storedId && waitingSlots.includes(spec.configField)) continue;
+				if (waitsForStepCard(spec, stored)) continue;
 				if (waitsForSetup(spec, stored)) continue;
 				if (!storedId) {
 					wouldRepairCount += 1;
@@ -2402,6 +2438,8 @@ export class GuildSetupManager {
 			// Only while the slot is still empty: a slot that holds an id (a forced rebuild
 			// built it) is a real channel and is repaired like any other.
 			if (onDemandSlots.has(spec.configField) && !stored[spec.configField]) continue;
+			// An opt in slot nobody asked for is not missing (2026-11 item 388): see IChannelSpec.optIn.
+			if (waitsForStepCard(spec, stored)) continue;
 			// ⚠️ A Headquarters slot waiting for setup stays unbuilt (2026-11 item 285 debug
 			// pass): 🔒inner-sanctum is the tutorial's first step, so a boot before Set up Dero
 			// must not read the empty slots as case ③ below and build all of them.
@@ -3290,6 +3328,9 @@ export class GuildSetupManager {
 					rulesChannelId: rules.channel.id,
 					meetingVoiceChannelId: meetingVoiceChannel.id,
 					commandOutputChannelId: commandOutputChannel.id,
+					// Opt in: a bulk build never makes them, only their step cards do.
+					meetingNotesChannelId: null,
+					todosChannelId: null,
 				},
 				objects: {
 					introChannel,
@@ -3856,7 +3897,14 @@ export class GuildSetupManager {
 			// The two member-writable channels: introductions and 💬dero-commands.
 			// 🏪dero-market is the third: members never type there, but every finished trade
 			// posts there and would bury the panel its two buttons ride on.
-			const shouldBePinned = spec.configField === "introChannelId" || spec.configField === "commandOutputChannelId" || spec.configField === "deroMarketChannelId";
+			// 📝meeting-notes and ✅todos fill with notes and todo cards beneath their intro, so
+			// the intro is pinned to stay findable (2026-11 item 388).
+			const shouldBePinned =
+				spec.configField === "introChannelId" ||
+				spec.configField === "commandOutputChannelId" ||
+				spec.configField === "deroMarketChannelId" ||
+				spec.configField === "meetingNotesChannelId" ||
+				spec.configField === "todosChannelId";
 
 			// Try to fetch the stored message. If present, compare its
 			// embed to the fresh one; if equivalent, we are done for

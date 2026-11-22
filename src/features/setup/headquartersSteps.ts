@@ -33,7 +33,8 @@ import { arcadeControlActionOf, handleDismantle, RETIRED_ENABLE_STUB_TAIL, type 
 import { handleOpen as handleRenameInfo } from "./renameInfoStep.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
-import { TIMEZONE_OPTIONS, resolveServerTimezone } from "@utils/tzParser.js";
+import { resolveServerTimezone } from "@utils/tzParser.js";
+import { buildTimezoneModal, pickedTimezone, TIMEZONE_FIELD_ID, TIMEZONE_MODAL_IDS } from "@utils/timezoneModal.js";
 import { TEMPLATE_PLUGIN_IDS, isTemplatePluginId, switchTemplate, type ISwitchTemplateResult, type TemplatePluginId, type TemplateRow } from "./switchTemplate.js";
 
 // ── headquartersSteps ───────────────────────────────────────────────────────
@@ -261,32 +262,14 @@ async function handlePrioritySubmit(interaction: ModalSubmitInteraction): Promis
 
 // ── 🛠️server-config step 1, the server's timezone (2026-10 item 263 Phase 4c) ──
 
-const TIMEZONE_MODAL_ID = `${HEADQUARTERS_STEP_PREFIX}timezone`;
-const TIMEZONE_FIELD_ID = "timezone";
+// The modal itself is the shared one in utils/timezoneModal.ts (2026-11 item 388, owner
+// decision D26), which a member's own zone pick opens too; this step passes target "server".
+const TIMEZONE_MODAL_ID = TIMEZONE_MODAL_IDS.server;
 const timezoneCopy = setupCopy.headquarters.serverConfig.timezone;
 
-/** The modal: one select of the shared 25 zones, the server's zone picked already. */
-export function buildTimezoneModal(currentZone: string): ModalBuilder {
-	const select = new StringSelectMenuBuilder()
-		.setCustomId(TIMEZONE_FIELD_ID)
-		.setMinValues(1)
-		.setMaxValues(1)
-		.addOptions(TIMEZONE_OPTIONS.map((option) => ({ label: option.label, value: option.value, description: option.description, default: option.value === currentZone })));
-	return new ModalBuilder()
-		.setCustomId(TIMEZONE_MODAL_ID)
-		.setTitle(timezoneCopy.modalTitle)
-		.addTextDisplayComponents(new TextDisplayBuilder().setContent(timezoneCopy.intro))
-		.addLabelComponents(new LabelBuilder().setLabel(timezoneCopy.selectLabel).setStringSelectMenuComponent(select));
-}
-
-/**
- * The zone a Submit picked, or null for one that is not on the list. The select only
- * offers the list, but a crafted Submit can carry any string, and this value goes
- * straight into every scheduler's time math.
- */
-export function pickedTimezone(picked: string | undefined): string | null {
-	return TIMEZONE_OPTIONS.some((option) => option.value === picked) ? (picked as string) : null;
-}
+// Re exported so the callers and the suite that imported both from this file before the move
+// keep working unchanged (headquartersSteps.test.ts pins the step's behavior through them).
+export { buildTimezoneModal, pickedTimezone };
 
 async function openTimezoneModal(interaction: ButtonInteraction): Promise<void> {
 	const guild = interaction.guild;

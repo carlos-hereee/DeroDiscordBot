@@ -478,6 +478,10 @@ export const rokCommanderCopy = {
 			// text channel name, which it lowercases and dashes. 2026-10 item 235.
 			meetingVoice: "🏛️ Meeting Hall",
 			arcadeVoice: "🎮 Arcade Lounge",
+			// ── the two opt in notice board channels (2026-11 item 388) ──
+			// Built only from their step cards in 🧭onboarding. Universal across packs.
+			meetingNotes: "📝meeting-notes",
+			todos: "✅todos",
 		},
 		// ── the setup invitation DM (2026-11 item 285 Phase 1) ──
 		// Sent to the owner on GuildCreate and by the boot backfill, after the pairing
@@ -492,6 +496,27 @@ export const rokCommanderCopy = {
 				"I have taken my place in **{{server}}**, and one command stands between us and a proper headquarters.\n\n" +
 				"Open 🔒inner-sanctum in that server and press **Set up Dero**, or press {{mention}} and run it there. I shall raise 🏰 DERO HEADQUARTERS and walk you through the rest from there.\n\n" +
 				"*Only you, the realm's owner, may wield it.*",
+		},
+	},
+
+	// ── the timezone modal (2026-11 item 388, owner decision D26) ──
+	// One modal of the shared 25 zones (utils/timezoneModal.ts), opened by the server's
+	// timezone step in 🛠️server-config and by a member setting their own zone. Discord caps a
+	// modal title and a label at 45 characters. The server words are admin copy and read the
+	// same in both packs; the member words are plain in both too, since a time zone pick is
+	// an instruction rather than a moment for the kingdom voice.
+	timezoneModal: {
+		server: {
+			title: "Server timezone",
+			intro:
+				"Times typed for party games and stream announcements are read in this zone, and a new weekly stream starts in it. The KvK season stays on UTC, the game's clock. Shown times already appear in each member's own time.",
+			selectLabel: "This server's timezone",
+		},
+		member: {
+			title: "Your timezone",
+			intro:
+				"Times you type for your todos and reminders in this server are read in this zone. Other members keep their own.",
+			selectLabel: "Your timezone in this server",
 		},
 	},
 
@@ -754,6 +779,22 @@ export const rokCommanderCopy = {
 			description:
 				"Summon Dero here, warrior: this is the hall for running Dero's commands.\n\n" +
 				"Speak freely, for it is open to every member of the realm.",
+		},
+
+		// ── 📝meeting-notes' and ✅todos' intros (2026-11 item 388) ──
+		// Member facing, so the kingdom voice. Outcomes only: what lands in each hall, and
+		// that only members who agree are ever recorded.
+		meetingNotes: {
+			title: "📝 The Council Scrolls",
+			description:
+				"Here I keep the record of councils held in 🏛️ Meeting Hall: a summary of each meeting, the decisions made and the tasks set.\n\n" +
+				"I record only the warriors who agree to be recorded, and I ask each of them first.",
+		},
+		todos: {
+			title: "✅ The Task Ledger",
+			description:
+				"Here the realm's tasks are kept: each todo with who carries it and when it is due.\n\n" +
+				"When a task draws near its due time, I send a reminder to the warrior who holds it.",
 		},
 
 		// ── the arcade rules card (2026-10 item 245 Phase 4a) ────────────
@@ -1108,6 +1149,16 @@ export const rokCommanderCopy = {
 				title: "🔜 Upcoming Events",
 				body:
 					"As each event moves within the next day, I post it here with its time and any prep notes. Every post stays, so your people can scroll back to what was announced, and its Edit button changes that one occurrence. Without this hall those posts wait until you raise it.",
+			},
+			meetingNotes: {
+				title: "📝 Meeting Notes",
+				body:
+					"Where the notes of your 🏛️ Meeting Hall councils are kept: a summary of each meeting, its decisions and its action items. Raising this hall is how you allow meeting recording in this realm, and I record only the members who agree to it. Without this hall I record no meeting.",
+			},
+			todos: {
+				title: "✅ Todos",
+				body:
+					"Where your realm's todos live, each with who holds it and when it is due, and where I remind them as a due time nears. Raising this hall is how you turn todos on in this realm. Without this hall there are no todos and no todo reminders.",
 			},
 		},
 	},

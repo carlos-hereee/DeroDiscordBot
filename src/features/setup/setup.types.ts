@@ -44,6 +44,10 @@ export interface IHomebaseChannelIds {
 	meetingVoiceChannelId: string;
 	// 💬dero-commands under the notice board, where member command answers post.
 	commandOutputChannelId: string;
+	// 📝meeting-notes and ✅todos (2026-11 item 388). Always null after a bulk build: both
+	// are opt in (IChannelSpec.optIn), so only their step cards in 🧭onboarding build them.
+	meetingNotesChannelId: string | null;
+	todosChannelId: string | null;
 }
 
 // 🎮 ARCADE GAMES, the SECOND managed category.

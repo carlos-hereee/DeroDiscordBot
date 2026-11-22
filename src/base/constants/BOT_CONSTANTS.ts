@@ -1180,4 +1180,88 @@ export const BOT_CONSTANTS = {
 		"Mention Everyone",
 		"Create Invite",
 	] as const,
+
+	// ── meeting notes, todos and reminders (2026-11 item 388) ──
+	// Every number the three features read, so no feature file states one by hand. Phase 1
+	// lays them down with the data layer; the recorder, the summary jobs, the todo cards and
+	// the reminder sweep read them from Phase 2 on.
+	MEETINGS: {
+		// The owner's cap on one recording (D22): long enough for a council, short enough
+		// that one forgotten recording cannot spend a month's voice budget.
+		MAX_MS: 2 * 60 * 60 * 1000,
+		// How long Meeting Hall may hold no consenting member before the recording ends (D22).
+		EMPTY_ROOM_END_MS: 2 * 60 * 1000,
+		// The longest stretch of one speaker's speech in one chunk, so a monologue still
+		// reaches the transcript in pieces and a crash loses at most this much of it.
+		CHUNK_MAX_SPEECH_MS: 45 * 1000,
+		// A speaker's chunk flushes after this much of their own silence. 45 s, not the body's
+		// 10 s, by owner decision D3 of the plan's session notes: one chunk spans several turns,
+		// so the 1 cent floor per transcription call cannot drain the cap.
+		CHUNK_SPEAKER_SILENCE_MS: 45 * 1000,
+		// Shorter speech is a cough or a click, the same floor Dero's command voice drops.
+		MIN_UTTERANCE_MS: 400,
+		// The most members captured at once, so one meeting holds a bounded number of streams.
+		MAX_SPEAKERS: 10,
+		// A meeting chunk is up to 45 s of audio, three times a command's, so its speech to
+		// text call gets four times the command timeout.
+		STT_TIMEOUT_MS: 60 * 1000,
+		// The transcript is deleted this many days after it was written (D7): long enough to
+		// read the notes against it, short enough that other people's words do not linger.
+		TRANSCRIPT_TTL_DAYS: 30,
+		// The meeting consent notice a member accepted. Raise it when the notice's wording
+		// changes what is recorded: every row below it then reads as not consented (A2).
+		CONSENT_VERSION: 1,
+		// How long the recorder trusts a consent read before reading it again, so a burst of
+		// speaking starts costs one query while a Stop recording me still lands within a minute.
+		CONSENT_TRUST_MS: 60 * 1000,
+		// How long the launcher holds a claimed summary job before another claim may take it,
+		// so a launcher that dies mid job leaves the job reclaimable the same hour.
+		SUMMARY_LEASE_MS: 10 * 60 * 1000,
+		// Claims before a summary job is marked failed, so a transcript the model cannot
+		// summarize stops costing the launcher's time after three tries.
+		SUMMARY_MAX_ATTEMPTS: 3,
+		// The launcher works a summary only after this long with no voice job, so a summary
+		// never slows Dero's spoken answers (G3). The launcher keeps its own copy.
+		SUMMARY_VOICE_QUIET_MS: 2 * 60 * 1000,
+		// The longest the summary job route holds a launcher's poll open, under the 30 s a
+		// proxy or a load balancer commonly allows an idle request.
+		SUMMARY_POLL_MS: 25 * 1000,
+		// The largest job body the route sends, which a two hour meeting's transcript fits;
+		// a longer one is trimmed and the job says so.
+		SUMMARY_JOB_MAX_BYTES: 512 * 1024,
+		// The largest result body the route accepts: the summary, ten decisions and fifteen
+		// action items at their caps fit with room to spare.
+		SUMMARY_RESULT_MAX_BYTES: 32 * 1024,
+		// The longest summary kept, so the notes card stays under an embed's 4096 characters.
+		SUMMARY_MAX_CHARS: 1500,
+		// The most decisions and action items one meeting keeps, so the card stays readable.
+		MAX_DECISIONS: 10,
+		MAX_ACTION_ITEMS: 15,
+		// The longest decision or action item kept, one line on the card.
+		ITEM_MAX_CHARS: 200,
+	},
+
+	TODOS: {
+		// The longest todo text, short enough for one card title and a DM line.
+		TEXT_MAX: 300,
+		// The most open todos one server keeps (A10), so a flood cannot fill the channel.
+		MAX_OPEN_PER_GUILD: 500,
+	},
+
+	REMINDERS: {
+		// A todo is reminded this long before its due time, and again at it (D23).
+		TODO_LEAD_MS: 60 * 60 * 1000,
+		// A meeting is reminded this long before it starts, and again at the start (D23).
+		MEETING_LEAD_MS: 15 * 60 * 1000,
+		// A reminder missed while Dero was down still goes out, marked late, inside this
+		// window; an older one is marked missed and never sent, so a restart sends no storm (A9).
+		LATE_WINDOW_MS: 6 * 60 * 60 * 1000,
+		// The most pending personal reminders one member keeps per server (A10).
+		PERSONAL_MAX_PENDING: 25,
+		// The longest personal reminder text, one DM line.
+		TEXT_MAX: 300,
+		// A fired reminder row is deleted this many days later, so its private text does not
+		// outlive its use (R18).
+		FIRED_TTL_DAYS: 7,
+	},
 } as const; // ← this is important, explained below

@@ -140,6 +140,13 @@ const guildConfigSchema = new Schema(
 		// (2026-10 item 257, owner decision 7). Not commandsChannelId, which stays the
 		// 📖command-center guide.
 		commandOutputChannelId: { type: String, required: false, default: null },
+		// 📝meeting-notes and ✅todos under the notice board (2026-11 item 388 Phase 1). OPT IN:
+		// their specs carry optIn, so the boot sweep and a bulk build leave a null slot null and
+		// only the step card's Add this channel builds one. The channel is the feature's on and
+		// off switch (owner decision D18): meeting recording runs only while 📝meeting-notes
+		// exists, and todos and their reminders only while ✅todos does.
+		meetingNotesChannelId: { type: String, required: false, default: null },
+		todosChannelId: { type: String, required: false, default: null },
 
 		// ── 👋welcome and 📘rules (2026-10 item 247 Phase 2) ──
 		// What:  the join and leave log and the server rules post, both under the
@@ -513,6 +520,9 @@ const guildConfigSchema = new Schema(
 				arcadeControlChannelId: { type: String, required: false, default: null },
 				serverConfigChannelId: { type: String, required: false, default: null },
 				commandOutputChannelId: { type: String, required: false, default: null },
+				// 📝meeting-notes and ✅todos (2026-11 item 388), declared for the same reason.
+				meetingNotesChannelId: { type: String, required: false, default: null },
+				todosChannelId: { type: String, required: false, default: null },
 			},
 			required: false,
 			default: () => ({}),
@@ -569,6 +579,10 @@ const guildConfigSchema = new Schema(
 				rulesChannelId: { type: String, required: false, default: null },
 				commandsChannelId: { type: String, required: false, default: null },
 				meetingVoiceChannelId: { type: String, required: false, default: null },
+				// The step cards of 📝meeting-notes and ✅todos (2026-11 item 388). Undeclared, the
+				// id would be dropped in silence and the card would repost on every boot.
+				meetingNotesChannelId: { type: String, required: false, default: null },
+				todosChannelId: { type: String, required: false, default: null },
 				commandOutputChannelId: { type: String, required: false, default: null },
 				leaderboardChannelId: { type: String, required: false, default: null },
 				nextDecreeChannelId: { type: String, required: false, default: null },

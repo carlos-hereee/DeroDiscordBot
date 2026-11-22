@@ -356,6 +356,9 @@ export const generalEventsCopy: IPluginCopy = {
 			// rok-commander, 2026-10 item 235).
 			meetingVoice: "🏛️ Meeting Hall",
 			arcadeVoice: "🎮 Arcade Lounge",
+			// The two opt in notice board channels (mirrors rok-commander, 2026-11 item 388).
+			meetingNotes: "📝meeting-notes",
+			todos: "✅todos",
 		},
 		// The setup invitation DM, in plain streamer voice (mirrors rok-commander,
 		// 2026-11 item 285 Phase 1). Same {{mention}} and {{server}} tokens.
@@ -365,6 +368,27 @@ export const generalEventsCopy: IPluginCopy = {
 				"I have joined **{{server}}**. One command gets me ready there.\n\n" +
 				"Open 🔒admin in that server and press **Set up Dero**, or press {{mention}} and run it there. I will build 🏰 DERO HEADQUARTERS and walk you through the rest from there.\n\n" +
 				"Only you, the server's owner, can run it.",
+		},
+	},
+
+	// ── the timezone modal (mirrors rok-commander, 2026-11 item 388) ──
+	// One modal of the shared 25 zones (utils/timezoneModal.ts), opened by the server's
+	// timezone step in 🛠️server-config and by a member setting their own zone. Discord caps a
+	// modal title and a label at 45 characters. The server words are admin copy and read the
+	// same in both packs; the member words are plain in both too, since a time zone pick is
+	// an instruction rather than a moment for the kingdom voice.
+	timezoneModal: {
+		server: {
+			title: "Server timezone",
+			intro:
+				"Times typed for party games and stream announcements are read in this zone, and a new weekly stream starts in it. The KvK season stays on UTC, the game's clock. Shown times already appear in each member's own time.",
+			selectLabel: "This server's timezone",
+		},
+		member: {
+			title: "Your timezone",
+			intro:
+				"Times you type for your todos and reminders in this server are read in this zone. Other members keep their own.",
+			selectLabel: "Your timezone in this server",
 		},
 	},
 
@@ -553,6 +577,19 @@ export const generalEventsCopy: IPluginCopy = {
 		commandOutput: {
 			title: "💬 Dero Commands",
 			description: "This is the place to run Dero's commands.\n\nIt is open to every member, so chat away.",
+		},
+		// 📝meeting-notes' and ✅todos' intros, plain voice (mirrors rok-commander, 2026-11 item 388).
+		meetingNotes: {
+			title: "📝 Meeting Notes",
+			description:
+				"This is where Dero keeps the notes from meetings held in 🏛️ Meeting Hall: a summary of each meeting, the decisions made and the action items.\n\n" +
+				"Dero records only the members who agree to be recorded, and asks each of them first.",
+		},
+		todos: {
+			title: "✅ Todos",
+			description:
+				"This is where the server's todos live, each with who it is assigned to and when it is due.\n\n" +
+				"When a todo is close to its due time, Dero sends a reminder to the member it is assigned to.",
 		},
 
 		// Rules only, same structure as rok-commander's, plain voice. The two packs
@@ -837,6 +874,16 @@ export const generalEventsCopy: IPluginCopy = {
 				title: "🔜 Upcoming Events",
 				body:
 					"As each event moves within the next day, Dero posts it here with its time and any prep notes. Every post stays, so members can scroll back to what was announced, and its Edit button changes that one occurrence. Without this channel those posts wait until you add it.",
+			},
+			meetingNotes: {
+				title: "📝 Meeting Notes",
+				body:
+					"Where the notes from your 🏛️ Meeting Hall meetings are kept: a summary of each meeting, its decisions and its action items. Adding this channel is how you allow meeting recording in this server, and Dero records only the members who agree to it. Without this channel Dero records no meeting.",
+			},
+			todos: {
+				title: "✅ Todos",
+				body:
+					"Where your server's todos live, each with who it is assigned to and when it is due, and where Dero reminds them as a due time gets close. Adding this channel is how you turn todos on in this server. Without this channel there are no todos and no todo reminders.",
 			},
 		},
 	},

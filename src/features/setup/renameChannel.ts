@@ -90,6 +90,9 @@ export const SLOT_LABELS: ReadonlyArray<{ label: string; configField: string }> 
 	{ label: "Arcade control", configField: "arcadeControlChannelId" },
 	{ label: "Server config", configField: "serverConfigChannelId" },
 	{ label: "Dero commands", configField: "commandOutputChannelId" },
+	// 📝meeting-notes and ✅todos (2026-11 item 388), autocomplete rows like Games.
+	{ label: "Meeting notes", configField: "meetingNotesChannelId" },
+	{ label: "Todos", configField: "todosChannelId" },
 ];
 const VALID_SLOTS = new Set(SLOT_LABELS.map((s) => s.configField));
 

@@ -1489,6 +1489,33 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
 	});
 
+	// 📝meeting-notes and ✅todos keep their intro pinned (2026-11 item 388): notes and todo cards
+	// pile up beneath it. An intro built by a step card is posted unpinned by repairOneChannel,
+	// so this boot backfill is what pins it.
+	it.each([
+		["meetingNotesChannelId", "ch-meetingnotes"],
+		["todosChannelId", "ch-todos"],
+	])("pins the %s intro when its stored message lost its pin", async (field, channelId) => {
+		vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ [field]: channelId, introMessageIds: { [field]: "msg-optin" } }));
+		const pin = vi.fn().mockResolvedValue(undefined);
+		const message = {
+			id: "msg-optin",
+			embeds: [internals.resolveIntroEmbed(field, makeGuildFixture(), null, makeStoredConfig()).data],
+			components: [],
+			pinned: false,
+			edit: vi.fn().mockResolvedValue(undefined),
+			pin,
+		};
+		const channels: Record<string, TextChannel> = { [channelId]: makeChannel(channelId, { "msg-optin": message }) };
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => channels[id] ?? null });
+
+		await GuildSetupManager.refreshIntroEmbeds(client, makeGuildFixture());
+
+		expect(pin).toHaveBeenCalledOnce();
+		expect(message.edit).not.toHaveBeenCalled();
+	});
+
 	// ⚠️ REGRESSION GUARD for the repost-forever bug.
 	// The sweep resolves each anchor out of the nextIntroIds object, NOT out of
 	// the stored row directly. A channel missing from that initializer therefore
@@ -1712,9 +1739,13 @@ describe("GuildSetupManager.applyAdminRole", () => {
 		return { guild, created };
 	}
 
+	// The opt in channels (2026-11 item 388) are stored here as built, so every spec has a
+	// channel to grant on.
+	const OPT_IN_BUILT = { meetingNotesChannelId: "ch-meetingnotes", todosChannelId: "ch-todos" };
+
 	beforeEach(() => {
 		vi.clearAllMocks();
-		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig());
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig(OPT_IN_BUILT));
 		guildConfigMock.update.mockResolvedValue(undefined);
 	});
 
@@ -1727,7 +1758,7 @@ describe("GuildSetupManager.applyAdminRole", () => {
 			ownerId: "owner-1",
 		} as never);
 
-		const stored = makeStoredConfig() as unknown as Record<string, string>;
+		const stored = makeStoredConfig(OPT_IN_BUILT) as unknown as Record<string, string>;
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
 			const id = stored[spec.configField];
 			expect(created[id], `${spec.configField} was never granted`).toBeDefined();
@@ -2043,7 +2074,8 @@ describe("GuildSetupManager voice rooms", () => {
 	// channels the posture the repair path's buildSingleChannel gives them, stored
 	// admin role included, or every admin who is not the owner loses Headquarters.
 
-	const TEXT_SPECS = GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.kind !== "voice");
+	// Opt in specs are never part of a build (2026-11 item 388); the opt in suite proves that.
+	const TEXT_SPECS = GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.kind !== "voice" && !spec.optIn);
 	const ADMIN_TEXT_KINDS = new Set(["admin", "adminLog"]);
 
 	function textCallsBySpec(calls: ICreateCall[]) {
@@ -2694,6 +2726,94 @@ describe("GuildSetupManager on a Headquarters only install", () => {
 
 		expect(result.action).toBe("repaired");
 		expect(callsOf(guild).find((call) => call.name === packChannels.intro)?.parent).toBe("cat-1");
+	});
+});
+
+// ── the opt in notice board slots (2026-11 item 388, R1 and owner decision D2) ──
+// 📝meeting-notes and ✅todos carry IChannelSpec.optIn, so nothing but their step card builds
+// them while the slot is empty. Without it every legacy row would read both nulls as case ③
+// "missing, build it" on the first boot after deploy, and every server with a 🪧 NOTICE BOARD
+// would get both channels unasked. A fresh install and self destruct rebuild (the bulk build)
+// is proven in communityOverwrites.test.ts, "a full build builds every managed channel".
+describe("GuildSetupManager opt in notice board slots", () => {
+	const OPT_IN_FIELDS = ["meetingNotesChannelId", "todosChannelId"];
+	const optInNames = GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.optIn).map((spec) => spec.displayName);
+	const category = { id: "cat-1", type: ChannelType.GuildCategory, name: rokCommanderCopy.setup.categoryName };
+	const createdNames = (guild: Guild): string[] =>
+		(guild.channels.create as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { name: string }).name);
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		guildConfigMock.update.mockResolvedValue(undefined);
+	});
+
+	it("marks exactly the two new specs opt in, both under the notice board", () => {
+		const optIn = GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.optIn);
+		expect(optIn.map((spec) => spec.configField)).toEqual(OPT_IN_FIELDS);
+		expect(optIn.every((spec) => spec.categoryField === "categoryId")).toBe(true);
+		expect(optInNames).toEqual(["📝meeting-notes", "✅todos"]);
+	});
+
+	it("builds neither on a legacy row that holds categoryId and lists no waiting slot", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ onDemandChannels: [] }));
+		const guild = makeGuild({ categoryId: category });
+
+		const result = await GuildSetupManager.ensureHomebase(makeClient({ selfId: "bot-1" }), guild);
+
+		expect(createdNames(guild).filter((name) => optInNames.includes(name))).toEqual([]);
+		expect(result.repairedChannels.filter((name) => optInNames.includes(name))).toEqual([]);
+	});
+
+	it("builds neither on a row the tutorial claimed before they existed (2026-11 item 285)", async () => {
+		const waitingBefore = GuildSetupManager.specFieldsUnder("categoryId").filter((field) => field !== "introChannelId" && !OPT_IN_FIELDS.includes(field));
+		guildConfigMock.findByGuildId.mockResolvedValue(
+			makeStoredConfig({ ...Object.fromEntries(waitingBefore.map((field) => [field, null])), scheduleMessageId: null, onDemandChannels: waitingBefore })
+		);
+		const guild = makeGuild({ categoryId: category, channelFetchMap: { "ch-admin": { id: "ch-admin" }, "ch-intro": { id: "ch-intro" } } });
+
+		const result = await GuildSetupManager.ensureHomebase(makeClient({ selfId: "bot-1" }), guild);
+
+		expect(createdNames(guild)).toEqual([]);
+		expect(result.repairedChannels).toEqual([]);
+	});
+
+	// Compared with the same row holding both opt in channels live, so the count measures only
+	// what the two empty slots add, whatever else the harness reports missing: nothing.
+	it("leaves both out of the would repair count on a row with auto heal off", async () => {
+		const countFor = async (overrides: Record<string, unknown>, fetchMap: Record<string, unknown>): Promise<string[]> => {
+			const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+			guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ autoHealEnabled: false, onDemandChannels: [], ...overrides }));
+			const guild = makeGuild({ categoryId: category, channelFetchMap: fetchMap });
+			await GuildSetupManager.repairMissingChannels(makeClient({ selfId: "bot-1" }), guild, category as never);
+			expect(createdNames(guild)).toEqual([]);
+			const lines = log.mock.calls.flat().map(String).filter((line) => line.includes("[auto-heal] skipped repair"));
+			log.mockRestore();
+			return lines;
+		};
+		const live = { "ch-meetingnotes": { id: "ch-meetingnotes" }, "ch-todos": { id: "ch-todos" } };
+		const withBothBuilt = await countFor({ meetingNotesChannelId: "ch-meetingnotes", todosChannelId: "ch-todos" }, live);
+		const withBothEmpty = await countFor({}, {});
+		expect(withBothEmpty).toEqual(withBothBuilt);
+	});
+
+	it("still repairs an opt in channel that was built and then deleted", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ onDemandChannels: [], todosChannelId: "ch-todos" }));
+		const guild = makeGuild({ categoryId: category, channelFetchMap: { "ch-todos": null } });
+		const adminChannel = makeAdminChannel();
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => (id === "ch-admin" ? adminChannel : null) });
+
+		await GuildSetupManager.ensureHomebase(client, guild);
+
+		expect(createdNames(guild).filter((name) => optInNames.includes(name))).toEqual(["✅todos"]);
+	});
+
+	it("lets holdsEveryNoticeBoardSlot forget an empty held board whose opt in slots no list names", () => {
+		const fields = GuildSetupManager.specFieldsUnder("categoryId");
+		const legacyWaiting = fields.filter((field) => !OPT_IN_FIELDS.includes(field));
+		const emptied = Object.fromEntries(fields.map((field) => [field, null]));
+		expect(GuildSetupManager.holdsEveryNoticeBoardSlot({ ...emptied, onDemandChannels: legacyWaiting })).toBe(true);
+		// A built opt in channel is a real channel, so the board is still owed.
+		expect(GuildSetupManager.holdsEveryNoticeBoardSlot({ ...emptied, onDemandChannels: legacyWaiting, todosChannelId: "ch-todos" })).toBe(false);
 	});
 });
 

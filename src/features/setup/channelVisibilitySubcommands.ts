@@ -58,6 +58,9 @@ export const HIDEABLE_CHANNELS = [
 	// 💬dero-commands (2026-10 item 257 Phase 2a), member facing. The three 🏰 DERO
 	// HEADQUARTERS config channels are left out by the rule below: they are admin only.
 	{ name: "Dero commands", value: "commandOutputChannelId" },
+	// 📝meeting-notes and ✅todos (2026-11 item 388), member facing.
+	{ name: "Meeting notes", value: "meetingNotesChannelId" },
+	{ name: "Todos", value: "todosChannelId" },
 ] as const;
 
 // ⚠️ THIS LIST IS A DELIBERATE SUBSET OF CHANNEL_SPECS, NOT A MIRROR OF IT, and
@@ -223,6 +226,12 @@ function resolveChannelId(config: GuildConfigDoc, field: HideableField): string 
 			break;
 		case "commandOutputChannelId":
 			value = (config as unknown as Record<string, string | null | undefined>).commandOutputChannelId;
+			break;
+		case "meetingNotesChannelId":
+			value = (config as unknown as Record<string, string | null | undefined>).meetingNotesChannelId;
+			break;
+		case "todosChannelId":
+			value = (config as unknown as Record<string, string | null | undefined>).todosChannelId;
 			break;
 	}
 	return typeof value === "string" && value.length > 0 ? value : null;

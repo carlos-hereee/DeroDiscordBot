@@ -689,6 +689,9 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			// 🛠️server-config replaces 🎛️admin-controls (2026-10 item 263 Phase 4a).
 			"serverConfigChannelId",
 			"commandOutputChannelId",
+			// 📝meeting-notes and ✅todos, opt in (2026-11 item 388).
+			"meetingNotesChannelId",
+			"todosChannelId",
 		];
 		const actualFields = GuildSetupManager.CHANNEL_SPECS.map((s) => s.configField);
 		expect(actualFields.sort()).toEqual(expectedFields.sort());
@@ -724,8 +727,11 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			"onboardingConfigChannelId",
 			"serverConfigChannelId",
 		]);
-		// Nine text channels (welcome, rules and 💬dero-commands among them) plus the 🏛️ Meeting Hall voice room.
-		expect(byCategory("categoryId")).toHaveLength(10);
+		// Eleven text channels (welcome, rules, 💬dero-commands, 📝meeting-notes and ✅todos among
+		// them) plus the 🏛️ Meeting Hall voice room.
+		expect(byCategory("categoryId")).toHaveLength(12);
+		expect(byCategory("categoryId")).toContain("meetingNotesChannelId");
+		expect(byCategory("categoryId")).toContain("todosChannelId");
 		expect(byCategory("categoryId")).toContain("meetingVoiceChannelId");
 		expect(byCategory("categoryId")).toContain("commandOutputChannelId");
 		// No spec may be left unfiled, which a typo in the union would otherwise

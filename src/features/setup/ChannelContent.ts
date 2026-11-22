@@ -189,6 +189,19 @@ export const ChannelContent = {
 		return infoEmbed(cc.commandOutput.title, cc.commandOutput.description, copy.COLORS.COMMANDS);
 	},
 
+	// ── 📝meeting-notes and ✅todos (2026-11 item 388 Phase 1) ──
+	// Pinned headers above the notes cards and the todo cards later phases post. No buttons
+	// yet: resolveIntroComponents adds them when recording and todos exist (Phases 2 and 3).
+	meetingNotesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		return infoEmbed(copy.channelContent.meetingNotes.title, copy.channelContent.meetingNotes.description, copy.COLORS.SCHEDULE);
+	},
+
+	todosIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		return infoEmbed(copy.channelContent.todos.title, copy.channelContent.todos.description, copy.COLORS.SCHEDULE);
+	},
+
 	// ── 🎮 ARCADE GAMES intros ──────────────────────────────────
 	// The rules card: rules ONLY since 2026-10 item 245 Phase 4a. The roster and the
 	// host buttons moved to 🕹️games (arcadeGamesIntro below), so this card is one
