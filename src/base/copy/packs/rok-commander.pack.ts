@@ -526,6 +526,7 @@ export const rokCommanderCopy = {
 				noDue: "No due date",
 				addedByLabel: "Added by",
 				addedFromDashboard: "The dashboard",
+				updatedFromDashboard: "Updated from the dashboard.",
 				doneLine: (userId: string | null, seconds: number) => (userId ? `Done by <@${userId}> <t:${seconds}:R>.` : `Done <t:${seconds}:R>.`),
 				meetingLink: (url: string) => `From [these meeting notes](${url}).`,
 				due: (seconds: number) => `<t:${seconds}:f> (<t:${seconds}:R>)`,
@@ -601,6 +602,7 @@ export const rokCommanderCopy = {
 					return ids.length > shown ? `${listed} and ${ids.length - shown} more` : listed;
 				},
 				cancelledLine: "This meeting was cancelled.",
+				updatedFromDashboard: "Updated from the dashboard.",
 				rsvp: "I'll be there",
 				cancel: "Cancel",
 			},
@@ -667,6 +669,8 @@ export const rokCommanderCopy = {
 				transcript_expired: "I could not write the summary for this council, because its transcript was deleted when it expired.",
 				transcript_empty: "There is no summary for this council, because every warrior who spoke asked to stop being recorded and their words were removed.",
 			},
+			// The card once the dashboard deleted the meeting (2026-11 item 388 Phase 5a); its todos stay.
+			removed: "A ruler removed this council from the dashboard, with its summary and its transcript. Any todos it made stay in ✅todos.",
 		},
 		endReasons: {
 			host: "A host ended the recording.",
@@ -1611,13 +1615,12 @@ export const rokCommanderCopy = {
 	//        which fails silently and no test catches. Diff the two blocks when
 	//        you are done; identical is the invariant, not a coincidence.
 	featureAnnouncement: {
-		// ── the 2026-11 item 367 hotfix: an admin only note ──
-		// This release fixes Configure Onboarding stopping at "add more channels", which
-		// only admins could hit, so the post goes to 🔒inner-sanctum alone. `public` is
-		// null because members were not affected, and a null public makes
-		// postFeatureAnnouncement skip #announcements, its Claim and Suggestion Box
-		// buttons included. The next release must write a fresh block here: one left in
-		// place reposts this note to every set up guild under the new version.
+		// ── 2.1.0: meeting notes, todos and reminders (2026-11 item 388 Phase 5a) ──
+		// Members learn what they can do and how recording treats their words; admins learn how
+		// to turn the two channels on, since nothing is built until they ask (D18). The recording
+		// lines are written from the plan's owner decision D1 and must match the owner's new
+		// Privacy Policy word for word before this version deploys (plan session note R3: the
+		// policy goes live in a client release first). The next release writes a fresh block.
 		//
 		// Release copy stays professional and never says where Dero's brain runs or
 		// when it is offline, and it never promises always on voice (owner decision
@@ -1628,11 +1631,15 @@ export const rokCommanderCopy = {
 		// reaffirmed 2026-08-11). featureAnnouncement.test.ts fails when the two
 		// drift, when a description passes Discord's 4096 character embed limit,
 		// or when a long dash slips in.
-		public: null as IReleaseEmbed | null,
-		innerSanctum: {
-			title: "🧭 Configure Onboarding Is Fixed!",
+		public: {
+			title: "📝 Meeting Notes, Todos and Reminders",
 			description:
-				"Sorry to anyone who hit this, and thank you to the server owner who reported it.\n\n**What went wrong**\nDiscord only turns on Onboarding when at least 5 text, announcement or forum channels let everyone both see and post. Dero's notice board channels are read only for members, so many servers came up short of Discord's minimum, and Configure Onboarding stopped with no way forward.\n\n**What changed**\nWhen your server is short, Configure Onboarding now offers to:\n- let everyone post in some of your existing read only channels\n- create new channels with the names you choose\n- or do both\n\nYou see a private review first. Nothing changes until you press Confirm, and then Dero carries straight on with your Onboarding questions.\n\n⚠️ **Heads up:** anything you open or create can be seen and posted in by everyone, including people who have not finished Onboarding yet.\n\n**Next step**\nAlready set up Onboarding by hand? You are all set. Otherwise, press Configure Onboarding in 🧭onboarding to pick up where you left off.",
+				"Your server can now keep its meetings, its tasks and its reminders in one place.\n\n**Meeting notes**\nA host starts a recording in 🏛️ Meeting Hall, and Dero writes up the summary, the decisions and the action items in 📝meeting-notes. Only members who press I agree are recorded. Speech is turned into text and no audio is kept. The transcript is deleted after 30 days, and pressing Stop recording me removes your words from any meeting not yet summarized.\n\n**Todos**\nAction items become todo cards in ✅todos, showing who holds each one and when it is due. Add your own with `/todo add` and see yours with `/todo mine`.\n\n**Reminders**\nDero reminds you by direct message before a todo is due and before a scheduled meeting starts. Set a reminder for yourself with `/remind me`, and your own time zone with `/remind timezone`.\n\nThese channels appear once an admin adds them.",
+		} as IReleaseEmbed | null,
+		innerSanctum: {
+			title: "📝 Turn On Meeting Notes and Todos",
+			description:
+				"Two new channels are ready when you want them, and nothing is added until you ask.\n\n**To turn them on**\nOpen 🧭onboarding and press Add this channel on the Meeting notes and Todos step cards. Removing a channel turns its feature off again.\n\n**Who can record**\nThe server owner, admins and the members allowed to give Dero tasks can start a recording in 🏛️ Meeting Hall, and only members who agree are recorded. Transcription uses your server's monthly voice budget.\n\n**On the dashboard**\nApp owners can schedule, edit and delete meetings and todos from the new Meetings tab on the Dero dashboard.",
 		},
 	},
 

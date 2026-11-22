@@ -79,12 +79,16 @@ export function useRecordingControls(controls: RecordingControls): void {
 	recordingControls = controls;
 }
 
-/** The scheduled meeting card, drawn from its row. Exported for the tests. */
-export function buildScheduledMeetingCard(meeting: IMeeting, copy: IPluginCopy): CardPayload {
+/**
+ * The scheduled meeting card, drawn from its row. `updatedFromDashboard` marks a redraw a
+ * dashboard write caused (2026-11 item 388 Phase 5a). Exported for the tests.
+ */
+export function buildScheduledMeetingCard(meeting: IMeeting, copy: IPluginCopy, updatedFromDashboard = false): CardPayload {
 	const words = copy.todoReminders.meetings.card;
 	const start = meeting.scheduledFor ? toSeconds(meeting.scheduledFor) : 0;
 	const lines = [words.description(meeting.hostId, start)];
 	if (meeting.status === "cancelled") lines.push("", words.cancelledLine);
+	if (updatedFromDashboard) lines.push("", words.updatedFromDashboard);
 	const embed = infoEmbed(words.title(meeting.title), lines.join("\n"), copy.COLORS.SCHEDULE).addFields({
 		name: words.attendingTitle(meeting.rsvpIds.length),
 		value: meeting.rsvpIds.length > 0 ? words.names(meeting.rsvpIds, BOT_CONSTANTS.PARTY_GAME_NAMES_SHOWN) : words.nobodyYet,
@@ -110,9 +114,9 @@ export function buildMeetingNotesIntroRow(copy: IPluginCopy): ActionRowBuilder<B
 	);
 }
 
-async function syncMeetingCard(client: Client, meeting: IMeeting, channelId: string, copy: IPluginCopy): Promise<void> {
+async function syncMeetingCard(client: Client, meeting: IMeeting, channelId: string, copy: IPluginCopy, fromDashboard = false): Promise<void> {
 	const current = meeting.notesChannelId === channelId ? meeting.scheduleMessageId : null;
-	const messageId = await syncCardMessage(client, channelId, current, buildScheduledMeetingCard(meeting, copy));
+	const messageId = await syncCardMessage(client, channelId, current, buildScheduledMeetingCard(meeting, copy, fromDashboard));
 	if (messageId && messageId !== meeting.scheduleMessageId) await meetingStore.update(meeting.guildId, meeting.meetingId, { notesChannelId: channelId, scheduleMessageId: messageId });
 }
 
@@ -136,8 +140,13 @@ async function notesContext(guildId: string): Promise<NotesContext | null> {
 	return { channelId: config.meetingNotesChannelId, copy: getPluginCopy(config as unknown as ICopyConfig) };
 }
 
-function afterWrite(client: Client, meeting: IMeeting, context: NotesContext): Promise<void> {
-	void syncMeetingCard(client, meeting, context.channelId, context.copy).catch((error: unknown) =>
+/** Where a write came from; a dashboard write marks the card it redraws. */
+export interface MeetingWriteOptions {
+	fromDashboard?: boolean;
+}
+
+function afterWrite(client: Client, meeting: IMeeting, context: NotesContext, options: MeetingWriteOptions = {}): Promise<void> {
+	void syncMeetingCard(client, meeting, context.channelId, context.copy, options.fromDashboard === true).catch((error: unknown) =>
 		console.error("[scheduledMeetings] the meeting card could not be redrawn", { meetingId: meeting.meetingId, error: error instanceof Error ? error.name : "unknown" })
 	);
 	const reminders = meeting.status === "scheduled" ? scheduleRemindersFor({ kind: "meeting", meeting }) : cancelRemindersFor(meeting.meetingId);
@@ -150,7 +159,12 @@ function afterWrite(client: Client, meeting: IMeeting, context: NotesContext): P
  * Store a scheduled meeting and post its card. `hostId` is null from the dashboard, which has
  * no Discord identity (D4). The caller checks the host and reads the time; this checks the rest.
  */
-export async function scheduleMeeting(client: Client, guildId: string, input: { title: string; startsAt: Date; hostId: string | null }): Promise<MeetingResult> {
+export async function scheduleMeeting(
+	client: Client,
+	guildId: string,
+	input: { title: string; startsAt: Date; hostId: string | null },
+	options: MeetingWriteOptions = {}
+): Promise<MeetingResult> {
 	const context = await notesContext(guildId);
 	if (!context) return { ok: false, reason: "noChannel" };
 	const title = input.title.trim();
@@ -174,18 +188,51 @@ export async function scheduleMeeting(client: Client, guildId: string, input: { 
 		sttSeconds: 0,
 		spentCents: 0,
 	});
-	await afterWrite(client, meeting, context);
+	await afterWrite(client, meeting, context, options);
 	return { ok: true, meeting };
 }
 
+// A conditional write that matched nothing: the row is gone, or it is no longer scheduled.
+async function missedRefusal(guildId: string, meetingId: string): Promise<MeetingResult> {
+	return { ok: false, reason: (await meetingStore.findById(guildId, meetingId)) ? "notScheduled" : "notFound" };
+}
+
 /** Call a scheduled meeting off: status cancelled in one conditional write, reminders off, card redrawn. */
-export async function cancelScheduledMeeting(client: Client, guildId: string, meetingId: string): Promise<MeetingResult> {
+export async function cancelScheduledMeeting(client: Client, guildId: string, meetingId: string, options: MeetingWriteOptions = {}): Promise<MeetingResult> {
 	const context = await notesContext(guildId);
 	if (!context) return { ok: false, reason: "noChannel" };
 	const cancelled = await meetingStore.claimTransition(guildId, meetingId, "scheduled", { status: "cancelled" });
-	if (!cancelled) return { ok: false, reason: (await meetingStore.findById(guildId, meetingId)) ? "notScheduled" : "notFound" };
-	await afterWrite(client, cancelled, context);
+	if (!cancelled) return missedRefusal(guildId, meetingId);
+	await afterWrite(client, cancelled, context, options);
 	return { ok: true, meeting: cancelled };
+}
+
+/**
+ * Change a scheduled meeting's title or start time (the dashboard's edit, 2026-11 item 388
+ * Phase 5a). One conditional write on status scheduled, so an edit racing Start recording
+ * never rewrites a meeting already recording; the reminders move with the time. The caller
+ * checks the time is in the future.
+ */
+export async function editScheduledMeeting(
+	client: Client,
+	guildId: string,
+	meetingId: string,
+	edit: { title?: string; startsAt?: Date },
+	options: MeetingWriteOptions = {}
+): Promise<MeetingResult> {
+	const context = await notesContext(guildId);
+	if (!context) return { ok: false, reason: "noChannel" };
+	const changes: { title?: string; scheduledFor?: Date } = {};
+	if (edit.title !== undefined) {
+		const title = edit.title.trim();
+		if (title.length === 0 || title.length > BOT_CONSTANTS.MEETINGS.TITLE_MAX) return { ok: false, reason: "titleInvalid" };
+		changes.title = title;
+	}
+	if (edit.startsAt !== undefined) changes.scheduledFor = edit.startsAt;
+	const edited = await meetingStore.claimTransition(guildId, meetingId, "scheduled", changes);
+	if (!edited) return missedRefusal(guildId, meetingId);
+	await afterWrite(client, edited, context, options);
+	return { ok: true, meeting: edited };
 }
 
 // ── Discord ─────────────────────────────────────────────────────────────────

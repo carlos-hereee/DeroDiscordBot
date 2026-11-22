@@ -4,12 +4,14 @@ import type { CardPayload } from "@utils/cardMessage.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 
 // ── notesCard ───────────────────────────────────────────────────────────────
-// What:  the two final faces of a meeting's notes card in 📝meeting-notes (2026-11 item 388
+// What:  the final faces of a meeting's notes card in 📝meeting-notes (2026-11 item 388
 //        Phase 4): filled with the summary, the decisions and the action items, or saying
-//        honestly why there is no summary. Drawn from the Meeting row alone.
+//        honestly why there is no summary, or saying it was removed from the dashboard.
+//        Drawn from the Meeting row alone.
 // Who:   summaryResult, which edits the same message endMeeting posted pending
 //        (Meeting.notesMessageId in Meeting.notesChannelId). The pending and nothing
-//        recorded faces stay in meetingLifecycle.buildEndedCard.
+//        recorded faces stay in meetingLifecycle.buildEndedCard. meetingLifecycle.deleteMeeting
+//        draws the removed face.
 // Does NOT: ping. An assignee is mentioned so the name links, never notified; the todo card
 //        and its reminders are what reach them.
 
@@ -68,4 +70,10 @@ export function buildFailedNotesCard(meeting: IMeeting, copy: IPluginCopy, code:
 	const failed = words.failed;
 	const line = code === "transcript_expired" || code === "transcript_empty" ? failed[code] : failed.generic;
 	return { embeds: [infoEmbed(words.title(meeting.title), line, copy.COLORS.SCHEDULE)], components: [], allowedMentions: quiet };
+}
+
+/** A meeting's card once the dashboard deleted it: the notes and the transcript are gone, its todos stay. */
+export function buildRemovedNotesCard(meeting: Pick<IMeeting, "title">, copy: IPluginCopy): CardPayload {
+	const words = copy.meetingRecording.notes;
+	return { embeds: [infoEmbed(words.title(meeting.title), words.removed, copy.COLORS.SCHEDULE)], components: [], allowedMentions: quiet };
 }

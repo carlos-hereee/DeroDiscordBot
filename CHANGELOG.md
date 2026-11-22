@@ -14,6 +14,15 @@ This file starts at v1.4.0. Earlier releases predate the changelog convention; t
 
 ### Next (not yet released)
 
+### 2.1.0 (planned for the 2027-01-04 release)
+
+* **Meeting notes.** Once an admin adds 📝meeting-notes from its step card in 🧭onboarding, a host starts a recording in 🏛️ Meeting Hall and Dero posts the summary, the decisions and the action items there. Only members who press I agree are recorded, no audio is kept, the transcript is deleted after 30 days, and Stop recording me removes a member's words from any meeting not yet summarized.
+* **Todos.** Once an admin adds ✅todos, each action item becomes a todo card with Done, Assign to me, Assign, Due date and Delete. `/todo add` and `/todo mine` work from any channel.
+* **Reminders.** Dero reminds a todo's holder before it is due, the people attending a scheduled meeting before it starts, and anyone who sets one with `/remind me`, by direct message with a fallback in the channel. Members set their own time zone with `/remind timezone`.
+* **Scheduled meetings.** `/meeting schedule` and the 📝meeting-notes card post a meeting card with I'll be there and Start recording.
+* **Meetings on the dashboard.** App owners of both Dero dashboards can list, schedule, edit and delete meetings and todos, and each change shows on its card in Discord as updated from the dashboard.
+* **This release posts in every set up server.** Members read what is new in #announcements and admins read how to turn the channels on in 🔒inner-sanctum.
+
 ### 2.0.2 (2026-11-18)
 
 * **Configure Onboarding no longer stops at "add more channels".** When a server has too few channels where everyone can post, Dero now offers to open some of your own read only channels to everyone, create new ones with the names and emoji you choose (suggestions are filled in for you), or both. You review the change, confirm, and Dero goes straight on to drafting your Onboarding questions. The new channels are yours: Dero does not manage, rebuild or remove them.

@@ -44,6 +44,18 @@ export async function syncCardMessage(client: Client, channelId: string, message
 	return posted?.id ?? null;
 }
 
+/**
+ * Edit a card's message in place and never post it again: for a last face (a meeting removed
+ * from the dashboard) that is pointless once the message is gone. True when the edit landed.
+ */
+export async function editCardMessage(client: Client, channelId: string, messageId: string, payload: CardPayload): Promise<boolean> {
+	const channel = await sendableChannel(client, channelId);
+	if (!channel) return false;
+	const message = await channel.messages.fetch(messageId).catch(() => null);
+	if (!message) return false;
+	return (await message.edit(payload as MessageEditOptions).catch(() => null)) !== null;
+}
+
 /** Delete a card's message, quietly: a message already gone is the outcome wanted. */
 export async function deleteCardMessage(client: Client, channelId: string, messageId: string): Promise<void> {
 	const channel = await sendableChannel(client, channelId);

@@ -1,4 +1,10 @@
 import { Meeting, type IMeeting, type MeetingStatus } from "@db/models/Meeting.js";
+import type { KeysetBound } from "./keysetBound.js";
+
+/** A meeting as the dashboard list shows it: every field but the summary, which only the detail reads. */
+export type MeetingListRow = Omit<IMeeting, "summary">;
+/** The people on a meeting, for the dashboard's member list. */
+export type MeetingPeople = Pick<IMeeting, "hostId" | "rsvpIds" | "speakerIds">;
 
 // ── meetingStore ──
 // What:  every DB touch for Meeting (2026-11 item 388). Thin on purpose: features/meetings
@@ -73,6 +79,19 @@ export const meetingStore = {
 	async remove(guildId: string, meetingId: string): Promise<boolean> {
 		const result = await Meeting.deleteOne({ guildId, meetingId });
 		return result.deletedCount > 0;
+	},
+
+	/** One page of a server's meetings, newest first, after `before`, without the summary (the dashboard list, 2026-11 item 388 Phase 5a). */
+	async listPage(guildId: string, statuses: readonly MeetingStatus[] | null, before: KeysetBound | null, limit: number): Promise<MeetingListRow[]> {
+		const filter: Record<string, unknown> = { guildId };
+		if (statuses) filter.status = { $in: [...statuses] };
+		if (before) filter.$or = [{ createdAt: { $lt: before.createdAt } }, { createdAt: before.createdAt, meetingId: { $lt: before.id } }];
+		return Meeting.find(filter).select("-_id -__v -summary").sort({ createdAt: -1, meetingId: -1 }).limit(limit).lean<MeetingListRow[]>();
+	},
+
+	/** The people on a server's most recently changed meetings, for the dashboard's member list. */
+	async recentPeople(guildId: string, limit: number): Promise<MeetingPeople[]> {
+		return Meeting.find({ guildId }, { _id: 0, hostId: 1, rsvpIds: 1, speakerIds: 1 }).sort({ updatedAt: -1 }).limit(limit).lean<MeetingPeople[]>();
 	},
 
 	// Self destruct's server data delete: every row this guild owns.

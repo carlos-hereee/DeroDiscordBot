@@ -26,6 +26,9 @@ const m = vi.hoisted(() => ({
 	spendRefusers: [] as Array<(guildId: string, meetingId: string) => void>,
 	refunds: 0,
 	leaves: 0,
+	deleted: [] as string[],
+	edits: [] as Array<{ messageId: string; description: string }>,
+	cancels: [] as Array<{ id: string; fromDashboard: boolean }>,
 	counter: 0,
 }));
 
@@ -55,11 +58,21 @@ vi.mock("@db/stores/meetingStore.js", () => ({
 		remove: async (_g: string, id: string) => m.rows.delete(id),
 	},
 }));
-vi.mock("@db/stores/meetingTranscriptStore.js", () => ({ meetingTranscriptStore: { hasAny: async () => m.hasAny } }));
+vi.mock("@db/stores/meetingTranscriptStore.js", () => ({
+	meetingTranscriptStore: {
+		hasAny: async () => m.hasAny,
+		deleteForMeeting: async (_g: string, id: string) => {
+			m.deleted.push(`segments:${id}`);
+		},
+	},
+}));
 vi.mock("@db/stores/meetingSummaryJobStore.js", () => ({
 	meetingSummaryJobStore: {
 		create: async (job: { meetingId: string }) => {
 			m.jobs.push(job);
+		},
+		deleteForMeeting: async (_g: string, id: string) => {
+			m.deleted.push(`job:${id}`);
 		},
 	},
 }));
@@ -100,6 +113,10 @@ vi.mock("@utils/cardMessage.js", () => ({
 		m.cards.push({ channelId, messageId, title: payload.embeds[0]?.data.title ?? "" });
 		return messageId ?? `msg${++m.counter}`;
 	},
+	editCardMessage: async (_client: unknown, _channelId: string, messageId: string, payload: { embeds: Array<{ data: { description?: string } }> }) => {
+		m.edits.push({ messageId, description: payload.embeds[0]?.data.description ?? "" });
+		return true;
+	},
 }));
 vi.mock("./consentNotice.js", () => ({
 	postConsentNotice: async (_c: unknown, _ch: string, _copy: unknown, input: { memberIds: readonly string[] }) => {
@@ -123,10 +140,18 @@ vi.mock("./scheduledMeetings.js", () => ({
 	MEETING_ACTIONS: { record: "rec", end: "end" },
 	meetingCustomId: (action: string, id?: string) => (id ? `mtg:${action}:${id}` : `mtg:${action}`),
 	redrawScheduledMeetingCard: async () => undefined,
+	cancelScheduledMeeting: async (_c: unknown, _g: string, id: string, options: { fromDashboard?: boolean }) => {
+		const row = m.rows.get(id);
+		if (!row) return { ok: false, reason: "notFound" };
+		if (row.status !== "scheduled") return { ok: false, reason: "notScheduled" };
+		row.status = "cancelled";
+		m.cancels.push({ id, fromDashboard: options.fromDashboard === true });
+		return { ok: true, meeting: { ...row } };
+	},
 	useRecordingControls: () => undefined,
 }));
 
-const { _resetLiveMeetings, createMeetingListener, endMeeting, registerMeetingRecording, startMeeting } = await import("./meetingLifecycle.js");
+const { _resetLiveMeetings, createMeetingListener, deleteMeeting, endMeeting, registerMeetingRecording, startMeeting } = await import("./meetingLifecycle.js");
 const { recoverInterruptedMeetings } = await import("./meetingBootRecovery.js");
 
 const hallMembers = new Map<string, { id: string; user: { bot: boolean } }>([
@@ -309,5 +334,45 @@ describe("the clocks", () => {
 		await checkRoom(client, "g1");
 		await vi.advanceTimersByTimeAsync(BOT_CONSTANTS.MEETINGS.EMPTY_ROOM_END_MS);
 		expect(m.rows.get(meeting.meetingId)?.status).toBe("recording");
+	});
+});
+
+// The dashboard's DELETE (2026-11 item 388 Phase 5a): a scheduled meeting is cancelled through
+// scheduledMeetings, a recording one is refused, any other is deleted with its job and its
+// words, job first, and its cards say it was removed; its todos are never touched here.
+describe("deleteMeeting", () => {
+	beforeEach(() => {
+		m.deleted = [];
+		m.edits = [];
+		m.cancels = [];
+	});
+
+	it("cancels a scheduled meeting from the dashboard and keeps its row", async () => {
+		scheduledRow("s1");
+		expect(await deleteMeeting(client, "g1", "s1")).toEqual({ ok: true, outcome: "cancelled" });
+		expect(m.cancels).toEqual([{ id: "s1", fromDashboard: true }]);
+		expect(m.rows.get("s1")?.status).toBe("cancelled");
+		expect(m.deleted).toEqual([]);
+	});
+
+	it("refuses a meeting that is recording and deletes nothing", async () => {
+		const meeting = await started();
+		expect(await deleteMeeting(client, "g1", meeting.meetingId)).toEqual({ ok: false, reason: "recording" });
+		expect(m.rows.has(meeting.meetingId)).toBe(true);
+		expect(m.deleted).toEqual([]);
+	});
+
+	it("deletes a finished meeting: the job first, then its words and its row, and edits both cards to removed", async () => {
+		const row = scheduledRow("d1");
+		Object.assign(row, { status: "done", notesMessageId: "nm1", scheduleMessageId: "sm1" });
+		expect(await deleteMeeting(client, "g1", "d1")).toEqual({ ok: true, outcome: "deleted" });
+		expect(m.deleted).toEqual(["job:d1", "segments:d1"]);
+		expect(m.rows.has("d1")).toBe(false);
+		await vi.waitFor(() => expect(m.edits.map((edit) => edit.messageId)).toEqual(["nm1", "sm1"]));
+		expect(m.edits[0].description).toContain("from the dashboard");
+	});
+
+	it("answers notFound for a meeting this guild does not hold", async () => {
+		expect(await deleteMeeting(client, "g1", "missing")).toEqual({ ok: false, reason: "notFound" });
 	});
 });

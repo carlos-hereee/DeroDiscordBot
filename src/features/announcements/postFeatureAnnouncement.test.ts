@@ -34,6 +34,16 @@ const TWO_POST_RELEASE = {
 	},
 };
 
+// An admin only release (a null public block), the shape 2.0.2's hotfix note shipped in. The
+// packs carry 2.1.0's two posts now, so the admin only path is pinned with its own copy.
+const ADMIN_ONLY_RELEASE = {
+	...rokCommanderCopy,
+	featureAnnouncement: {
+		public: null,
+		innerSanctum: { title: "🧭 Configure Onboarding Is Fixed!", description: "Otherwise, press Configure Onboarding in 🧭onboarding to pick up where you left off." },
+	},
+};
+
 const makeChannel = () => {
 	const channel = Object.create(TextChannel.prototype) as TextChannel;
 	const send = vi.fn().mockResolvedValue(undefined);
@@ -114,12 +124,12 @@ describe("postFeatureAnnouncements for an admin only release (a null public bloc
 	type AdminPost = { components?: unknown[]; embeds: { data: { title: string; description: string } }[] };
 
 	beforeEach(() => {
-		mocks.copy = rokCommanderCopy;
+		mocks.copy = ADMIN_ONLY_RELEASE;
 		mocks.has.mockResolvedValue(false);
 	});
 
-	it("is what the packs carry now", () => {
-		expect(rokCommanderCopy.featureAnnouncement.public).toBeNull();
+	it("is not what the packs carry now: 2.1.0 posts for members as well", () => {
+		expect(rokCommanderCopy.featureAnnouncement.public).not.toBeNull();
 	});
 
 	it("posts one inner-sanctum embed with no buttons, linked, and never touches #announcements", async () => {

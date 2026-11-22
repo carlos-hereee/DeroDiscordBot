@@ -118,6 +118,12 @@ export const memberLevelStore = {
 
 	// The all-time board and /account view:levels all-time. Sorted by the same index rank
 	// counts against, so the two surfaces can never disagree about the order.
+	// The server's most recently active members, by their last XP write, for the dashboard's
+	// todo assignee list (2026-11 item 388 Phase 5a, plan assumption A8).
+	async recentlyActive(guildId: string, limit: number): Promise<{ userId: string; username: string }[]> {
+		return MemberLevel.find({ guildId }, { _id: 0, userId: 1, username: 1 }).sort({ updatedAt: -1 }).limit(limit).lean<{ userId: string; username: string }[]>();
+	},
+
 	async topByTotalXp(guildId: string, limit = 10) {
 		return MemberLevel.find({ guildId }).sort({ totalXp: -1 }).limit(limit);
 	},

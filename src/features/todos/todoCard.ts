@@ -33,12 +33,13 @@ export const todoCustomId = (action: TodoAction, todoId?: string): string => (to
 
 const toSeconds = (date: Date): number => Math.floor(new Date(date).getTime() / 1000);
 
-function cardEmbed(todo: ITodo, copy: IPluginCopy, meetingNotesUrl: string | null): EmbedBuilder {
+function cardEmbed(todo: ITodo, copy: IPluginCopy, meetingNotesUrl: string | null, updatedFromDashboard: boolean): EmbedBuilder {
 	const words = copy.todoReminders.todos.card;
 	const isDone = todo.status === "done";
 	const lines = [todo.text];
 	if (isDone && todo.doneAt) lines.push("", words.doneLine(todo.doneBy, toSeconds(todo.doneAt)));
 	if (meetingNotesUrl) lines.push("", words.meetingLink(meetingNotesUrl));
+	if (updatedFromDashboard) lines.push("", words.updatedFromDashboard);
 	return infoEmbed(isDone ? words.doneTitle : words.openTitle, lines.join("\n"), copy.COLORS.SCHEDULE).addFields(
 		{ name: words.holderLabel, value: todo.assigneeId ? `<@${todo.assigneeId}>` : words.nobody, inline: true },
 		{ name: words.dueLabel, value: todo.dueAt ? words.due(toSeconds(todo.dueAt)) : words.noDue, inline: true },
@@ -65,11 +66,12 @@ function cardButtons(todo: ITodo, copy: IPluginCopy): ButtonBuilder[] {
 /**
  * The card for `todo`. `meetingNotesUrl` is the link to the notes card of the meeting it came
  * from, which the caller reads off that meeting's row. A card never pings: mentions render
- * as names, and the reminder is what reaches the holder.
+ * as names, and the reminder is what reaches the holder. `updatedFromDashboard` marks a
+ * redraw a dashboard write caused; the next redraw from Discord drops the line again.
  */
-export function buildTodoCard(todo: ITodo, copy: IPluginCopy, meetingNotesUrl: string | null = null): CardPayload {
+export function buildTodoCard(todo: ITodo, copy: IPluginCopy, meetingNotesUrl: string | null = null, updatedFromDashboard = false): CardPayload {
 	return {
-		embeds: [cardEmbed(todo, copy, meetingNotesUrl)],
+		embeds: [cardEmbed(todo, copy, meetingNotesUrl, updatedFromDashboard)],
 		components: [new ActionRowBuilder<ButtonBuilder>().addComponents(...cardButtons(todo, copy))],
 		allowedMentions: { parse: [], users: [], roles: [] },
 	};

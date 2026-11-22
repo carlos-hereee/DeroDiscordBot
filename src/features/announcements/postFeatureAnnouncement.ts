@@ -110,6 +110,8 @@ const VERSION_SHIPPED_AT: Record<string, string> = {
 	"2.0.1": "2026-11-04T00:00:00Z",
 	// 2026-11 item 367 hotfix: its note is admin only and posts in inner-sanctum, never #announcements.
 	"2.0.2": "2026-11-19T00:00:00Z",
+	// 2026-11 item 388: meeting notes, todos and reminders, for the 2027-01-04 release; re date it if the release moves.
+	"2.1.0": "2027-01-04T00:00:00Z",
 };
 
 export async function postFeatureAnnouncements(client: Client): Promise<void> {

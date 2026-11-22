@@ -12,7 +12,16 @@ export interface TodoActor {
 	// The server owner or an admin (utils/permissions.ts isOwnerOrAdmin), or the dashboard,
 	// whose app owner manages the whole server's todos.
 	isAdmin: boolean;
+	// True for a dashboard write, so the card it redraws says "Updated from the dashboard".
+	fromDashboard?: boolean;
 }
+
+/**
+ * The dashboard's actor (2026-11 item 388 Phase 5a): no Discord identity (D4), and every right,
+ * because the proxy forwards only an app owner's or a link owner's request, who manages the
+ * whole server's todos. The D13 matrix is for members pressing cards.
+ */
+export const DASHBOARD_ACTOR: Readonly<TodoActor> = { userId: null, isAdmin: true, fromDashboard: true };
 
 /** The holder, the member who added it, or an admin may change a todo, reassign it, date it or delete it. */
 export function canManageTodo(todo: Pick<ITodo, "assigneeId" | "createdBy">, actor: TodoActor): boolean {

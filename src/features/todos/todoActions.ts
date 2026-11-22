@@ -1,7 +1,7 @@
 import type { Client } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { getPluginCopy, type ICopyConfig, type IPluginCopy } from "@base/copy/index.js";
-import type { ITodo } from "@db/models/Todo.js";
+import type { ITodo, TodoStatus } from "@db/models/Todo.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { meetingStore } from "@db/stores/meetingStore.js";
 import { todoStore, type TodoChanges } from "@db/stores/todoStore.js";
@@ -68,18 +68,18 @@ async function meetingNotesUrl(todo: ITodo): Promise<string | null> {
  * Show `todo`'s card in ✅todos: edited in place, or posted again (and its new id stored)
  * when its message is gone or ✅todos was rebuilt under a new id. Exported for the tests.
  */
-export async function syncTodoCard(client: Client, todo: ITodo, context: TodosContext): Promise<void> {
+export async function syncTodoCard(client: Client, todo: ITodo, context: TodosContext, fromDashboard = false): Promise<void> {
 	const current = todo.channelId === context.todosChannelId ? todo.messageId : null;
-	const messageId = await syncCardMessage(client, context.todosChannelId, current, buildTodoCard(todo, context.copy, await meetingNotesUrl(todo)));
+	const messageId = await syncCardMessage(client, context.todosChannelId, current, buildTodoCard(todo, context.copy, await meetingNotesUrl(todo), fromDashboard));
 	if (messageId && messageId !== todo.messageId) await todoStore.update(todo.guildId, todo.todoId, { channelId: context.todosChannelId, messageId });
 }
 
 // After every saved write: reminders in line with the row, then the card redrawn.
-async function afterWrite(client: Client, todo: ITodo, context: TodosContext): Promise<void> {
+async function afterWrite(client: Client, todo: ITodo, context: TodosContext, actor: TodoActor): Promise<void> {
 	await scheduleRemindersFor({ kind: "todo", todo }).catch((error: unknown) =>
 		console.error("[todoActions] the todo's reminders could not be scheduled", { todoId: todo.todoId, error: error instanceof Error ? error.name : "unknown" })
 	);
-	void syncTodoCard(client, todo, context).catch((error: unknown) =>
+	void syncTodoCard(client, todo, context, actor.fromDashboard === true).catch((error: unknown) =>
 		console.error("[todoActions] the todo card could not be redrawn", { todoId: todo.todoId, error: error instanceof Error ? error.name : "unknown" })
 	);
 }
@@ -106,7 +106,7 @@ export async function createTodo(client: Client, guildId: string, input: NewTodo
 		channelId: null,
 		messageId: null,
 	});
-	await afterWrite(client, todo, context);
+	await afterWrite(client, todo, context, actor);
 	return { ok: true, todo };
 }
 
@@ -115,6 +115,7 @@ async function changeTodo(
 	client: Client,
 	guildId: string,
 	todoId: string,
+	actor: TodoActor,
 	check: (todo: ITodo) => TodoRefusal | null,
 	changes: (todo: ITodo) => TodoChanges
 ): Promise<TodoResult> {
@@ -126,7 +127,7 @@ async function changeTodo(
 	if (refusal) return refuse(refusal);
 	const after = await todoStore.update(guildId, todoId, changes(before));
 	if (!after) return refuse("notFound");
-	await afterWrite(client, after, context);
+	await afterWrite(client, after, context, actor);
 	return { ok: true, todo: after };
 }
 
@@ -136,6 +137,7 @@ export function assignTodo(client: Client, guildId: string, todoId: string, assi
 		client,
 		guildId,
 		todoId,
+		actor,
 		(todo) => {
 			if (canAssignTodo(todo, assigneeId, actor)) return null;
 			// A claim that lost the race to someone else reads as taken, not as forbidden.
@@ -147,7 +149,7 @@ export function assignTodo(client: Client, guildId: string, todoId: string, assi
 
 /** Set or clear the due date. The reminders move with it. */
 export function setTodoDue(client: Client, guildId: string, todoId: string, dueAt: Date | null, actor: TodoActor): Promise<TodoResult> {
-	return changeTodo(client, guildId, todoId, (todo) => (canManageTodo(todo, actor) ? null : "notAllowed"), () => ({ dueAt }));
+	return changeTodo(client, guildId, todoId, actor, (todo) => (canManageTodo(todo, actor) ? null : "notAllowed"), () => ({ dueAt }));
 }
 
 /** Mark the todo done. Its reminders are cancelled by the reminder sync. */
@@ -156,6 +158,7 @@ export function completeTodo(client: Client, guildId: string, todoId: string, ac
 		client,
 		guildId,
 		todoId,
+		actor,
 		(todo) => {
 			if (!canManageTodo(todo, actor)) return "notAllowed";
 			return todo.status === "done" ? "alreadyDone" : null;
@@ -171,12 +174,52 @@ export async function reopenTodo(client: Client, guildId: string, todoId: string
 		client,
 		guildId,
 		todoId,
+		actor,
 		(todo) => {
 			if (!canManageTodo(todo, actor)) return "notAllowed";
 			if (todo.status === "open") return "alreadyOpen";
 			return atCap ? "cap" : null;
 		},
 		() => ({ status: "open", doneAt: null, doneBy: null })
+	);
+}
+
+/** Several changes to one todo in a single write, as the dashboard's edit sends them. An absent key is left as it is. */
+export interface TodoEdit {
+	text?: string;
+	dueAt?: Date | null;
+	assigneeId?: string | null;
+	status?: TodoStatus;
+}
+
+/**
+ * Apply `edit` to a todo in one write, so a dashboard save that changes the text, the holder,
+ * the due date and the status redraws the card and moves the reminders once (2026-11 item 388
+ * Phase 5a). The manage right covers every field. Marking done stamps who and when; opening a
+ * done todo again sits inside the server cap; a status equal to the current one changes nothing.
+ */
+export async function editTodo(client: Client, guildId: string, todoId: string, edit: TodoEdit, actor: TodoActor, now: Date = new Date()): Promise<TodoResult> {
+	const text = edit.text === undefined ? undefined : cleanTodoText(edit.text);
+	if (text === null) return refuse("textInvalid");
+	const atCap = edit.status === "open" && (await todoStore.countOpen(guildId)) >= BOT_CONSTANTS.TODOS.MAX_OPEN_PER_GUILD;
+	return changeTodo(
+		client,
+		guildId,
+		todoId,
+		actor,
+		(todo) => {
+			if (!canManageTodo(todo, actor)) return "notAllowed";
+			return atCap && todo.status === "done" ? "cap" : null;
+		},
+		(todo) => {
+			const changes: TodoChanges = {};
+			if (text !== undefined) changes.text = text;
+			if (edit.dueAt !== undefined) changes.dueAt = edit.dueAt;
+			if (edit.assigneeId !== undefined) changes.assigneeId = edit.assigneeId;
+			if (edit.status === "done" && todo.status === "open") Object.assign(changes, { status: "done", doneAt: now, doneBy: actor.userId });
+			if (edit.status === "open" && todo.status === "done") Object.assign(changes, { status: "open", doneAt: null, doneBy: null });
+			return changes;
+		}
 	);
 }
 

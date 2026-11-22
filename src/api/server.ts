@@ -20,6 +20,8 @@ import { createStreamerRouter } from "./routes/streamer.routes.js";
 import { createCreatorLabRouter } from "./routes/creatorLab.routes.js";
 import { brainBodyErrorHandler, createBrainRouter } from "./routes/brain.routes.js";
 import { createMeetingSummaryRouter } from "./routes/meetingSummary.routes.js";
+import { createMeetingsRouter } from "./routes/meetings.routes.js";
+import { createTodosRouter } from "./routes/todos.routes.js";
 import { dashboardOrigin, port } from "@utils/config.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 
@@ -119,6 +121,12 @@ export function startApiServer(client: Client): Server {
 	// Schedule-level pause/resume for the Command Center button. Separate
 	// router from the per-event pause that lives in events.routes, the
 	// guild-wide flag has different semantics than the per-event flag.
+	// /api/meetings and /api/todos, the dashboard's Meetings tab (2026-11 item 388 Phase 5a):
+	// guild scoped reads and writes through the same feature functions Discord's buttons call,
+	// which need the client to redraw the cards. The server forwards both prefixes for
+	// rok-commander and general-events, never as public reads, because they hold guild data.
+	app.use("/api/meetings", createMeetingsRouter(client));
+	app.use("/api/todos", createTodosRouter(client));
 	app.use("/api/schedule", createScheduleRouter());
 	// Standalone /api/go-live-now (no eventId) for the Command Center
 	// Go Live button. The event-bound version remains mounted under

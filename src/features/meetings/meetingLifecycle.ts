@@ -13,7 +13,7 @@ import { refund, tryReserve, type SpendReservation } from "@features/voice/spend
 import { VOICE_PRIORITY_CATEGORIES } from "@features/voice/voicePriority.js";
 import { voiceQueue } from "@features/voice/voiceQueue.js";
 import { voiceSessions, type CallEnded, type ListenStart, type StartListening } from "@features/voice/voiceSessions.js";
-import { syncCardMessage, type CardPayload } from "@utils/cardMessage.js";
+import { editCardMessage, syncCardMessage, type CardPayload } from "@utils/cardMessage.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { shortId } from "@utils/shortId.js";
 import { showNotice } from "@utils/textModal.js";
@@ -21,7 +21,8 @@ import { postConsentNotice, registerConsentButtons } from "./consentNotice.js";
 import { consentingMembers } from "./meetingConsent.js";
 import { isMeetingHost } from "./meetingHosts.js";
 import { defaultMeetingRecorderDeps, getMeetingRecorder, PREPAID_CENTS, startMeetingRecorder } from "./meetingRecorder.js";
-import { meetingCustomId, MEETING_ACTIONS, redrawScheduledMeetingCard, useRecordingControls } from "./scheduledMeetings.js";
+import { buildRemovedNotesCard } from "./notesCard.js";
+import { cancelScheduledMeeting, meetingCustomId, MEETING_ACTIONS, redrawScheduledMeetingCard, useRecordingControls } from "./scheduledMeetings.js";
 
 // ── meetingLifecycle ────────────────────────────────────────────────────────
 // What:  the start and the end of a Meeting Hall recording (2026-11 item 388 Phase 3).
@@ -322,6 +323,54 @@ export async function endMeeting(client: Client, guildId: string, meetingId: str
 	}
 	console.info(`[meetings] ended guild=${guildId} meeting=${meetingId} reason=${reason} recorded=${recorded}`);
 	return true;
+}
+
+// ── the dashboard's delete ──────────────────────────────────────────────────
+
+/** Why the dashboard could not delete a meeting. */
+export type DeleteMeetingRefusal = "notFound" | "recording" | "noChannel";
+export type DeleteMeetingResult = { ok: true; outcome: "cancelled" | "deleted" } | { ok: false; reason: DeleteMeetingRefusal };
+
+/**
+ * DELETE /api/meetings/:meetingId (2026-11 item 388 Phase 5a, owner decision D19). A scheduled
+ * meeting is cancelled through scheduledMeetings, the one schedule write path, and keeps its
+ * row. A meeting that is recording is refused: End recording comes first. Any other meeting is
+ * deleted: ① its summary job, first, so the launcher cannot claim it and a result already in
+ * flight finds no lease and answers 404, ② its transcript, ③ its reminders and its row, then
+ * ④ its cards edited to say it was removed, never posted again. Its todos stay (D19).
+ */
+export async function deleteMeeting(client: Client, guildId: string, meetingId: string): Promise<DeleteMeetingResult> {
+	const meeting = await meetingStore.findById(guildId, meetingId);
+	if (!meeting) return { ok: false, reason: "notFound" };
+	if (meeting.status === "recording") return { ok: false, reason: "recording" };
+	if (meeting.status === "scheduled") {
+		const cancelled = await cancelScheduledMeeting(client, guildId, meetingId, { fromDashboard: true });
+		if (cancelled.ok) return { ok: true, outcome: "cancelled" };
+		// notScheduled here means Start recording won the race since the read above.
+		if (cancelled.reason === "notScheduled") return { ok: false, reason: "recording" };
+		return { ok: false, reason: cancelled.reason === "noChannel" ? "noChannel" : "notFound" };
+	}
+
+	await meetingSummaryJobStore.deleteForMeeting(guildId, meetingId);
+	await meetingTranscriptStore.deleteForMeeting(guildId, meetingId);
+	await cancelRemindersFor(meetingId).catch((error: unknown) =>
+		console.error("[meetings] the deleted meeting's reminders could not be cancelled", { meetingId, error: error instanceof Error ? error.name : "unknown" })
+	);
+	if (!(await meetingStore.remove(guildId, meetingId))) return { ok: false, reason: "notFound" };
+	void markCardsRemoved(client, meeting).catch((error: unknown) =>
+		console.error("[meetings] the deleted meeting's cards could not be edited", { meetingId, error: error instanceof Error ? error.name : "unknown" })
+	);
+	console.info(`[meetings] deleted guild=${guildId} meeting=${meetingId}`);
+	return { ok: true, outcome: "deleted" };
+}
+
+// Both cards a meeting can have in 📝meeting-notes: the notes card and a cancelled schedule card.
+async function markCardsRemoved(client: Client, meeting: IMeeting): Promise<void> {
+	if (!meeting.notesChannelId) return;
+	const card = buildRemovedNotesCard(meeting, await copyFor(meeting.guildId));
+	for (const messageId of [meeting.notesMessageId, meeting.scheduleMessageId]) {
+		if (messageId) await editCardMessage(client, meeting.notesChannelId, messageId, card);
+	}
 }
 
 // ── the presses ─────────────────────────────────────────────────────────────

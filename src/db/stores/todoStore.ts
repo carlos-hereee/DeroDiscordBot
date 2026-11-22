@@ -1,4 +1,5 @@
-import { Todo, type ITodo } from "@db/models/Todo.js";
+import { Todo, type ITodo, type TodoStatus } from "@db/models/Todo.js";
+import type { KeysetBound } from "./keysetBound.js";
 
 // ── todoStore ──
 // What:  every DB touch for Todo (2026-11 item 388). Thin on purpose: features/todos decides
@@ -44,6 +45,19 @@ export const todoStore = {
 	/** The todos a meeting's action items made, by their place in its summary. */
 	async findForMeeting(guildId: string, meetingId: string): Promise<ITodo[]> {
 		return Todo.find({ guildId, meetingId }).sort({ actionItemIndex: 1 }).lean<ITodo[]>();
+	},
+
+	/** One page of a server's todos, newest first, after `before` (the dashboard list, 2026-11 item 388 Phase 5a). */
+	async listPage(guildId: string, statuses: readonly TodoStatus[] | null, before: KeysetBound | null, limit: number): Promise<ITodo[]> {
+		const filter: Record<string, unknown> = { guildId };
+		if (statuses) filter.status = { $in: [...statuses] };
+		if (before) filter.$or = [{ createdAt: { $lt: before.createdAt } }, { createdAt: before.createdAt, todoId: { $lt: before.id } }];
+		return Todo.find(filter).select("-_id -__v").sort({ createdAt: -1, todoId: -1 }).limit(limit).lean<ITodo[]>();
+	},
+
+	/** The people on a server's most recently changed todos, for the dashboard's member list. */
+	async recentPeople(guildId: string, limit: number): Promise<Pick<ITodo, "createdBy" | "assigneeId">[]> {
+		return Todo.find({ guildId }, { _id: 0, createdBy: 1, assigneeId: 1 }).sort({ updatedAt: -1 }).limit(limit).lean<Pick<ITodo, "createdBy" | "assigneeId">[]>();
 	},
 
 	// Self destruct's server data delete: every row this guild owns.

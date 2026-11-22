@@ -1256,6 +1256,19 @@ export const BOT_CONSTANTS = {
 		MINE_LIST_MAX: 20,
 	},
 
+	// The dashboard's meetings and todos routes (2026-11 item 388 Phase 5a).
+	DASHBOARD: {
+		// A Discord user id as the dashboard sends one for a todo's holder: a snowflake is 17 to
+		// 20 digits today, the same shape NETWORK.SERVER_ID_PATTERN and the brain's parser read.
+		SNOWFLAKE_PATTERN: /^\d{17,20}$/,
+		// The most members GET /api/todos/members lists for the assignee picker (plan assumption
+		// A8): one Discord member fetch, which takes at most 100 ids.
+		MEMBERS_MAX: 100,
+		// How many recent todos and meetings are read for the people on them before the list is
+		// topped up from the most recently active members; enough to find the regulars cheaply.
+		MEMBER_SOURCE_ROWS: 200,
+	},
+
 	REMINDERS: {
 		// A todo is reminded this long before its due time, and again at it (D23).
 		TODO_LEAD_MS: 60 * 60 * 1000,

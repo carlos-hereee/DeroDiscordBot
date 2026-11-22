@@ -127,19 +127,18 @@ describe("the release announcement", () => {
 		},
 	);
 
-	it("is the item 367 hotfix's admin only note: no public block, the apology, why it broke, what changed, the warning and the next step", () => {
+	it("is the 2.1.0 meeting notes release: a member post on recording, todos and reminders, and an admin note on turning them on", () => {
 		const { public: members, innerSanctum: admins } = rokCommanderCopy.featureAnnouncement;
-		expect(members).toBeNull();
-		expect(admins.title).toBe("🧭 Configure Onboarding Is Fixed!");
-		expect(admins.description.split("\n\n")).toEqual([
-			"Sorry to anyone who hit this, and thank you to the server owner who reported it.",
-			"**What went wrong**\nDiscord only turns on Onboarding when at least 5 text, announcement or forum channels let everyone both see and post. Dero's notice board channels are read only for members, so many servers came up short of Discord's minimum, and Configure Onboarding stopped with no way forward.",
-			"**What changed**\nWhen your server is short, Configure Onboarding now offers to:\n- let everyone post in some of your existing read only channels\n- create new channels with the names you choose\n- or do both",
-			"You see a private review first. Nothing changes until you press Confirm, and then Dero carries straight on with your Onboarding questions.",
-			"⚠️ **Heads up:** anything you open or create can be seen and posted in by everyone, including people who have not finished Onboarding yet.",
-			"**Next step**\nAlready set up Onboarding by hand? You are all set. Otherwise, press Configure Onboarding in 🧭onboarding to pick up where you left off.",
-		]);
-		expect(`${admins.title}\n${admins.description}`).not.toMatch(UNPREPARED);
+		expect(members?.title).toBe("📝 Meeting Notes, Todos and Reminders");
+		expect(members?.description.split("\n\n").map((block) => block.split("\n")[0])).toEqual(["Your server can now keep its meetings, its tasks and its reminders in one place.", "**Meeting notes**", "**Todos**", "**Reminders**", "These channels appear once an admin adds them."]);
+		// The recording promises the release makes, each one a fact the owner's Privacy Policy states (plan D1, R3).
+		expect(members?.description).toContain("Only members who press I agree are recorded.");
+		expect(members?.description).toContain("no audio is kept");
+		expect(members?.description).toContain("deleted after 30 days");
+		expect(admins.title).toBe("📝 Turn On Meeting Notes and Todos");
+		expect(admins.description).toContain("Add this channel");
+		expect(admins.description).toContain("Meetings tab");
+		// The admin note is a how to, so it stays as short as a patch note.
 		expect(admins.description.length).toBeLessThan(PATCH_NOTE_MAX);
 	});
 });
