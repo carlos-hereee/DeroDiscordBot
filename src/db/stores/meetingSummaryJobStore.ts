@@ -46,6 +46,16 @@ export const meetingSummaryJobStore = {
 	},
 
 	/**
+	 * Hand a leased job back to pending, only while `leaseId` is still its lease, for a result
+	 * that says the model could not write it: the next claim tries again and counts an attempt.
+	 * False when the lease was reset or reclaimed first.
+	 */
+	async releaseLease(jobId: string, leaseId: string): Promise<boolean> {
+		const result = await MeetingSummaryJob.updateOne({ jobId, status: "leased", leaseId }, { $set: { status: "pending", leaseId: null, leaseUntil: null } });
+		return result.modifiedCount === 1;
+	},
+
+	/**
 	 * Put a waiting or leased job back to pending under a new leaseId, without counting an
 	 * attempt, for a member's Stop recording me: a result built before it is then refused.
 	 */

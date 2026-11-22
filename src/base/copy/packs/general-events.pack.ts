@@ -523,6 +523,21 @@ export const generalEventsCopy: IPluginCopy = {
 			pending: (minutes: number, speakers: number) =>
 				`The meeting has ended. I am writing the summary, the decisions and the action items, and this card fills in when they are ready.\n\nLength: ${minutes} min. Members recorded: ${speakers}.`,
 			nothing: "The meeting has ended and nothing was recorded, because no member who agreed spoke. There is no summary for this meeting.",
+			stats: (minutes: number, speakers: number) => `Length: ${minutes} min. Members recorded: ${speakers}.`,
+			summaryHeading: "**Summary**",
+			decisionsHeading: "**Decisions**",
+			actionItemsHeading: "**Action items**",
+			noDecisions: "No decisions were recorded.",
+			noActionItems: "No action items were named.",
+			unassigned: "unassigned",
+			more: (count: number) => `And ${count} more not shown on this card.`,
+			todosPointer: (channelId: string) => `Each action item is now a todo in <#${channelId}>.`,
+			todosMissing: "The action items stay on this card, because this server has no ✅todos channel.",
+			failed: {
+				generic: "I could not write the summary for this meeting. The transcript stays until it expires, and a host can record the next meeting as usual.",
+				transcript_expired: "I could not write the summary for this meeting, because its transcript was deleted when it expired.",
+				transcript_empty: "There is no summary for this meeting, because every member who spoke asked to stop being recorded and their words were removed.",
+			},
 		},
 		endReasons: {
 			host: "A host ended the recording.",

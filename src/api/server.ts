@@ -19,6 +19,7 @@ import { createGameRoomsRouter } from "./routes/gameRooms.routes.js";
 import { createStreamerRouter } from "./routes/streamer.routes.js";
 import { createCreatorLabRouter } from "./routes/creatorLab.routes.js";
 import { brainBodyErrorHandler, createBrainRouter } from "./routes/brain.routes.js";
+import { createMeetingSummaryRouter } from "./routes/meetingSummary.routes.js";
 import { dashboardOrigin, port } from "@utils/config.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 
@@ -71,6 +72,9 @@ export function startApiServer(client: Client): Server {
 	// It is never added to the server's ROK_BOT_PATH_PREFIXES, so the platform
 	// proxy cannot reach it. The error handler right after it answers bodies
 	// express.json refused, signature first.
+	// The meeting summary pair (2026-11 item 388) mounts first, because the brain router's
+	// catch all would answer its paths 404; it signs the same way, with no api key fallback.
+	app.use("/brain/meeting-summary", createMeetingSummaryRouter({ client }));
 	app.use("/brain", createBrainRouter());
 	app.use("/brain", brainBodyErrorHandler);
 

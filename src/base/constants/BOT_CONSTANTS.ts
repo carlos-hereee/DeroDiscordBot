@@ -1228,6 +1228,10 @@ export const BOT_CONSTANTS = {
 		// The longest the summary job route holds a launcher's poll open, under the 30 s a
 		// proxy or a load balancer commonly allows an idle request.
 		SUMMARY_POLL_MS: 25 * 1000,
+		// How often a waiting summary poll looks for a job again. Jobs are rows, not a memory
+		// queue, so the poll rereads Mongo: five reads per 25 s poll, and a job just queued
+		// reaches the launcher within this long.
+		SUMMARY_POLL_RECHECK_MS: 5 * 1000,
 		// The largest job body the route sends, which a two hour meeting's transcript fits;
 		// a longer one is trimmed and the job says so.
 		SUMMARY_JOB_MAX_BYTES: 512 * 1024,

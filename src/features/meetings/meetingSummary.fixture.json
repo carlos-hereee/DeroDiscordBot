@@ -1,0 +1,29 @@
+{
+	"job": {
+		"jobId": "jobFixture01",
+		"leaseId": "leaseFixture",
+		"meeting": { "title": "Weekly planning", "startedAt": "2026-11-21T18:00:00.000Z", "durationMs": 1800000 },
+		"speakers": [
+			{ "label": "S1", "name": "Ava" },
+			{ "label": "S2", "name": "Ben" }
+		],
+		"segments": [
+			{ "label": "S1", "offsetMs": 0, "text": "Welcome everyone. Today we plan the spring tournament and the new member guide." },
+			{ "label": "S2", "offsetMs": 45000, "text": "I think the tournament should run on the second Saturday of March." },
+			{ "label": "S1", "offsetMs": 90000, "text": "Agreed, the second Saturday it is. Ben, can you book the voice rooms?" },
+			{ "label": "S2", "offsetMs": 135000, "text": "Yes, I will book them this week. Someone should also update the member guide." }
+		],
+		"trimmed": false
+	},
+	"result": {
+		"jobId": "jobFixture01",
+		"leaseId": "leaseFixture",
+		"ok": true,
+		"summary": "The team planned the spring tournament and the new member guide.",
+		"decisions": ["The spring tournament runs on the second Saturday of March."],
+		"actionItems": [
+			{ "text": "Book the voice rooms for the tournament", "assignee": "Ben" },
+			{ "text": "Update the member guide", "assignee": null }
+		]
+	}
+}
