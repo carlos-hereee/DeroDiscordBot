@@ -1502,7 +1502,8 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 		const message = {
 			id: "msg-optin",
 			embeds: [internals.resolveIntroEmbed(field, makeGuildFixture(), null, makeStoredConfig()).data],
-			components: [],
+			// The intro's current rows (Phase 2's Add todo and Schedule a meeting), so only the pin differs.
+			components: internals.resolveIntroComponents(field) ?? [],
 			pinned: false,
 			edit: vi.fn().mockResolvedValue(undefined),
 			pin,

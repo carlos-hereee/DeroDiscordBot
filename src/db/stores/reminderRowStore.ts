@@ -42,6 +42,10 @@ export const reminderRowStore = {
 		await Reminder.updateMany({ targetId, status: "pending" }, { $set: { status: "cancelled" } });
 	},
 
+	/** Cancel one lead of a target, for a lead whose time has already passed when it is scheduled. */
+	async cancelLead(targetId: string, leadKey: ReminderLeadKey): Promise<void> {
+		await Reminder.updateMany({ targetId, leadKey, status: "pending" }, { $set: { status: "cancelled" } });
+	},
 	/** Cancel one of a member's own pending reminders. True when it was pending. */
 	async cancelPersonal(guildId: string, userId: string, reminderId: string): Promise<boolean> {
 		const result = await Reminder.updateOne({ guildId, userId, reminderId, kind: "personal", status: "pending" }, { $set: { status: "cancelled" } });

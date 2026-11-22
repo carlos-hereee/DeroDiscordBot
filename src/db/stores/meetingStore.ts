@@ -48,6 +48,11 @@ export const meetingStore = {
 		await Meeting.updateOne({ guildId, meetingId }, { $addToSet: { speakerIds: userId } });
 	},
 
+	/** Add or take away a member's RSVP on a scheduled meeting. Null when it is no longer scheduled. */
+	async setRsvp(guildId: string, meetingId: string, userId: string, attending: boolean): Promise<IMeeting | null> {
+		const change = attending ? { $addToSet: { rsvpIds: userId } } : { $pull: { rsvpIds: userId } };
+		return Meeting.findOneAndUpdate({ guildId, meetingId, status: "scheduled" }, change, { new: true }).lean<IMeeting>();
+	},
 	/** Take a member off the captured list, for Stop recording me. */
 	async removeSpeaker(guildId: string, meetingId: string, userId: string): Promise<void> {
 		await Meeting.updateOne({ guildId, meetingId }, { $pull: { speakerIds: userId } });

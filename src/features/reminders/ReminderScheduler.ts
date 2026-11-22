@@ -24,6 +24,7 @@ import { playerActivityRetentionDays } from "@utils/config.js";
 import { sendRenderAnalyticsDigest } from "@features/renderer/renderAnalyticsDigest.js";
 import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
 import { runVaultTopUp } from "@features/economy/vaultTopUp.js";
+import { runDueReminders } from "./dueReminders.js";
 
 // ── resolveOverride ────────────────────────────────────────────────
 // What:  given an event + an original occurrence (the cron-computed fire
@@ -325,6 +326,11 @@ export function startScheduler(client: Client): void {
 		}
 		reminderTickInProgress = true;
 		lastReminderTickAt = new Date(); // audit L2: the readiness probe reads this
+		// Member todo, meeting and personal reminders (2026-11 item 388, D29) go first, before
+		// the per guild KvK fetch, so a slow platform server under USE_REMOTE_EVENTS cannot hold
+		// them past their minute. Fire and forget with its own catch: it claims each row once,
+		// so it needs nothing from this tick's guard beyond running inside it.
+		void runDueReminders(client).catch((error: unknown) => console.error("[scheduler] the due reminder sweep failed", error instanceof Error ? error.name : "unknown"));
 		try {
 			// ① Fetch all active events for every guild this bot is in.
 			//

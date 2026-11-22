@@ -1,3 +1,10 @@
+import { todoStore } from "@db/stores/todoStore.js";
+import { reminderRowStore } from "@db/stores/reminderRowStore.js";
+import { memberTimezoneStore } from "@db/stores/memberTimezoneStore.js";
+import { meetingStore } from "@db/stores/meetingStore.js";
+import { meetingTranscriptStore } from "@db/stores/meetingTranscriptStore.js";
+import { meetingConsentStore } from "@db/stores/meetingConsentStore.js";
+import { meetingSummaryJobStore } from "@db/stores/meetingSummaryJobStore.js";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
 import { xpPeriodStore } from "@db/stores/xpPeriodStore.js";
 import { xpDailyStore } from "@db/stores/xpDailyStore.js";
@@ -115,6 +122,14 @@ const WIPE_STEPS: readonly WipeStep[] = [
 	{ label: "event overrides", run: (guildId) => eventOverrideStore.deleteGuild(guildId) },
 	{ label: "events and attendance", run: retireEventsAndAttendance },
 	{ label: "pairing codes", run: (guildId) => pendingPairingStore.deleteUnclaimedForGuild(guildId) },
+	// The meeting notes, todos and reminders rows (2026-11 item 388).
+	{ label: "todos", run: (guildId) => todoStore.deleteGuild(guildId) },
+	{ label: "reminders", run: (guildId) => reminderRowStore.deleteGuild(guildId) },
+	{ label: "member timezones", run: (guildId) => memberTimezoneStore.deleteGuild(guildId) },
+	{ label: "meetings", run: (guildId) => meetingStore.deleteGuild(guildId) },
+	{ label: "meeting transcripts", run: (guildId) => meetingTranscriptStore.deleteGuild(guildId) },
+	{ label: "meeting consents", run: (guildId) => meetingConsentStore.deleteGuild(guildId) },
+	{ label: "meeting summary jobs", run: (guildId) => meetingSummaryJobStore.deleteGuild(guildId) },
 ];
 
 /**

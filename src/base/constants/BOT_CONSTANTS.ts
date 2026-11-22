@@ -1186,6 +1186,8 @@ export const BOT_CONSTANTS = {
 	// lays them down with the data layer; the recorder, the summary jobs, the todo cards and
 	// the reminder sweep read them from Phase 2 on.
 	MEETINGS: {
+		// The longest meeting title a host types, one card title with room for the date.
+		TITLE_MAX: 100,
 		// The owner's cap on one recording (D22): long enough for a council, short enough
 		// that one forgotten recording cannot spend a month's voice budget.
 		MAX_MS: 2 * 60 * 60 * 1000,
@@ -1246,6 +1248,8 @@ export const BOT_CONSTANTS = {
 		TEXT_MAX: 300,
 		// The most open todos one server keeps (A10), so a flood cannot fill the channel.
 		MAX_OPEN_PER_GUILD: 500,
+		// The most todos one /todo mine list shows: one embed's worth of lines, nearest due first.
+		MINE_LIST_MAX: 20,
 	},
 
 	REMINDERS: {
@@ -1260,6 +1264,15 @@ export const BOT_CONSTANTS = {
 		PERSONAL_MAX_PENDING: 25,
 		// The longest personal reminder text, one DM line.
 		TEXT_MAX: 300,
+		// The furthest ahead a typed reminder or due time may land: a year covers any real
+		// plan, and a typo like 3000d is refused instead of stored for a decade.
+		MAX_AHEAD_MS: 365 * 24 * 60 * 60 * 1000,
+		// A reminder delivered more than this after its time says it is late. The minute tick
+		// makes up to a minute of lateness normal, so two minutes means Dero was down or busy.
+		LATE_AFTER_MS: 2 * 60 * 1000,
+		// The most reminders one minute tick delivers, so a backlog after downtime cannot hold
+		// the tick past its minute; the rest wait for the next tick, still inside the late window.
+		MAX_DELIVERIES_PER_TICK: 50,
 		// A fired reminder row is deleted this many days later, so its private text does not
 		// outlive its use (R18).
 		FIRED_TTL_DAYS: 7,

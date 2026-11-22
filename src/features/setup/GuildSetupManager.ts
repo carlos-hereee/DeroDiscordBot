@@ -1,3 +1,6 @@
+import { buildTodosIntroRow } from "@features/todos/todoCard.js";
+import { buildMemberTimezoneButton } from "@features/reminders/memberTimezone.js";
+import { buildMeetingNotesIntroRow } from "@features/meetings/scheduledMeetings.js";
 import {
 	Guild,
 	PermissionFlagsBits,
@@ -1585,6 +1588,14 @@ export class GuildSetupManager {
 				// Buy coins and Sell coins (2026-10 item 267 Session 2a). Each press reads the
 				// chip switch again, so a closed market refuses even under an older intro.
 				return [buildMarketRow()];
+			case "todosChannelId":
+				// Add todo, My todos and Set my timezone (2026-11 item 388 Phase 2). Public on the
+				// intro, and each press answers the member privately.
+				return [buildTodosIntroRow(getPluginCopy(guildConfig), buildMemberTimezoneButton(guildConfig))];
+			case "meetingNotesChannelId":
+				// Schedule a meeting (Phase 2); the press refuses anyone who is not a host. Start
+				// recording and the consent button join this row in Phase 3.
+				return [buildMeetingNotesIntroRow(getPluginCopy(guildConfig))];
 			case "rulesChannelId":
 				// Edit rules, the owner and admins' way to replace the rules post's text
 				// (2026-10 item 247 Phase 2). It rides the public post because a message

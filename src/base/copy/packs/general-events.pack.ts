@@ -371,6 +371,119 @@ export const generalEventsCopy: IPluginCopy = {
 		},
 	},
 
+	// ── todos, reminders and scheduled meetings (2026-11 item 388 Phase 2) ──
+	// Every card, notice, DM and refusal for ✅todos, /remind and a scheduled meeting. Times
+	// arrive as epoch seconds and render as Discord timestamps, so each member reads them in
+	// their own clock. A DM names the server it comes from, since a member may share Dero
+	// with many servers. Refusals and confirmations are practical in both packs; the cards
+	// and DMs carry the pack's voice.
+	todoReminders: {
+		todos: {
+			noticeTitle: "Todos",
+			guildOnly: "Todos live in a server, so run this in one.",
+			channelMissing: "Todos are off in this server. An admin turns them on by adding ✅todos from its step card in 🧭onboarding.",
+			cap: (max: number) => `This server already holds ${max} open todos. Finish or delete some before adding more.`,
+			notFound: "That todo is gone.",
+			notAllowed: "Only the member who holds this todo, the member who added it, or an admin may change it.",
+			alreadyHeld: "Someone already holds this todo.",
+			alreadyDone: "That todo is already done.",
+			alreadyOpen: "That todo is already open.",
+			textInvalid: (max: number) => `A todo needs between 1 and ${max} characters of text.`,
+			card: {
+				openTitle: "📌 Todo",
+				doneTitle: "✅ Todo done",
+				holderLabel: "Held by",
+				nobody: "Nobody yet",
+				dueLabel: "Due",
+				noDue: "No due date",
+				addedByLabel: "Added by",
+				addedFromDashboard: "The dashboard",
+				doneLine: (userId: string | null, seconds: number) => (userId ? `Done by <@${userId}> <t:${seconds}:R>.` : `Done <t:${seconds}:R>.`),
+				meetingLink: (url: string) => `From [these meeting notes](${url}).`,
+				due: (seconds: number) => `<t:${seconds}:f> (<t:${seconds}:R>)`,
+			},
+			buttons: { done: "Done", reopen: "Reopen", claim: "Assign to me", assign: "Assign", due: "Due date", remove: "Delete" },
+			intro: { add: "Add todo", mine: "My todos", timezone: "Set my timezone" },
+			addModal: { title: "Add a todo", textLabel: "What needs doing", dueLabel: "Due (optional)" },
+			assignModal: { title: "Assign this todo", label: "Who holds it" },
+			dueModal: { title: "Set the due date", label: "Due (empty clears it)" },
+			timeHint: "30m, 2h, 3d, 1w, 7pm, 19:30 or 12/24@18:00",
+			confirmRemove: { title: "Delete this todo?", body: (text: string) => `"${text}" and its reminders go for good.` },
+			mine: {
+				title: "Your todos",
+				empty: "You hold no open todos in this server.",
+				line: (text: string, url: string | null, dueSeconds: number | null) =>
+					`${url ? `[${text}](${url})` : text}${dueSeconds === null ? "" : `, due <t:${dueSeconds}:R>`}`,
+				more: (count: number) => `And ${count} more in ✅todos.`,
+			},
+			reminder: {
+				dmLead: (server: string, text: string, seconds: number) => `A todo from **${server}**: "${text}" is due <t:${seconds}:R> (<t:${seconds}:f>).`,
+				dmDue: (server: string, text: string) => `A todo from **${server}**: "${text}" is due now.`,
+				channelLead: (mention: string, text: string, seconds: number) => `${mention} "${text}" is due <t:${seconds}:R>. I could not reach you by direct message.`,
+				channelDue: (mention: string, text: string) => `${mention} "${text}" is due now. I could not reach you by direct message.`,
+				unownedLead: (text: string, seconds: number) => `"${text}" is due <t:${seconds}:R>, and nobody holds it yet.`,
+				unownedDue: (text: string) => `"${text}" is due now, and nobody holds it yet.`,
+			},
+		},
+		reminders: {
+			noticeTitle: "Reminders",
+			guildOnly: "Reminders are set in a server, so run this in one.",
+			set: (seconds: number) => `I will remind you <t:${seconds}:f> (<t:${seconds}:R>).`,
+			cap: (max: number) => `You already have ${max} reminders waiting in this server. Cancel one with /remind list first.`,
+			textInvalid: (max: number) => `A reminder needs between 1 and ${max} characters of text.`,
+			time: {
+				unreadable: "I could not read that time. Try 30m, 2h, 3d, 1w, 7pm, 19:30 or 12/24@18:00.",
+				past: "That time has already passed.",
+				tooFar: "That is more than a year away. Pick a nearer time.",
+			},
+			list: {
+				title: "Your reminders",
+				empty: "You have no reminders waiting in this server.",
+				line: (index: number, text: string, seconds: number) => `${index}. <t:${seconds}:f>: ${text}`,
+				cancel: (index: number) => `Cancel ${index}`,
+			},
+			gone: "That reminder already went out or was cancelled.",
+			dm: (server: string, text: string) => `Your reminder from **${server}**: ${text}`,
+			channel: (mention: string, text: string) => `${mention} your reminder: ${text}. I could not reach you by direct message.`,
+			lateNote: "This went out late, because I was away at the time it was set for.",
+			timezoneSet: (zone: string) => `Your timezone in this server is now ${zone}. Times you type here are read in it.`,
+			timezoneRefused: "That is not one of the listed timezones.",
+		},
+		meetings: {
+			noticeTitle: "Meetings",
+			guildOnly: "Meetings are scheduled in a server, so run this in one.",
+			channelMissing: "Meeting notes are off in this server. An admin turns them on by adding 📝meeting-notes from its step card in 🧭onboarding.",
+			notHost: "Only the server owner, admins and the members allowed to give Dero tasks may schedule or cancel a meeting.",
+			titleInvalid: (max: number) => `A meeting title needs between 1 and ${max} characters.`,
+			gone: "That meeting is gone.",
+			notScheduled: "That meeting is no longer scheduled.",
+			modal: { title: "Schedule a meeting", titleLabel: "Title", whenLabel: "When" },
+			confirmCancel: { title: "Cancel this meeting?", body: (title: string) => `"${title}" is called off and nobody is reminded of it.` },
+			card: {
+				title: (title: string) => `📅 ${title}`,
+				description: (hostId: string | null, seconds: number) =>
+					`Meeting in 🏛️ Meeting Hall <t:${seconds}:f> (<t:${seconds}:R>).${hostId ? `\nHosted by <@${hostId}>.` : ""}`,
+				attendingTitle: (count: number) => `Attending (${count})`,
+				nobodyYet: "Nobody yet",
+				names: (ids: string[], shown: number) => {
+					const listed = ids
+						.slice(0, shown)
+						.map((id) => `<@${id}>`)
+						.join(", ");
+					return ids.length > shown ? `${listed} and ${ids.length - shown} more` : listed;
+				},
+				cancelledLine: "This meeting was cancelled.",
+				rsvp: "I'll be there",
+				cancel: "Cancel",
+			},
+			intro: { schedule: "Schedule a meeting" },
+			reminder: {
+				lead: (mentions: string, title: string, seconds: number) => `${mentions} "${title}" starts <t:${seconds}:R> in 🏛️ Meeting Hall.`,
+				start: (mentions: string, title: string) => `${mentions} "${title}" is starting now in 🏛️ Meeting Hall.`,
+			},
+		},
+	},
+
 	// ── the timezone modal (mirrors rok-commander, 2026-11 item 388) ──
 	// One modal of the shared 25 zones (utils/timezoneModal.ts), opened by the server's
 	// timezone step in 🛠️server-config and by a member setting their own zone. Discord caps a
@@ -459,6 +572,25 @@ export const generalEventsCopy: IPluginCopy = {
 						"Your arcade rating in Hold'em, Battleship, Monopoly and Blackjack, the server's best, and the luckiest players.",
 						"`/account view:achievements`",
 						"What you have unlocked and what is closest. A few stay hidden until you earn them.",
+					].join("\n"),
+				},
+				// Todos, reminders and scheduling a meeting (2026-11 item 388 Phase 2). /todo and
+				// /meeting need their channel in this server; /remind works anywhere.
+				{
+					name: "📌 Todos and Reminders",
+					value: [
+						"`/todo add`",
+						"Add a todo to ✅todos, with a due time if you like.",
+						"`/todo mine`",
+						"The open todos you hold here.",
+						"`/remind me`",
+						"A private reminder by direct message, at a time like 30m, 7pm or 12/24@18:00.",
+						"`/remind list`",
+						"Your waiting reminders, each with a Cancel button.",
+						"`/remind timezone`",
+						"The timezone your typed times are read in, in this server.",
+						"`/meeting schedule`",
+						"Hosts only: schedule a 🏛️ Meeting Hall meeting with reminders.",
 					].join("\n"),
 				},
 			] satisfies IEmbedField[],

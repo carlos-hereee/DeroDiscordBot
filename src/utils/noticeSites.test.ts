@@ -371,6 +371,37 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "commands/utility/count.ts", within: "execute", kind: "state", count: 2 },
 	{ file: "commands/utility/highlight.ts", within: "execute", kind: "state", count: 2 },
 
+	// ── todos, reminders and scheduled meetings (2026-11 item 388 Phase 2) ──
+	// A todo's or a meeting's answer is its card in ✅todos or 📝meeting-notes, so a saved action
+	// only closes the interaction; what is said privately is a refusal, or the member's own data.
+	{ file: "commands/utility/todo.ts", within: "execute", kind: "state" },
+	{ file: "commands/utility/meeting.ts", within: "execute", kind: "state" },
+	{ file: "commands/utility/remind.ts", within: "execute", anchor: "[words.guildOnly]", kind: "state" },
+	{
+		file: "commands/utility/remind.ts",
+		within: "execute",
+		anchor: "sections: [line]",
+		kind: "private",
+		why: "the member's own reminder and the exact time it will reach them, or why it was refused; the plan asks for a private confirmation, and nothing posts a personal reminder anywhere",
+	},
+	{ file: "features/todos/todoHandlers.ts", within: "notice", kind: "state" },
+	{ file: "features/meetings/scheduledMeetings.ts", within: "notice", kind: "state" },
+	{ file: "features/reminders/personalReminders.ts", within: "handleReminderButton", anchor: "reminders.gone", kind: "state" },
+	{
+		file: "features/reminders/memberTimezone.ts",
+		within: "handleMemberTimezoneSubmit",
+		anchor: "timezoneRefused",
+		kind: "race",
+		why: "the select offers only the listed zones, so only a crafted Submit carries another one, and it is answered by the private fallback",
+	},
+	{
+		file: "features/reminders/memberTimezone.ts",
+		within: "handleMemberTimezoneSubmit",
+		anchor: "timezoneSet(zone)",
+		kind: "private",
+		why: "the member's own timezone, a hint of where they live, which no channel shows",
+	},
+
 	// ── commands/utility/dero.ts ──
 	{ file: "commands/utility/dero.ts", within: "refuse", kind: "state" },
 	{ file: "commands/utility/dero.ts", within: "tell", count: 8, kind: "state" },

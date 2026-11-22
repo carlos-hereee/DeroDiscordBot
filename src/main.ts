@@ -83,6 +83,10 @@ import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { isAdminCommand } from "@utils/permissions.js";
 import { registerNoticeModal, showEmbedNotice, showNotice } from "@utils/textModal.js";
+import { registerTodoHandlers } from "@features/todos/todoHandlers.js";
+import { registerPersonalReminderHandlers } from "@features/reminders/personalReminders.js";
+import { registerMemberTimezoneHandlers } from "@features/reminders/memberTimezone.js";
+import { registerScheduledMeetingHandlers } from "@features/meetings/scheduledMeetings.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
 import { registerMessageXp } from "@features/leveling/messageXp.js";
 import { registerReactionXp } from "@features/leveling/reactionXp.js";
@@ -440,6 +444,12 @@ process.on("uncaughtException", (err) => {
 	// Cancel, the invite picker and the rules modal). A request lives in memory,
 	// so a card from before a restart answers "expired".
 	registerHoldemRulesCardHandlers();
+	// Todo cards and the ✅todos intro (todo), personal reminder lists (rmd), the member
+	// timezone modal (mtz) and scheduled meeting cards (mtg), 2026-11 item 388 Phase 2.
+	registerTodoHandlers();
+	registerPersonalReminderHandlers();
+	registerMemberTimezoneHandlers();
+	registerScheduledMeetingHandlers();
 
 	// then register the interaction  listerner
 	client.on(Events.InteractionCreate, async (interaction) => {

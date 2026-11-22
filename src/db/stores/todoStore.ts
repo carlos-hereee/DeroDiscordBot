@@ -34,6 +34,13 @@ export const todoStore = {
 		return Todo.countDocuments({ guildId, status: "open" });
 	},
 
+	/** A member's open todos in one server by due date, at most `limit`. Mongo sorts a null lowest, so undated todos come first. */
+	async listOpenForAssignee(guildId: string, assigneeId: string, limit: number): Promise<ITodo[]> {
+		return Todo.find({ guildId, assigneeId, status: "open" }).sort({ dueAt: 1, createdAt: 1 }).limit(limit).lean<ITodo[]>();
+	},
+	async countOpenForAssignee(guildId: string, assigneeId: string): Promise<number> {
+		return Todo.countDocuments({ guildId, assigneeId, status: "open" });
+	},
 	/** The todos a meeting's action items made, by their place in its summary. */
 	async findForMeeting(guildId: string, meetingId: string): Promise<ITodo[]> {
 		return Todo.find({ guildId, meetingId }).sort({ actionItemIndex: 1 }).lean<ITodo[]>();

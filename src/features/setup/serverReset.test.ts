@@ -25,6 +25,13 @@ const m = vi.hoisted(() => {
 		overrides: deleter(),
 		pairing: deleter(),
 		attendance: deleter(),
+		todos: deleter(),
+		reminders: deleter(),
+		memberTimezones: deleter(),
+		meetings: deleter(),
+		transcripts: deleter(),
+		consents: deleter(),
+		summaryJobs: deleter(),
 		findEvents: vi.fn(),
 		retireEvent: vi.fn(),
 	};
@@ -49,6 +56,13 @@ vi.mock("@db/stores/serverVaultStore.js", () => ({ serverVaultStore: { deleteGui
 vi.mock("@db/stores/pollResultStore.js", () => ({ pollResultStore: { deleteGuild: m.polls } }));
 vi.mock("@db/stores/eventOverrideStore.js", () => ({ eventOverrideStore: { deleteGuild: m.overrides } }));
 vi.mock("@db/stores/pendingPairingStore.js", () => ({ pendingPairingStore: { deleteUnclaimedForGuild: m.pairing } }));
+vi.mock("@db/stores/todoStore.js", () => ({ todoStore: { deleteGuild: m.todos } }));
+vi.mock("@db/stores/reminderRowStore.js", () => ({ reminderRowStore: { deleteGuild: m.reminders } }));
+vi.mock("@db/stores/memberTimezoneStore.js", () => ({ memberTimezoneStore: { deleteGuild: m.memberTimezones } }));
+vi.mock("@db/stores/meetingStore.js", () => ({ meetingStore: { deleteGuild: m.meetings } }));
+vi.mock("@db/stores/meetingTranscriptStore.js", () => ({ meetingTranscriptStore: { deleteGuild: m.transcripts } }));
+vi.mock("@db/stores/meetingConsentStore.js", () => ({ meetingConsentStore: { deleteGuild: m.consents } }));
+vi.mock("@db/stores/meetingSummaryJobStore.js", () => ({ meetingSummaryJobStore: { deleteGuild: m.summaryJobs } }));
 vi.mock("@db/stores/activityStore.js", () => ({ activityStore: { deleteByEvents: m.attendance } }));
 vi.mock("@db/stores/eventStore.js", () => ({ eventStore: { findByGuildId: m.findEvents, deleteInGuild: m.retireEvent } }));
 
@@ -87,7 +101,7 @@ describe("wipeServerData", () => {
 		const result = await wipeServerData("g1");
 
 		expect(result).toEqual({ failed: [] });
-		for (const fn of [m.memberLevels, m.xpPeriods, m.xpDaily, m.luck, m.tallies, m.rooms, m.requests, m.partyGames, m.vaults, m.polls, m.overrides, m.pairing]) {
+		for (const fn of [m.memberLevels, m.xpPeriods, m.xpDaily, m.luck, m.tallies, m.rooms, m.requests, m.partyGames, m.vaults, m.polls, m.overrides, m.pairing, m.todos, m.reminders, m.memberTimezones, m.meetings, m.transcripts, m.consents, m.summaryJobs]) {
 			expect(fn).toHaveBeenCalledWith("g1");
 		}
 		expect(m.attendance).toHaveBeenCalledWith(["evt-1", "evt-2"]);

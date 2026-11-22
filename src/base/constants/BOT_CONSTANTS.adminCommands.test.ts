@@ -59,6 +59,11 @@ const FINAL_COMMANDS = [
 	"creator-lab-live-link",
 	"highlight",
 	"count",
+	// Meeting notes, todos and reminders (2026-11 item 388 Phase 2): member commands, each
+	// checking its own rights in its handler, so none is on ADMIN_COMMANDS.
+	"todo",
+	"remind",
+	"meeting",
 ];
 
 // The names the merges and removals retired. None may come back as a command.
