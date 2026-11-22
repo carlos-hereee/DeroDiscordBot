@@ -386,6 +386,8 @@ const INVENTORY: readonly NoticeEntry[] = [
 	},
 	{ file: "features/todos/todoHandlers.ts", within: "notice", kind: "state" },
 	{ file: "features/meetings/scheduledMeetings.ts", within: "notice", kind: "state" },
+	{ file: "features/meetings/meetingLifecycle.ts", within: "notice", kind: "state" },
+	{ file: "features/meetings/consentNotice.ts", within: "handleConsentButton", kind: "state" },
 	{ file: "features/reminders/personalReminders.ts", within: "handleReminderButton", anchor: "reminders.gone", kind: "state" },
 	{
 		file: "features/reminders/memberTimezone.ts",

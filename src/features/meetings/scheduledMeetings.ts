@@ -37,17 +37,21 @@ import { isMeetingHost } from "./meetingHosts.js";
 // Who:   commands/utility/meeting.ts, the intro row, main.ts (the mtg prefix); Phase 5's
 //        dashboard calls scheduleMeeting and cancelScheduledMeeting, the one write path.
 // Model: features/game-rooms/partyGamesSchedule.ts rsvpCard and handleRsvpButton.
-// Does NOT: record. Start recording joins this card in Phase 3 (startRecordingButtons below).
+// Does NOT: record. Start recording and End recording are mtg buttons, so they arrive here and
+//        are handed to meetingLifecycle through useRecordingControls, which keeps this file
+//        free of an import of the lifecycle (the lifecycle imports this file).
 
 /** Every meeting customId: `mtg:<action>` or `mtg:<action>:<meetingId>`. */
 export const MEETING_PREFIX = "mtg";
-const ACTIONS = { schedule: "schedule", rsvp: "rsvp", cancel: "cancel", confirmCancel: "cancelok" } as const;
+const ACTIONS = { schedule: "schedule", rsvp: "rsvp", cancel: "cancel", confirmCancel: "cancelok", record: "rec", end: "end" } as const;
+/** The mtg actions other meeting modules build buttons for. */
+export const MEETING_ACTIONS = { record: ACTIONS.record, end: ACTIONS.end } as const;
 const TITLE_FIELD_ID = "title";
 const WHEN_FIELD_ID = "when";
 // A typed time is short (30m, 12/24@18:00); the cap only keeps a pasted paragraph out.
 const WHEN_INPUT_MAX = 40;
 
-const meetingCustomId = (action: string, meetingId?: string): string => (meetingId ? `${MEETING_PREFIX}:${action}:${meetingId}` : `${MEETING_PREFIX}:${action}`);
+export const meetingCustomId = (action: string, meetingId?: string): string => (meetingId ? `${MEETING_PREFIX}:${action}:${meetingId}` : `${MEETING_PREFIX}:${action}`);
 const toSeconds = (date: Date): number => Math.floor(new Date(date).getTime() / 1000);
 
 /** Why a schedule or a cancel was refused. */
@@ -56,10 +60,23 @@ export type MeetingResult = { ok: true; meeting: IMeeting } | { ok: false; reaso
 
 // ── the card ────────────────────────────────────────────────────────────────
 
-// ⚑ Phase 3 places Start recording here: the buttons a host presses to begin this meeting's
-// recording, shown only while it is scheduled. Empty until recording exists.
-function startRecordingButtons(_meeting: IMeeting, _copy: IPluginCopy): ButtonBuilder[] {
-	return [];
+// Start recording on a scheduled card, shown only while it is scheduled; a host's press starts
+// this row's recording rather than a new meeting.
+function startRecordingButtons(meeting: IMeeting, copy: IPluginCopy): ButtonBuilder[] {
+	return [new ButtonBuilder().setCustomId(meetingCustomId(ACTIONS.record, meeting.meetingId)).setLabel(copy.meetingRecording.startButton).setEmoji("🎙️").setStyle(ButtonStyle.Primary)];
+}
+
+/** What a Start recording or End recording press runs; meetingLifecycle registers it at boot. */
+export interface RecordingControls {
+	start(interaction: ButtonInteraction, input: { scheduledMeetingId?: string }): Promise<void>;
+	end(interaction: ButtonInteraction, meetingId: string | null): Promise<void>;
+}
+
+let recordingControls: RecordingControls | null = null;
+
+/** Hand the recording presses to the lifecycle. Called once from registerMeetingRecording. */
+export function useRecordingControls(controls: RecordingControls): void {
+	recordingControls = controls;
 }
 
 /** The scheduled meeting card, drawn from its row. Exported for the tests. */
@@ -85,9 +102,10 @@ export function buildScheduledMeetingCard(meeting: IMeeting, copy: IPluginCopy):
 	return { embeds: [embed], components, allowedMentions: { parse: [], users: [], roles: [] } };
 }
 
-/** Schedule a meeting, the 📝meeting-notes intro's row. */
+/** Start recording and Schedule a meeting, the 📝meeting-notes intro's row. */
 export function buildMeetingNotesIntroRow(copy: IPluginCopy): ActionRowBuilder<ButtonBuilder> {
 	return new ActionRowBuilder<ButtonBuilder>().addComponents(
+		new ButtonBuilder().setCustomId(meetingCustomId(ACTIONS.record)).setLabel(copy.meetingRecording.startButton).setEmoji("🎙️").setStyle(ButtonStyle.Success),
 		new ButtonBuilder().setCustomId(meetingCustomId(ACTIONS.schedule)).setLabel(copy.todoReminders.meetings.intro.schedule).setEmoji("📅").setStyle(ButtonStyle.Primary)
 	);
 }
@@ -96,6 +114,13 @@ async function syncMeetingCard(client: Client, meeting: IMeeting, channelId: str
 	const current = meeting.notesChannelId === channelId ? meeting.scheduleMessageId : null;
 	const messageId = await syncCardMessage(client, channelId, current, buildScheduledMeetingCard(meeting, copy));
 	if (messageId && messageId !== meeting.scheduleMessageId) await meetingStore.update(meeting.guildId, meeting.meetingId, { notesChannelId: channelId, scheduleMessageId: messageId });
+}
+
+/** Redraw a meeting's scheduled card from its row, wherever it was posted. */
+export async function redrawScheduledMeetingCard(client: Client, meeting: IMeeting): Promise<void> {
+	if (!meeting.notesChannelId || !meeting.scheduleMessageId) return;
+	const config = await guildConfigStore.findByGuildId(meeting.guildId);
+	await syncMeetingCard(client, meeting, meeting.notesChannelId, getPluginCopy(config as unknown as ICopyConfig | null));
 }
 
 // ── the one write path ──────────────────────────────────────────────────────
@@ -258,6 +283,8 @@ async function handleRsvp(interaction: ButtonInteraction, context: PressContext,
 async function handleMeetingButton(interaction: ButtonInteraction): Promise<void> {
 	const [, action, meetingId] = interaction.customId.split(":");
 	if (action === ACTIONS.schedule) return openScheduleMeetingModal(interaction);
+	if (action === ACTIONS.record) return recordingControls?.start(interaction, { scheduledMeetingId: meetingId });
+	if (action === ACTIONS.end) return recordingControls?.end(interaction, meetingId ?? null);
 	const context = await pressContext(interaction);
 	if (!context || !meetingId) return;
 	if (action === ACTIONS.rsvp) return handleRsvp(interaction, context, meetingId);

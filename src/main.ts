@@ -87,6 +87,9 @@ import { registerTodoHandlers } from "@features/todos/todoHandlers.js";
 import { registerPersonalReminderHandlers } from "@features/reminders/personalReminders.js";
 import { registerMemberTimezoneHandlers } from "@features/reminders/memberTimezone.js";
 import { registerScheduledMeetingHandlers } from "@features/meetings/scheduledMeetings.js";
+import { registerMeetingRecording } from "@features/meetings/meetingLifecycle.js";
+import { registerMeetingPresence } from "@features/meetings/meetingPresence.js";
+import { recoverInterruptedMeetings } from "@features/meetings/meetingBootRecovery.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
 import { registerMessageXp } from "@features/leveling/messageXp.js";
 import { registerReactionXp } from "@features/leveling/reactionXp.js";
@@ -450,6 +453,10 @@ process.on("uncaughtException", (err) => {
 	registerPersonalReminderHandlers();
 	registerMemberTimezoneHandlers();
 	registerScheduledMeetingHandlers();
+	// Meeting recording (2026-11 item 388 Phase 3): the recorder as the meeting mode voice
+	// listener, every call end routed to the one meeting end, Start and End recording, and the
+	// consent buttons (mcon).
+	registerMeetingRecording(client);
 
 	// then register the interaction  listerner
 	client.on(Events.InteractionCreate, async (interaction) => {
@@ -689,6 +696,10 @@ process.on("uncaughtException", (err) => {
 		// deleted. A VoiceStateUpdate listener beside ActivityTracker's on
 		// purpose; see the header of voiceSessionWatchers.ts.
 		registerVoiceSessionWatchers(client);
+		// Who joins and leaves 🏛️ Meeting Hall during a recording: a newcomer is asked for
+		// consent once per meeting and the empty room end rearms. A fourth VoiceStateUpdate
+		// listener on purpose; see the header of meetingPresence.ts.
+		registerMeetingPresence(client);
 		// Dero's ears: every call that reaches Ready starts a listener that hears
 		// ONLY members on the task list (the operator gate in voiceListener.ts).
 		// Handed over here rather than imported by voiceSessions, which would
@@ -951,6 +962,9 @@ process.on("uncaughtException", (err) => {
 		// Where: errors are isolated per room inside the helper, so one unreachable
 		//        guild cannot fail the boot.
 		await recoverGameRoomsOnBoot(client);
+		// A meeting a restart cut off ends as interrupted and is summarized from the segments
+		// already written (2026-11 item 388, A3). Never throws.
+		await recoverInterruptedMeetings(client);
 		// The satellite half of the same catch up: departures from a network table's
 		// satellites that happened while the bot was down. Never throws.
 		await reconcileSatellitesOnBoot(client);

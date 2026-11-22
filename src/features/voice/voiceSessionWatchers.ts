@@ -118,6 +118,13 @@ export function createVoiceSessionWatcher(deps: VoiceWatcherDeps = defaultVoiceW
 			return;
 		}
 		if (oldState.channelId !== session.channelId && newState.channelId !== session.channelId) return;
+		// The idle rule counts only members on the task list, and a meeting is held by consenting
+		// members who need not be on it (2026-11 item 388, R5), so a meeting session never idles
+		// out here: meetingPresence.ts owns its empty room end.
+		if (session.mode === "meeting") {
+			cancelIdle(guild.id);
+			return;
+		}
 		await reconcilePresence(guild, session);
 	}
 

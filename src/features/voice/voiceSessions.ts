@@ -65,6 +65,14 @@ const CLOSE_CODE_DISCONNECTED = 4014;
 
 export type VoiceSessionStatus = "connecting" | "ready" | "recovering";
 
+/**
+ * Why Dero is in a call (2026-11 item 388, owner decision D24). `command`, the default, is the
+ * call every existing path makes: Dero hears the members on its task list and answers them.
+ * `meeting` is a Meeting Hall recording: the meeting recorder replaces the command listener,
+ * so a meeting session never takes a task and a command session never records.
+ */
+export type VoiceSessionMode = "command" | "meeting";
+
 export type SessionEndReason =
 	| "left"
 	| "shutdown"
@@ -99,6 +107,9 @@ export interface ListenStart {
 	controlChannelId: string;
 	speaker: VoiceSpeaker;
 	receiver: VoiceReceiver;
+	mode: VoiceSessionMode;
+	// The meeting a meeting mode session records, null in command mode.
+	meetingId: string | null;
 }
 
 /** Starts Dero's ears in a Ready call; voiceListener.startVoiceListener in production. */
@@ -122,6 +133,8 @@ export interface VoiceSessionView {
 	// room's referee), or null for a call a member started with /dero join. Calling a card off
 	// ends only a call its own card started (2026-10 item 267 decision 11).
 	readonly startedByRoomId: string | null;
+	readonly mode: VoiceSessionMode;
+	readonly meetingId: string | null;
 }
 
 export interface JoinInput {
@@ -129,6 +142,9 @@ export interface JoinInput {
 	channel: { id: string };
 	controlChannelId: string;
 	startedByRoomId?: string | null;
+	// Absent means command, so every caller written before meetings joins exactly as before.
+	mode?: VoiceSessionMode;
+	meetingId?: string | null;
 }
 
 export type JoinOutcome =
@@ -181,6 +197,8 @@ interface LiveSession {
 	channelId: string;
 	controlChannelId: string;
 	startedByRoomId: string | null;
+	mode: VoiceSessionMode;
+	meetingId: string | null;
 	status: VoiceSessionStatus;
 	speaker: VoiceSpeaker;
 	connection: VoiceConnection;
@@ -250,7 +268,8 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 	// Registered by main.ts rather than imported here: the listener reaches the
 	// executor through the turn loop, and the executor imports this module, so a
 	// static import would close a cycle that only works by accident of load order.
-	let startListening: StartListening | null = null;
+	// One factory per mode (D24): the command listener and the meeting recorder.
+	const startListening = new Map<VoiceSessionMode, StartListening>();
 	// Told after every call ends, so the voice queue can hand Dero to the next request
 	// (2026-10 item 257, owner item 22). Registered by main.ts for the same cycle reason.
 	const endListeners: Array<(ended: CallEnded) => void> = [];
@@ -424,14 +443,17 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 	// ⑥ A listener that fails to start leaves the call speaking only, which is
 	// the safe direction: Dero hears nothing rather than the wrong people.
 	function listen(session: LiveSession): void {
-		if (!startListening) return;
+		const factory = startListening.get(session.mode);
+		if (!factory) return;
 		try {
-			session.listener = startListening({
+			session.listener = factory({
 				guild: session.guild,
 				channelId: session.channelId,
 				controlChannelId: session.controlChannelId,
 				speaker: session.speaker,
 				receiver: session.connection.receiver,
+				mode: session.mode,
+				meetingId: session.meetingId,
 			});
 		}
 		catch (error) {
@@ -445,7 +467,7 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 		return sessions.get(guildId) ?? null;
 	}
 
-	async function join({ guild, channel, controlChannelId, startedByRoomId = null }: JoinInput): Promise<JoinOutcome> {
+	async function join({ guild, channel, controlChannelId, startedByRoomId = null, mode = "command", meetingId = null }: JoinInput): Promise<JoinOutcome> {
 		const existing = sessions.get(guild.id);
 		if (existing) return { status: "alreadyInGuild", channelId: existing.channelId };
 
@@ -488,6 +510,8 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 			channelId: channel.id,
 			controlChannelId,
 			startedByRoomId,
+			mode,
+			meetingId: mode === "meeting" ? meetingId : null,
 			status: "connecting",
 			speaker,
 			connection,
@@ -534,9 +558,12 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 		return open.length;
 	}
 
-	/** Register how a Ready call starts listening. main.ts calls this once at boot. */
-	function useListener(factory: StartListening): void {
-		startListening = factory;
+	/**
+	 * Register how a Ready call of `mode` starts listening. main.ts calls this once per mode
+	 * at boot; a mode with no factory joins speaking only, which hears nobody.
+	 */
+	function useListener(factory: StartListening, mode: VoiceSessionMode = "command"): void {
+		startListening.set(mode, factory);
 	}
 
 	/** Be told after every call ends, whatever ended it. main.ts registers the voice queue. */

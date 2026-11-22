@@ -43,6 +43,17 @@ export const meetingStore = {
 		return Meeting.findOneAndUpdate({ guildId, meetingId }, { $set: changes }, { new: true }).lean<IMeeting>();
 	},
 
+	/** The meetings whose transcript can still change: recording, or waiting for its summary. */
+	async findOpenIds(guildId: string): Promise<string[]> {
+		const rows = await Meeting.find({ guildId, status: { $in: ["recording", "summarizing"] } }, { meetingId: 1 }).lean<Pick<IMeeting, "meetingId">[]>();
+		return rows.map((row) => row.meetingId);
+	},
+
+	/** Add one transcribed chunk's seconds and the cents it reserved to the meeting's totals. */
+	async addUsage(guildId: string, meetingId: string, sttSeconds: number, cents: number): Promise<void> {
+		await Meeting.updateOne({ guildId, meetingId }, { $inc: { sttSeconds, spentCents: cents } });
+	},
+
 	/** Add a captured member once, so a speaker who comes back is listed once. */
 	async addSpeaker(guildId: string, meetingId: string, userId: string): Promise<void> {
 		await Meeting.updateOne({ guildId, meetingId }, { $addToSet: { speakerIds: userId } });

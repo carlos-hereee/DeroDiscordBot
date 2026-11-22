@@ -60,6 +60,9 @@ export interface VoiceQueueRequest {
 	// The place an admin's move pinned it at (0 first), ahead of every unpinned request.
 	pinnedPlace?: number | null;
 	gameVoice?: GameVoiceRequest | null;
+	// A host's Start recording (2026-11 item 388): the join runs in meeting mode for this
+	// meeting and posts the consent notice rather than the ordinary join notice.
+	meeting?: { meetingId: string } | null;
 }
 
 /** What a caller hands in: the queue stamps the id, the time and any pin itself. */

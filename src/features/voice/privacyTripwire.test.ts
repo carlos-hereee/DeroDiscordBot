@@ -21,7 +21,10 @@ import { describe, it, expect } from "vitest";
 //        trusted with the real files.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const FOLDERS = [HERE, join(HERE, "..", "dero-brain")];
+// features/meetings joined for 2026-11 item 388 (owner decision D30): it is where meeting
+// transcripts are made, so it is held to the same no file and no logged words rule. The scan
+// reads each folder flat, so meetings keeps its files flat or adds each subfolder here.
+const FOLDERS = [HERE, join(HERE, "..", "dero-brain"), join(HERE, "..", "meetings")];
 
 const FS_WRITE = /\b(writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)\b/;
 // `audit(`, `deps.audit(`, `auditAction(`: any function whose name holds "audit".

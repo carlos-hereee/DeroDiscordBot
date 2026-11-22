@@ -548,9 +548,21 @@ export async function runQueuedJoin(request: VoiceQueueRequest): Promise<QueuedJ
 
 	// The same per guild window a typed join records, since this attempt costs the same traffic.
 	joinCooldown.record(guild.id);
-	const outcome = await voiceSessions.join({ guild, channel: gate.channel, controlChannelId: request.controlChannelId, startedByRoomId: game?.roomId ?? null });
+	const meeting = request.meeting ?? null;
+	const outcome = await voiceSessions.join({
+		guild,
+		channel: gate.channel,
+		controlChannelId: request.controlChannelId,
+		startedByRoomId: game?.roomId ?? null,
+		mode: meeting ? "meeting" : "command",
+		meetingId: meeting?.meetingId ?? null,
+	});
 	if (outcome.status === "alreadyInGuild") return "busy";
 	if (outcome.status === "failed") return game ? skipGameJoin(request, "connectFailed") : "skipped";
+	// A meeting's join says nothing here (2026-11 item 388, D30): the join notice promises Dero
+	// keeps nothing, which a recording is not, so meetingLifecycle posts the consent notice in
+	// 📝meeting-notes instead.
+	if (meeting) return "joined";
 	await announceJoin({
 		guild,
 		controlChannelId: request.controlChannelId,

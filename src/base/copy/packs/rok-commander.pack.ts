@@ -612,6 +612,68 @@ export const rokCommanderCopy = {
 		},
 	},
 
+	// ── meeting recording (2026-11 item 388 Phase 3) ──
+	// Written from the facts of owner decision D1 and its sub answer, before the owner's new
+	// Privacy Policy exists: only members who press I agree are recorded, audio is never kept,
+	// the transcript is deleted after TRANSCRIPT_TTL_DAYS, the notes stay until the meeting is
+	// deleted, and Stop recording me removes the member's words from meetings not yet
+	// summarized. The owner checks this against the Termly text before the release. Durations
+	// arrive as arguments from BOT_CONSTANTS.MEETINGS, never typed here. Refusals are practical
+	// in both packs; the cards carry the pack's voice.
+	meetingRecording: {
+		noticeTitle: "Meeting recording",
+		startButton: "Start recording",
+		endButton: "End recording",
+		consent: {
+			title: "🎙️ May I record you?",
+			body: (mentions: string, hostId: string, title: string, ttlDays: number) =>
+				`${mentions}\n<@${hostId}> is recording "${title}" in 🏛️ Meeting Hall, and I ask each of you first.\n\n` +
+				"**I agree:** I turn your words into text for this meeting's notes. Your audio is never kept.\n" +
+				"**No thanks:** I do not record you, and nothing about you is stored.\n" +
+				"**Stop recording me:** I stop at once, and your words are removed from meetings not yet summarized.\n\n" +
+				`The transcript is deleted ${ttlDays} days after the meeting. The summary, decisions and action items stay with the meeting notes until the meeting is deleted. Your answer is remembered in this server until you press Stop recording me.`,
+			agree: "I agree",
+			decline: "No thanks",
+			revoke: "Stop recording me",
+			agreed: "You agreed. I record you in this server's meetings until you press Stop recording me.",
+			declined: "Understood. I do not record you, and nothing about you was stored.",
+			revoked: "I no longer record you, and your words are being removed from meetings not yet summarized.",
+			notAgreed: "You had not agreed, so I was not recording you.",
+		},
+		live: {
+			title: (title: string) => `🔴 Recording: ${title}`,
+			description: (hostId: string | null, startedSeconds: number, maxHours: number, emptyMinutes: number) =>
+				`The council is being recorded in 🏛️ Meeting Hall since <t:${startedSeconds}:R>${hostId ? `, started by <@${hostId}>` : ""}. Only warriors who agreed are recorded.\n\n` +
+				`It ends when a host presses End recording, after ${maxHours} hours, or ${emptyMinutes} minutes after no warrior who agreed remains in the hall.`,
+		},
+		notes: {
+			title: (title: string) => `📝 ${title}`,
+			pending: (minutes: number, speakers: number) =>
+				`The council has ended. I am writing the summary, the decisions and the action items, and this scroll fills in when they are ready.\n\nLength: ${minutes} min. Warriors recorded: ${speakers}.`,
+			nothing: "The council has ended and nothing was recorded, because no warrior who agreed spoke. There is no summary for this meeting.",
+		},
+		endReasons: {
+			host: "A host ended the recording.",
+			cap_time: (maxHours: number) => `The recording reached its ${maxHours} hour limit.`,
+			cap_spend: "The recording stopped because this server's monthly voice budget is spent. I summarize what was recorded before then.",
+			empty_room: "The recording ended because no warrior who agreed remained in 🏛️ Meeting Hall.",
+			interrupted: "The recording was cut short when I restarted. I summarize what was recorded before then.",
+			session_end: "The recording ended because I left 🏛️ Meeting Hall.",
+		},
+		refusals: {
+			notHost: "Only the server owner, admins and the members allowed to give Dero tasks may start or end a recording.",
+			notInHall: "Join 🏛️ Meeting Hall first, then start the recording.",
+			noHall: "This server has no 🏛️ Meeting Hall yet. An admin adds it from 🛠️server-config.",
+			voiceOff: "Dero's voice is switched off in this server. An admin turns it on in ⚙️dero-config.",
+			unavailable: "Recording is not available right now.",
+			busyElsewhere: (channelId: string) => `I am in <#${channelId}> right now. End that call with /dero leave, then start the recording again.`,
+			alreadyRecording: "A meeting is already recording in this server.",
+			joinFailed: "I could not join 🏛️ Meeting Hall. An admin checks in ⚙️dero-config that it is on the voice allow list and that I may connect and speak there.",
+			notRecording: "No meeting is recording in this server.",
+			notScheduled: "That meeting is no longer scheduled.",
+		},
+	},
+
 	// ── the timezone modal (2026-11 item 388, owner decision D26) ──
 	// One modal of the shared 25 zones (utils/timezoneModal.ts), opened by the server's
 	// timezone step in 🛠️server-config and by a member setting their own zone. Discord caps a
