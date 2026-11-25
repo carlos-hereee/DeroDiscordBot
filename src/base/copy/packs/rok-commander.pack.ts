@@ -631,16 +631,21 @@ export const rokCommanderCopy = {
 			body: (mentions: string, hostId: string, title: string, ttlDays: number) =>
 				`${mentions}\n<@${hostId}> is recording "${title}" in 🏛️ Meeting Hall, and I ask each of you first.\n\n` +
 				"**I agree:** I turn your words into text for this meeting's notes. Your audio is never kept.\n" +
-				"**No thanks:** I do not record you, and nothing about you is stored.\n" +
+				"**No thanks:** I do not record you. It also ends an earlier yes, and your words are removed from meetings not yet summarized.\n" +
 				"**Stop recording me:** I stop at once, and your words are removed from meetings not yet summarized.\n\n" +
-				`The transcript is deleted ${ttlDays} days after the meeting. The summary, decisions and action items stay with the meeting notes until the meeting is deleted. Your answer is remembered in this server until you press Stop recording me.`,
+				`The transcript is deleted ${ttlDays} days after the meeting. The summary, decisions and action items stay with the meeting notes until the meeting is deleted. A yes is remembered in this server until you press No thanks or Stop recording me.`,
 			agree: "I agree",
 			decline: "No thanks",
 			revoke: "Stop recording me",
-			agreed: "You agreed. I record you in this server's meetings until you press Stop recording me.",
+			agreed: "You agreed. I record you in this server's meetings until you press No thanks or Stop recording me.",
+			// An agree whose write or owed removal failed. It claims nothing about what was saved.
+			agreeFailed: "I could not save your answer. Press I agree again in a minute, or No thanks if you do not want to be recorded.",
 			declined: "Understood. I do not record you, and nothing about you was stored.",
 			revoked: "I no longer record you, and your words are being removed from meetings not yet summarized.",
 			notAgreed: "You had not agreed, so I was not recording you.",
+			// Says only what is true of every member who withdrew before: their row is still stored.
+			alreadyWithdrawn: "I do not record you.",
+			withdrawFailed: "I stopped listening to you, but I could not save that yet. I keep trying, and you can press Stop recording me again in a minute.",
 		},
 		live: {
 			title: (title: string) => `🔴 Recording: ${title}`,
@@ -689,6 +694,8 @@ export const rokCommanderCopy = {
 			busyElsewhere: (channelId: string) => `I am in <#${channelId}> right now. End that call with /dero leave, then start the recording again.`,
 			alreadyRecording: "A meeting is already recording in this server.",
 			joinFailed: "I could not join 🏛️ Meeting Hall. An admin checks in ⚙️dero-config that it is on the voice allow list and that I may connect and speak there.",
+			// A consent notice or the live card was refused, so the start was undone and nobody was heard.
+			noticeNotPosted: "I could not ask everyone in 📝meeting-notes, so I recorded nothing. An admin checks that I may view 📝meeting-notes, send messages and embed links there, then a host starts the recording again.",
 			notRecording: "No meeting is recording in this server.",
 			notScheduled: "That meeting is no longer scheduled.",
 		},

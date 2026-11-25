@@ -87,6 +87,21 @@ export async function resetConfigsToDefault(guildId: string): Promise<void> {
 	invalidateLevelingConfig(guildId);
 }
 
+/**
+ * Run before a wipe's first step (2026-11 item 420, L11): whatever still writes this server's
+ * records must stop first. meetingLifecycle registers it, which keeps this feature free of an
+ * import of meetings.
+ */
+export type WipeHook = (guildId: string) => Promise<void>;
+
+let wipeHook: WipeHook | null = null;
+const WIPE_HOOK_LABEL = "meeting recording";
+
+/** Hand the stop of a live recording to the meetings feature. Called once from registerMeetingRecording. */
+export function useWipeHook(hook: WipeHook): void {
+	wipeHook = hook;
+}
+
 /** One named deletion, so a failure can be reported by name. */
 interface WipeStep {
 	label: string;
@@ -133,12 +148,19 @@ const WIPE_STEPS: readonly WipeStep[] = [
 ];
 
 /**
- * Delete this guild's stored records. Every step runs even when an earlier one
- * fails, because a half wiped server is better than one that stopped at the first
+ * Delete this guild's stored records, once a live recording has stopped: one still hearing would
+ * write words behind the wipe, under a meeting nothing lists. Every step runs even when an
+ * earlier one fails, because a half wiped server is better than one that stopped at the first
  * error, and the labels of the failed steps come back so the owner can retry.
  */
 export async function wipeServerData(guildId: string): Promise<{ failed: string[] }> {
 	const failed: string[] = [];
+	try {
+		await wipeHook?.(guildId);
+	} catch (error) {
+		console.error(`[self-destruct] stopping the ${WIPE_HOOK_LABEL} for guild ${guildId} failed`, error);
+		failed.push(WIPE_HOOK_LABEL);
+	}
 	for (const step of WIPE_STEPS) {
 		try {
 			await step.run(guildId);

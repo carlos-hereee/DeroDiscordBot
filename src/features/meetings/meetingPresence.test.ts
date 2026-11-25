@@ -1,60 +1,73 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Client, VoiceState } from "discord.js";
 
-// A member who joins 🏛️ Meeting Hall mid meeting is asked once per meeting, and every hall join
-// or leave recounts the room; a change elsewhere, or with no recording, does nothing.
+// Every join to and leave from 🏛️ Meeting Hall during a recording asks whoever in it was not
+// asked yet and recounts the room (meetingLifecycle decides who that is); a change elsewhere, or
+// with no recording, does nothing.
 
 const m = vi.hoisted(() => ({
-	live: null as { meetingId: string; hallId: string; notesChannelId: string; title: string; hostId: string; copy: unknown; pinged: Set<string> } | null,
-	notices: [] as string[][],
+	live: null as { meetingId: string; hallId: string } | null,
+	asks: 0,
 	checks: 0,
+	deletedChannels: [] as string[],
+	released: [] as string[],
 }));
 
+vi.mock("./meetingRecorder.js", () => ({
+	getMeetingRecorder: (meetingId: string) => ({ releaseSpeaker: (userId: string) => void m.released.push(`${meetingId}:${userId}`) }),
+}));
 vi.mock("./meetingLifecycle.js", () => ({
 	liveMeetingIn: () => m.live,
 	checkRoom: async () => {
 		m.checks += 1;
 	},
-}));
-vi.mock("./consentNotice.js", () => ({
-	postConsentNotice: async (_c: unknown, _ch: string, _copy: unknown, input: { memberIds: string[] }) => {
-		m.notices.push(input.memberIds);
-		return true;
+	askUnaskedInHall: async () => {
+		m.asks += 1;
+	},
+	endForDeletedNotesChannel: async (_client: unknown, channelId: string) => {
+		m.deletedChannels.push(channelId);
 	},
 }));
 
-const { onMeetingVoiceState } = await import("./meetingPresence.js");
+const { onMeetingVoiceState, registerMeetingPresence } = await import("./meetingPresence.js");
 
 const client = {} as Client;
 const state = (channelId: string | null, id = "dave", bot = false): VoiceState =>
-	({ guild: { id: "g1" }, channelId, member: { id, user: { bot } } }) as unknown as VoiceState;
+	({ id, guild: { id: "g1" }, channelId, member: { id, user: { bot } } }) as unknown as VoiceState;
 
 beforeEach(() => {
-	m.live = { meetingId: "mtg1", hallId: "hall", notesChannelId: "notes", title: "Sync", hostId: "host", copy: {}, pinged: new Set(["host"]) };
-	m.notices = [];
-	m.checks = 0;
+	m.live = { meetingId: "mtg1", hallId: "hall" };
+	Object.assign(m, { asks: 0, checks: 0, deletedChannels: [], released: [] });
 });
 
 describe("onMeetingVoiceState", () => {
-	it("asks a member who joins the hall once per meeting, however often they come back", async () => {
+	it("L3: asks whoever was not asked yet and recounts, on every hall join and leave", async () => {
 		await onMeetingVoiceState(client, state(null), state("hall"));
 		await onMeetingVoiceState(client, state("hall"), state(null));
 		await onMeetingVoiceState(client, state(null), state("hall"));
-		expect(m.notices).toEqual([["dave"]]);
+		expect(m.asks).toBe(3);
 		expect(m.checks).toBe(3);
 	});
 
-	it("never asks a bot, nor a member already asked at the start", async () => {
-		await onMeetingVoiceState(client, state(null, "dero", true), state("hall", "dero", true));
-		await onMeetingVoiceState(client, state(null, "host"), state("hall", "host"));
-		expect(m.notices).toEqual([]);
+	it("L12: a leave gives the leaver's recording slot back, and a join does not", async () => {
+		await onMeetingVoiceState(client, state(null), state("hall"));
+		expect(m.released).toEqual([]);
+		await onMeetingVoiceState(client, state("hall"), state("lounge"));
+		expect(m.released).toEqual(["mtg1:dave"]);
+	});
+
+	it("L2: hands every deleted channel to the lifecycle, which knows the one that matters", async () => {
+		const handlers = new Map<string, (payload: unknown) => void>();
+		registerMeetingPresence({ on: (event: string, handler: (payload: unknown) => void) => handlers.set(event, handler) } as unknown as Client);
+		handlers.get("channelDelete")?.({ id: "c9" });
+		expect(m.deletedChannels).toEqual(["c9"]);
 	});
 
 	it("ignores a change that neither enters nor leaves the hall, and every change with no recording", async () => {
 		await onMeetingVoiceState(client, state("lounge"), state("arcade"));
 		m.live = null;
 		await onMeetingVoiceState(client, state(null), state("hall"));
-		expect(m.notices).toEqual([]);
+		expect(m.asks).toBe(0);
 		expect(m.checks).toBe(0);
 	});
 });

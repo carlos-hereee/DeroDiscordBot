@@ -11,18 +11,32 @@ const m = vi.hoisted(() => ({
 	reads: 0,
 	steps: [] as string[],
 	openIds: ["rec1", "sum1"],
+	// The meetings holding words of the member, or listing them as a speaker.
+	wordsIn: new Set(["rec1", "sum1"]),
+	speakerIn: new Set<string>(),
+	failDeleteIn: new Set<string>(),
+	// Set by a test to hold one store call open, so a press can land while it is in flight.
+	holdRead: null as Promise<void> | null,
+	holdAccept: null as Promise<void> | null,
 }));
 
 vi.mock("@db/stores/meetingConsentStore.js", () => ({
 	meetingConsentStore: {
 		findByMember: async () => {
 			m.reads += 1;
-			return m.row;
+			const read = m.row ? { ...m.row } : null;
+			if (m.holdRead) await m.holdRead;
+			return read;
 		},
 		findActiveRows: async (_g: string, ids: readonly string[]) => ids.map((userId) => ({ userId, version: BOT_CONSTANTS.MEETINGS.CONSENT_VERSION, revokedAt: null })),
-		accept: async () => m.steps.push("accept"),
-		revoke: async () => {
+		accept: async (_g: string, _u: string, version: number) => {
+			if (m.holdAccept) await m.holdAccept;
+			m.steps.push("accept");
+			m.row = { version, revokedAt: null };
+		},
+		revoke: async (_g: string, _u: string, revokedAt: Date) => {
 			m.steps.push("revoke");
+			if (m.row) m.row.revokedAt = revokedAt;
 			return true;
 		},
 	},
@@ -30,12 +44,15 @@ vi.mock("@db/stores/meetingConsentStore.js", () => ({
 vi.mock("@db/stores/meetingStore.js", () => ({
 	meetingStore: {
 		findOpenIds: async () => m.openIds,
+		hasSpeaker: async (_g: string, id: string) => m.speakerIn.has(id),
 		removeSpeaker: async (_g: string, id: string) => m.steps.push(`removeSpeaker:${id}`),
 	},
 }));
 vi.mock("@db/stores/meetingTranscriptStore.js", () => ({
 	meetingTranscriptStore: {
+		hasSpeaker: async (_g: string, id: string) => m.wordsIn.has(id),
 		deleteForSpeaker: async (_g: string, ids: readonly string[]) => {
+			if (ids.some((id) => m.failDeleteIn.has(id))) throw new Error("mongo down");
 			m.steps.push(`deleteSegments:${ids.join(",")}`);
 			return 3;
 		},
@@ -55,6 +72,11 @@ beforeEach(() => {
 	m.row = null;
 	m.reads = 0;
 	m.steps = [];
+	m.holdRead = null;
+	m.holdAccept = null;
+	m.wordsIn = new Set(["rec1", "sum1"]);
+	m.speakerIn = new Set();
+	m.failDeleteIn = new Set();
 	consent._resetMeetingConsentCache();
 });
 
@@ -92,10 +114,10 @@ describe("hasMeetingConsent", () => {
 
 describe("Stop recording me", () => {
 	it("drops the buffer, revokes, answers, then deletes her words from every open meeting and resets each lease", async () => {
-		await stopRecordingMember("g1", "alice", async (hadConsent) => {
-			m.steps.push(`answer:${hadConsent}`);
+		await stopRecordingMember("g1", "alice", async (outcome) => {
+			m.steps.push(`answer:${outcome}`);
 		});
-		expect(m.steps).toEqual(["dropBuffer", "revoke", "answer:true", "deleteSegments:rec1,sum1", "removeSpeaker:rec1", "resetLease:rec1", "removeSpeaker:sum1", "resetLease:sum1"]);
+		expect(m.steps).toEqual(["dropBuffer", "revoke", "answer:withdrawn", "resetLease:rec1", "deleteSegments:rec1", "removeSpeaker:rec1", "resetLease:sum1", "deleteSegments:sum1", "removeSpeaker:sum1"]);
 	});
 
 	it("touches no meeting when none is open", async () => {
@@ -103,6 +125,94 @@ describe("Stop recording me", () => {
 		expect(await consent.removeWordsFromOpenMeetings("g1", "alice")).toBe(0);
 		expect(m.steps).toEqual([]);
 		m.openIds = ["rec1", "sum1"];
+	});
+
+	it("L10: a member with no words and no speaker entry touches no job at all", async () => {
+		m.wordsIn = new Set();
+		expect(await consent.removeWordsFromOpenMeetings("g1", "alice")).toBe(0);
+		expect(m.steps).toEqual([]);
+	});
+
+	it("L5: a speaker entry with no words left is still cleared, since it marks a removal cut short", async () => {
+		m.wordsIn = new Set();
+		m.speakerIn = new Set(["sum1"]);
+		await consent.removeWordsFromOpenMeetings("g1", "alice");
+		expect(m.steps).toEqual(["resetLease:sum1", "deleteSegments:sum1", "removeSpeaker:sum1"]);
+	});
+
+	it("L5: one meeting's failure keeps its speaker entry, does not stop the next, and is reported", async () => {
+		m.failDeleteIn = new Set(["rec1"]);
+		await expect(consent.removeWordsFromOpenMeetings("g1", "alice")).rejects.toThrow();
+		expect(m.steps).toEqual(["resetLease:rec1", "resetLease:sum1", "deleteSegments:sum1", "removeSpeaker:sum1"]);
+	});
+});
+
+// Two presses, or a press and a read, with a store call held open between them (L6).
+describe("a withdrawal beats whatever was in flight (L6)", () => {
+	const gate = () => {
+		let open: () => void = () => undefined;
+		const held = new Promise<void>((resolve) => (open = resolve));
+		return { held, open: () => open() };
+	};
+
+	it("L6: a consent read in flight when a member withdraws answers no and caches no yes", async () => {
+		const read = gate();
+		m.row = { version: BOT_CONSTANTS.MEETINGS.CONSENT_VERSION, revokedAt: null };
+		m.holdRead = read.held;
+		const asked = consent.hasMeetingConsent("g1", "alice");
+		const stopping = stopRecordingMember("g1", "alice", async () => undefined);
+		read.open();
+		expect(await asked).toBe(false);
+		m.holdRead = null;
+		await stopping;
+		expect(await consent.hasMeetingConsent("g1", "alice")).toBe(false);
+	});
+
+	it("L6: an I agree in flight loses to a withdrawal pressed after it, in the row, the cache and the answer", async () => {
+		const write = gate();
+		m.holdAccept = write.held;
+		const agreeing = consent.agreeToRecording("g1", "alice");
+		const stopping = stopRecordingMember("g1", "alice", async () => undefined);
+		write.open();
+		expect(await agreeing).toBe("overtaken");
+		await stopping;
+		expect(m.row?.revokedAt ?? "no row").not.toBeNull();
+		expect(await consent.hasMeetingConsent("g1", "alice")).toBe(false);
+	});
+
+	it("L6: an I agree already writing when a withdrawal is pressed is revoked behind it", async () => {
+		const write = gate();
+		m.holdAccept = write.held;
+		const agreeing = consent.agreeToRecording("g1", "alice");
+		// Let the accept reach the store before the withdrawal is pressed.
+		await new Promise((resolve) => setImmediate(resolve));
+		const stopping = stopRecordingMember("g1", "alice", async () => undefined);
+		write.open();
+		expect(await agreeing).toBe("overtaken");
+		await stopping;
+		expect(m.row?.revokedAt).toBeInstanceOf(Date);
+		expect(await consent.hasMeetingConsent("g1", "alice")).toBe(false);
+	});
+
+	it("L6: an I agree pressed after a withdrawal stands, whatever was still in flight", async () => {
+		m.row = { version: BOT_CONSTANTS.MEETINGS.CONSENT_VERSION, revokedAt: null };
+		const stopping = stopRecordingMember("g1", "alice", async () => undefined);
+		const agreeing = consent.agreeToRecording("g1", "alice");
+		expect(await agreeing).toBe("agreed");
+		await stopping;
+		expect(m.row?.revokedAt).toBeNull();
+		expect(await consent.hasMeetingConsent("g1", "alice")).toBe(true);
+	});
+
+	it("L6: a read begun before an I agree never overwrites its yes", async () => {
+		const read = gate();
+		m.holdRead = read.held;
+		const asked = consent.hasMeetingConsent("g1", "alice");
+		m.holdRead = null;
+		expect(await consent.agreeToRecording("g1", "alice")).toBe("agreed");
+		read.open();
+		expect(await asked).toBe(true);
+		expect(await consent.hasMeetingConsent("g1", "alice")).toBe(true);
 	});
 });
 

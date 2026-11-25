@@ -5,6 +5,7 @@ import { createHash, createHmac } from "crypto";
 import { readFileSync } from "fs";
 import type { Client } from "discord.js";
 import type { IMeeting } from "@db/models/Meeting.js";
+import type { IMeetingConsent } from "@db/models/MeetingConsent.js";
 import type { IMeetingSummaryJob } from "@db/models/MeetingSummaryJob.js";
 import type { ITodo } from "@db/models/Todo.js";
 
@@ -25,6 +26,15 @@ const { KEY, m } = vi.hoisted(() => ({
 		config: { todosChannelId: "todos" } as Record<string, unknown> | null,
 		ids: [] as string[],
 		idCounter: 0,
+		// Who agreed, and the moments a test makes a member withdraw or a read or a delete fail.
+		consents: new Map<string, { version: number; revokedAt: Date | null }>(),
+		consentReadFails: false,
+		deleteFails: false,
+		claims: 0,
+		afterFinish: null as (() => void) | null,
+		afterDone: null as (() => void) | null,
+		fetches: 0,
+		fetchesAtFinish: 0,
 	},
 }));
 
@@ -44,8 +54,38 @@ vi.mock("@db/stores/meetingTranscriptStore.js", () => ({
 	meetingTranscriptStore: {
 		listForMeeting: async (guildId: string, meetingId: string) =>
 			m.segments.filter((row) => row.guildId === guildId && row.meetingId === meetingId).sort((a, b) => a.offsetMs - b.offsetMs),
+		hasSpeaker: async (_g: string, meetingId: string, speakerId: string) => m.segments.some((row) => row.meetingId === meetingId && row.speakerId === speakerId),
+		deleteForSpeaker: async (_g: string, meetingIds: readonly string[], speakerId: string) => {
+			if (m.deleteFails) throw new Error("mongo down");
+			const before = m.segments.length;
+			m.segments = m.segments.filter((row) => !(meetingIds.includes(row.meetingId) && row.speakerId === speakerId));
+			return before - m.segments.length;
+		},
+		deleteForMeeting: async (_g: string, meetingId: string) => {
+			m.segments = m.segments.filter((row) => row.meetingId !== meetingId);
+		},
 	},
 }));
+vi.mock("@db/stores/meetingConsentStore.js", () => {
+	const rowOf = (guildId: string, userId: string): IMeetingConsent | null => {
+		if (m.consentReadFails) throw new Error("mongo down");
+		const consent = m.consents.get(userId);
+		return consent ? { guildId, userId, acceptedAt: new Date(0), ...consent } : null;
+	};
+	return {
+		meetingConsentStore: {
+			findByMember: async (guildId: string, userId: string) => rowOf(guildId, userId),
+			findActiveRows: async (guildId: string, ids: readonly string[]) => ids.map((id) => rowOf(guildId, id)).filter((row) => row !== null && row.revokedAt === null),
+			revoke: async (_g: string, userId: string, revokedAt: Date) => {
+				const consent = m.consents.get(userId);
+				if (!consent || consent.revokedAt) return false;
+				consent.revokedAt = revokedAt;
+				return true;
+			},
+			accept: async (_g: string, userId: string, version: number) => void m.consents.set(userId, { version, revokedAt: null }),
+		},
+	};
+});
 vi.mock("@db/stores/meetingStore.js", () => ({
 	meetingStore: {
 		findById: async (_g: string, id: string) => (m.meetings.has(id) ? structuredClone(m.meetings.get(id)!) : null),
@@ -53,7 +93,15 @@ vi.mock("@db/stores/meetingStore.js", () => ({
 			const row = m.meetings.get(id);
 			if (!row || row.status !== from) return null;
 			Object.assign(row, changes);
-			return structuredClone(row);
+			const written = structuredClone(row);
+			if (changes.status === "done") m.afterDone?.();
+			return written;
+		},
+		findOpenIds: async () => [...m.meetings.values()].filter((row) => ["recording", "summarizing", "failed"].includes(row.status)).map((row) => row.meetingId),
+		hasSpeaker: async (_g: string, id: string, userId: string) => m.meetings.get(id)?.speakerIds.includes(userId) ?? false,
+		removeSpeaker: async (_g: string, id: string, userId: string) => {
+			const row = m.meetings.get(id);
+			if (row) row.speakerIds = row.speakerIds.filter((speakerId) => speakerId !== userId);
 		},
 		update: async (_g: string, id: string, changes: Partial<IMeeting>) => {
 			const row = m.meetings.get(id);
@@ -67,6 +115,8 @@ vi.mock("@db/stores/meetingSummaryJobStore.js", () => ({
 	meetingSummaryJobStore: {
 		findByJobId: async (jobId: string) => structuredClone(m.jobs.find((job) => job.jobId === jobId) ?? null),
 		claimJob: async (now: Date, leaseId: string, leaseUntil: Date) => {
+			// A claim that would hand the same job round forever fails the test instead of hanging it.
+			if (++m.claims > 50) throw new Error("claimed in a loop");
 			const job = m.jobs.find((row) => row.status === "pending" || (row.status === "leased" && row.leaseUntil !== null && row.leaseUntil <= now));
 			if (!job) return null;
 			Object.assign(job, { status: "leased", leaseId, leaseUntil, attempts: job.attempts + 1 });
@@ -76,7 +126,10 @@ vi.mock("@db/stores/meetingSummaryJobStore.js", () => ({
 			const job = m.jobs.find((row) => row.jobId === jobId && row.status === "leased" && row.leaseId === leaseId);
 			if (!job) return null;
 			Object.assign(job, outcome, { leaseId: null, leaseUntil: null });
-			return structuredClone(job);
+			m.fetchesAtFinish = m.fetches;
+			const closed = structuredClone(job);
+			m.afterFinish?.();
+			return closed;
 		},
 		releaseLease: async (jobId: string, leaseId: string) => {
 			const job = m.jobs.find((row) => row.jobId === jobId && row.status === "leased" && row.leaseId === leaseId);
@@ -85,8 +138,18 @@ vi.mock("@db/stores/meetingSummaryJobStore.js", () => ({
 			return true;
 		},
 		resetLease: async (_g: string, meetingId: string, leaseId: string) => {
-			const job = m.jobs.find((row) => row.meetingId === meetingId && (row.status === "pending" || row.status === "leased"));
-			if (job) Object.assign(job, { status: "pending", leaseId, leaseUntil: null });
+			const job = m.jobs.find((row) => row.meetingId === meetingId && row.status === "leased");
+			if (job) Object.assign(job, { status: "pending", leaseId, leaseUntil: null, attempts: job.attempts - 1 });
+		},
+		giveBackAttempt: async (jobId: string, leaseId: string) => {
+			const job = m.jobs.find((row) => row.jobId === jobId && row.status === "leased" && row.leaseId === leaseId);
+			if (job) job.attempts -= 1;
+		},
+		reopenDone: async (jobId: string) => {
+			const job = m.jobs.find((row) => row.jobId === jobId && row.status === "done");
+			if (!job) return false;
+			Object.assign(job, { status: "pending", attempts: job.attempts - 1 });
+			return true;
 		},
 		markFailed: async (jobId: string, failureCode: string) => {
 			const job = m.jobs.find((row) => row.jobId === jobId && (row.status === "pending" || row.status === "leased"));
@@ -111,6 +174,7 @@ vi.mock("@db/stores/todoStore.js", () => ({
 
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { meetingSummaryJobStore } from "@db/stores/meetingSummaryJobStore.js";
+import { _resetMeetingConsentCache, removeWordsFromOpenMeetings, revokeMeetingConsent } from "@features/meetings/meetingConsent.js";
 import { claimNextSummaryJob } from "@features/meetings/summaryJobs.js";
 import { brainBodyErrorHandler, createBrainRouter } from "./brain.routes.js";
 import { createMeetingSummaryRouter } from "./meetingSummary.routes.js";
@@ -130,7 +194,18 @@ const NAMES: Record<string, { displayName: string; username: string }> = {
 const [AVA, BEN] = Object.keys(NAMES);
 
 const fakeClient = {
-	guilds: { cache: { get: () => ({ members: { fetch: async (id: string) => (NAMES[id] ? { displayName: NAMES[id].displayName, user: { username: NAMES[id].username } } : null) } }) } },
+	guilds: {
+		cache: {
+			get: () => ({
+				members: {
+					fetch: async (id: string) => {
+						m.fetches += 1;
+						return NAMES[id] ? { displayName: NAMES[id].displayName, user: { username: NAMES[id].username } } : null;
+					},
+				},
+			}),
+		},
+	},
 	users: { fetch: async () => null },
 } as unknown as Client;
 
@@ -196,6 +271,11 @@ beforeEach(() => {
 	m.config = { todosChannelId: "todos" };
 	m.ids = [];
 	m.idCounter = 0;
+	Object.assign(m, { consentReadFails: false, deleteFails: false, claims: 0, afterFinish: null, afterDone: null, fetches: 0, fetchesAtFinish: 0 });
+	m.consents = new Map([AVA, BEN].map((id) => [id, { version: BOT_CONSTANTS.MEETINGS.CONSENT_VERSION, revokedAt: null }]));
+	_resetMeetingConsentCache();
+	vi.spyOn(console, "error").mockImplementation(() => undefined);
+	vi.spyOn(console, "warn").mockImplementation(() => undefined);
 	clockMs = Date.parse("2026-11-21T19:00:00.000Z");
 });
 
@@ -379,5 +459,166 @@ describe("POST /brain/meeting-summary/result", () => {
 		expect((await post(app, resultFor())).status).toBe(200);
 		expect(m.todos).toHaveLength(0);
 		expect(m.cards.find((card) => card.channelId === "notes")?.description).toContain("no ✅todos channel");
+	});
+});
+
+// Consent is current when the body is built and when a result lands (2026-11 item 420): L5, L10, L16.
+describe("a withdrawn member's words reach no summary", () => {
+	const withdrawNow = (userId: string): void => void m.consents.set(userId, { version: BOT_CONSTANTS.MEETINGS.CONSENT_VERSION, revokedAt: new Date() });
+	const speakersLeft = (): string[] => [...new Set(m.segments.map((segment) => segment.speakerId))];
+
+	async function claimed(): Promise<express.Express> {
+		seedMeeting();
+		m.ids = [fixture.job.leaseId];
+		const app = buildApp();
+		expect((await poll(app)).status).toBe(200);
+		return app;
+	}
+
+	/** The result was refused and nothing it said is anywhere: no summary, no todo, no card. */
+	function expectRefused(): void {
+		expect(m.meetings.get(MEETING)).toMatchObject({ status: "summarizing", summary: null });
+		expect(m.todos).toEqual([]);
+		expect(m.cards).toEqual([]);
+	}
+
+	it("L5: words a failed delete or a restart left behind are kept out of the body", async () => {
+		seedMeeting();
+		withdrawNow(AVA);
+		const res = await poll(buildApp());
+		expect(res.status).toBe(200);
+		expect(res.body.speakers).toEqual([{ label: "S1", name: "Ben" }]);
+	});
+
+	it("L5: a job whose every word is withdrawn fails as transcript_empty", async () => {
+		seedMeeting();
+		[AVA, BEN].forEach(withdrawNow);
+		expect((await poll(buildApp())).status).toBe(204);
+		expect(m.jobs[0]).toMatchObject({ status: "failed", failureCode: "transcript_empty" });
+	});
+
+	it("L5: words under a consent below the version are left out of the body and not deleted", async () => {
+		seedMeeting();
+		m.consents.set(AVA, { version: BOT_CONSTANTS.MEETINGS.CONSENT_VERSION - 1, revokedAt: null });
+		const res = await poll(buildApp());
+		expect(res.body.speakers).toEqual([{ label: "S1", name: "Ben" }]);
+		expect(speakersLeft()).toContain(AVA);
+	});
+
+	it("L5: an unreadable consent sends nothing, answers instead of looping, and costs the job no attempt", async () => {
+		seedMeeting();
+		m.consentReadFails = true;
+		expect((await poll(buildApp())).status).toBe(204);
+		expect(m.claims).toBe(1);
+		expect(m.jobs[0]).toMatchObject({ status: "leased", attempts: 0 });
+		expect(m.jobs[0].leaseUntil).not.toBeNull();
+	});
+
+	it("L11: a job whose meeting is gone deletes the words left under it", async () => {
+		seedMeeting();
+		m.meetings.clear();
+		expect((await poll(buildApp())).status).toBe(204);
+		expect(m.jobs[0]).toMatchObject({ status: "failed", failureCode: "meeting_gone" });
+		expect(m.segments).toEqual([]);
+	});
+
+	it("L5: a withdrawal after the lease closed refuses the result, removes the words, and reopens the job without its attempt", async () => {
+		const app = await claimed();
+		m.afterFinish = () => withdrawNow(AVA);
+		expect((await post(app, resultFor())).status).toBe(404);
+		expectRefused();
+		expect(speakersLeft()).toEqual([BEN]);
+		expect(m.meetings.get(MEETING)?.speakerIds).toEqual([BEN]);
+		expect(m.jobs[0]).toMatchObject({ status: "pending", attempts: 0 });
+	});
+
+	it("L5: a withdrawal after the summary was written takes the summary back before any todo or card", async () => {
+		const app = await claimed();
+		m.afterDone = () => withdrawNow(AVA);
+		expect((await post(app, resultFor())).status).toBe(404);
+		expectRefused();
+		expect(speakersLeft()).toEqual([BEN]);
+		expect(m.jobs[0]).toMatchObject({ status: "pending", attempts: 0 });
+	});
+
+	it("L5: a speaker whose consent row is missing refuses the result too", async () => {
+		const app = await claimed();
+		m.afterFinish = () => void m.consents.delete(AVA);
+		expect((await post(app, resultFor())).status).toBe(404);
+		expectRefused();
+	});
+
+	it("L5: an unreadable consent after the lease closed writes no summary and reopens the job", async () => {
+		const app = await claimed();
+		m.afterFinish = () => (m.consentReadFails = true);
+		expect((await post(app, resultFor())).status).toBe(404);
+		expectRefused();
+		expect(m.jobs[0]).toMatchObject({ status: "pending", attempts: 0 });
+		expect(speakersLeft()).toContain(AVA);
+	});
+
+	it("L5: a removal that fails leaves the job closed and the summary unwritten for the repair pass", async () => {
+		const app = await claimed();
+		m.afterFinish = () => {
+			withdrawNow(AVA);
+			m.deleteFails = true;
+		};
+		expect((await post(app, resultFor())).status).toBe(404);
+		expectRefused();
+		expect(m.jobs[0].status).toBe("done");
+		expect(m.meetings.get(MEETING)?.speakerIds).toContain(AVA);
+	});
+
+	it("a consent row below the version never refuses a result", async () => {
+		const app = await claimed();
+		m.afterFinish = () => void m.consents.set(AVA, { version: BOT_CONSTANTS.MEETINGS.CONSENT_VERSION - 1, revokedAt: null });
+		expect((await post(app, resultFor())).status).toBe(200);
+		expect(m.meetings.get(MEETING)?.status).toBe("done");
+	});
+
+	it("L5: the speaker names are read before the lease closes, so no Discord call sits in the window", async () => {
+		const app = await claimed();
+		m.fetches = 0;
+		expect((await post(app, resultFor())).status).toBe(200);
+		expect(m.fetchesAtFinish).toBeGreaterThan(0);
+		expect(m.fetches).toBe(m.fetchesAtFinish);
+	});
+
+	it("L10: three presses by a member with no words leave the job, its lease and its attempts unchanged", async () => {
+		await claimed();
+		const before = structuredClone(m.jobs[0]);
+		for (let press = 0; press < 3; press += 1) {
+			const withdrawal = revokeMeetingConsent(GUILD, "400000000000000009");
+			await withdrawal.outcome;
+			await withdrawal.finish();
+		}
+		expect(m.jobs[0]).toEqual(before);
+	});
+
+	it("L10: three honest withdrawals, each after a claim, never fail the job", async () => {
+		seedMeeting();
+		const app = buildApp();
+		for (const userId of ["u1", "u2", "u3"]) {
+			m.consents.set(userId, { version: BOT_CONSTANTS.MEETINGS.CONSENT_VERSION, revokedAt: null });
+			m.segments.push({ guildId: GUILD, meetingId: MEETING, speakerId: userId, offsetMs: 1, durationMs: 1000, text: "said" });
+		}
+		for (const userId of ["u1", "u2", "u3"]) {
+			expect((await poll(app)).status).toBe(200);
+			const withdrawal = revokeMeetingConsent(GUILD, userId);
+			await withdrawal.outcome;
+			await withdrawal.finish();
+			expect(m.jobs[0]).toMatchObject({ status: "pending", attempts: 0 });
+		}
+		expect((await poll(app)).status).toBe(200);
+		expect(speakersLeft().sort()).toEqual([AVA, BEN]);
+	});
+
+	it("L16: a withdrawal after a failed summary deletes the member's words and leaves the job failed", async () => {
+		seedMeeting({ status: "failed" });
+		Object.assign(m.jobs[0], { status: "failed", failureCode: "attempts", attempts: 4 });
+		expect(await removeWordsFromOpenMeetings(GUILD, AVA)).toBeGreaterThan(0);
+		expect(speakersLeft()).toEqual([BEN]);
+		expect(m.jobs[0]).toMatchObject({ status: "failed", attempts: 4 });
+		expect(m.meetings.get(MEETING)?.status).toBe("failed");
 	});
 });

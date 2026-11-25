@@ -58,7 +58,7 @@ vi.mock("./GuildSetupManager.js", () => ({
 	GuildSetupManager: { specFieldsUnder: (categoryField: string) => (categoryField === "categoryId" ? [...NOTICE_BOARD_FIELDS] : []) },
 }));
 
-import { removeNoticeBoardChannel } from "./removeChannel.js";
+import { removeNoticeBoardChannel, useNotesChannelHook } from "./removeChannel.js";
 
 const GUILD_ID = "g1";
 const CATEGORY_ID = "cat-notice";
@@ -135,6 +135,44 @@ describe("Remove on an opt in channel", () => {
 
 		expect(mocks.row.userRemovedChannels).toEqual([field]);
 		expect(mocks.row[field]).toBeNull();
+	});
+});
+
+// Removing 📝meeting-notes takes every consent button with it, so a live recording is told
+// (2026-11 item 420, L2), once the slot is empty and with whether the channel still stands.
+describe("Remove on the meeting notes channel tells the meetings feature (L2)", () => {
+	const hook = vi.fn(async (_guildId: string, _outcome: string) => undefined);
+	beforeEach(() => {
+		hook.mockClear();
+		useNotesChannelHook(hook);
+		vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		mocks.row.meetingNotesChannelId = "c-notes";
+	});
+
+	it("L2: says deleted for a channel Dero built, after the slot is empty", async () => {
+		channel("c-notes");
+		hook.mockImplementationOnce(async () => {
+			expect(mocks.row.meetingNotesChannelId).toBeNull();
+		});
+		await removeNoticeBoardChannel(guild(), "meetingNotesChannelId", "onboarding:meetingNotes");
+		expect(hook.mock.calls).toEqual([[GUILD_ID, "deleted"]]);
+	});
+
+	it("L2: says released for a channel Dero adopted", async () => {
+		mocks.row.adoptedChannelIds = ["c-notes"];
+		channel("c-notes");
+		await removeNoticeBoardChannel(guild(), "meetingNotesChannelId", "onboarding:meetingNotes");
+		expect(hook.mock.calls).toEqual([[GUILD_ID, "released"]]);
+	});
+
+	it("L2: a hook that fails does not fail the Remove, and no other slot calls it", async () => {
+		channel("c-notes");
+		hook.mockRejectedValueOnce(new Error("mongo down"));
+		await expect(removeNoticeBoardChannel(guild(), "meetingNotesChannelId", "onboarding:meetingNotes")).resolves.toBe("deleted");
+		mocks.row.todosChannelId = "c-todos";
+		channel("c-todos");
+		await removeNoticeBoardChannel(guild(), "todosChannelId", "onboarding:todos");
+		expect(hook).toHaveBeenCalledTimes(1);
 	});
 });
 

@@ -16,13 +16,20 @@ export const meetingConsentStore = {
 		return MeetingConsent.findOne({ guildId, userId }).lean<IMeetingConsent>();
 	},
 
+	/** Which of these members hold a revoked row, for the removals a restart cut off. */
+	async findRevokedIds(guildId: string, userIds: readonly string[]): Promise<string[]> {
+		if (userIds.length === 0) return [];
+		const rows = await MeetingConsent.find({ guildId, userId: { $in: [...userIds] }, revokedAt: { $ne: null } }, { userId: 1 }).lean<Pick<IMeetingConsent, "userId">[]>();
+		return rows.map((row) => row.userId);
+	},
+
 	// I agree: one upsert that also clears an earlier revoke, so a member who stopped and
 	// agrees again is captured again.
 	async accept(guildId: string, userId: string, version: number, acceptedAt: Date): Promise<void> {
 		await MeetingConsent.updateOne({ guildId, userId }, { $set: { version, acceptedAt, revokedAt: null } }, { upsert: true });
 	},
 
-	/** Stop recording me. True when the member had a consent to revoke. */
+	/** No thanks or Stop recording me. True when the member had a consent to revoke. */
 	async revoke(guildId: string, userId: string, revokedAt: Date): Promise<boolean> {
 		const result = await MeetingConsent.updateOne({ guildId, userId, revokedAt: null }, { $set: { revokedAt } });
 		return result.modifiedCount > 0;

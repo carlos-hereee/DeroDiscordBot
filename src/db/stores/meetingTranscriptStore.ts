@@ -21,7 +21,12 @@ export const meetingTranscriptStore = {
 		return (await MeetingTranscriptSegment.exists({ guildId, meetingId })) !== null;
 	},
 
-	/** Delete one member's words from these meetings, for Stop recording me. Returns how many went. */
+	/** Whether a meeting holds any words of this member. */
+	async hasSpeaker(guildId: string, meetingId: string, speakerId: string): Promise<boolean> {
+		return (await MeetingTranscriptSegment.exists({ guildId, meetingId, speakerId })) !== null;
+	},
+
+	/** Delete one member's words from these meetings, for a withdrawal. Returns how many went. */
 	async deleteForSpeaker(guildId: string, meetingIds: readonly string[], speakerId: string): Promise<number> {
 		if (meetingIds.length === 0) return 0;
 		const result = await MeetingTranscriptSegment.deleteMany({ guildId, speakerId, meetingId: { $in: [...meetingIds] } });

@@ -1,4 +1,5 @@
 import { MessageMentionOptions } from "discord.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 /**
  * No pings of any kind: no @everyone or @here, no user, no role, and no reply
@@ -49,4 +50,32 @@ export function buildAudienceMention(opts: {
 		content: roleIds.map((id) => `<@&${id}>`).join(" "),
 		allowedMentions: { roles: roleIds },
 	};
+}
+
+/**
+ * Members mentioned by id, split so that each batch fits one message beside `reservedCharacters`
+ * of other text, and Discord's cap on the ids one allowedMentions may name. Every id lands in
+ * exactly one batch, in order, and nobody gives no batch. Used wherever a ping can name a whole
+ * hall: the meeting consent notice and a meeting's reminder (2026-11 item 420).
+ */
+export function mentionBatches(ids: readonly string[], reservedCharacters: number): string[][] {
+	const { MAX_MESSAGE_LENGTH, MAX_MENTIONED_IDS } = BOT_CONSTANTS.DISCORD_LIMITS;
+	const room = MAX_MESSAGE_LENGTH - reservedCharacters;
+	const batches: string[][] = [];
+	let used = 0;
+	for (const id of ids) {
+		// "<@id>" and the space that joins it to the next one.
+		const length = id.length + "<@> ".length;
+		const current = batches.at(-1);
+		if (current && used + length <= room && current.length < MAX_MENTIONED_IDS) {
+			current.push(id);
+			used += length;
+			continue;
+		}
+		// An id that fits nowhere still gets a message of its own, because leaving it out would
+		// drop a member without a trace; Discord's refusal of that message is seen and counted.
+		batches.push([id]);
+		used = length;
+	}
+	return batches;
 }

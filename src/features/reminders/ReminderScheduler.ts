@@ -24,6 +24,7 @@ import { playerActivityRetentionDays } from "@utils/config.js";
 import { sendRenderAnalyticsDigest } from "@features/renderer/renderAnalyticsDigest.js";
 import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
 import { runVaultTopUp } from "@features/economy/vaultTopUp.js";
+import { runMeetingRepairs } from "@features/meetings/meetingBootRecovery.js";
 import { runDueReminders } from "./dueReminders.js";
 
 // ── resolveOverride ────────────────────────────────────────────────
@@ -331,6 +332,9 @@ export function startScheduler(client: Client): void {
 		// them past their minute. Fire and forget with its own catch: it claims each row once,
 		// so it needs nothing from this tick's guard beyond running inside it.
 		void runDueReminders(client).catch((error: unknown) => console.error("[scheduler] the due reminder sweep failed", error instanceof Error ? error.name : "unknown"));
+		// What a crash or a failed write left of a meeting (2026-11 item 420), beside the reminders
+		// for the same reason. It has its own in progress guard and never throws.
+		void runMeetingRepairs(client).catch((error: unknown) => console.error("[scheduler] the meeting repairs failed", error instanceof Error ? error.name : "unknown"));
 		try {
 			// ① Fetch all active events for every guild this bot is in.
 			//

@@ -66,7 +66,7 @@ vi.mock("@db/stores/meetingSummaryJobStore.js", () => ({ meetingSummaryJobStore:
 vi.mock("@db/stores/activityStore.js", () => ({ activityStore: { deleteByEvents: m.attendance } }));
 vi.mock("@db/stores/eventStore.js", () => ({ eventStore: { findByGuildId: m.findEvents, deleteInGuild: m.retireEvent } }));
 
-import { CONFIG_DEFAULTS, resetConfigsToDefault, wipeServerData } from "./serverReset.js";
+import { CONFIG_DEFAULTS, resetConfigsToDefault, useWipeHook, wipeServerData } from "./serverReset.js";
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -114,6 +114,24 @@ describe("wipeServerData", () => {
 	it("leaves every chip wallet, the global row included", async () => {
 		await wipeServerData("g1");
 		expect(m.wallets).not.toHaveBeenCalled();
+	});
+
+	it("L11: stops a live recording before its first step, so nothing is written behind the wipe", async () => {
+		const hook = vi.fn(async () => {
+			expect(m.memberLevels).not.toHaveBeenCalled();
+		});
+		useWipeHook(hook);
+		expect(await wipeServerData("g1")).toEqual({ failed: [] });
+		expect(hook).toHaveBeenCalledWith("g1");
+		expect(m.transcripts).toHaveBeenCalledWith("g1");
+	});
+
+	it("L11: a hook that fails is named and the wipe goes on", async () => {
+		useWipeHook(async () => Promise.reject(new Error("mongo down")));
+		const result = await wipeServerData("g1");
+		useWipeHook(async () => undefined);
+		expect(result).toEqual({ failed: ["meeting recording"] });
+		expect(m.transcripts).toHaveBeenCalledWith("g1");
 	});
 
 	it("keeps going past a failed step and names it", async () => {

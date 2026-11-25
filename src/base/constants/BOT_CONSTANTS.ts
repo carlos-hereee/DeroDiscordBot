@@ -103,6 +103,11 @@ export const BOT_CONSTANTS = {
 		MAX_SELECT_LABEL_LENGTH: 100,
 		// One reply carries at most 10 embeds (a settings panel's saved answer, post-launch plan item 9).
 		MAX_REPLY_EMBEDS: 10,
+		// A message's content, the ids one allowedMentions may name, and an embed's description:
+		// the three ceilings a ping of a full hall and a long list meet (2026-11 item 420).
+		MAX_MESSAGE_LENGTH: 2000,
+		MAX_MENTIONED_IDS: 100,
+		MAX_EMBED_DESCRIPTION_LENGTH: 4096,
 	},
 	// How long a member waits between presses of the Fire a greeting power up. Every press posts a
 	// drawn welcome card in the introductions channel, so without it one member could flood that
@@ -115,6 +120,9 @@ export const BOT_CONSTANTS = {
 	// How long gracefulShutdown may run before the process exits anyway. Railway sends SIGTERM on
 	// every deploy and kills a container that lingers; a hung Mongo close must not outlive it.
 	SHUTDOWN_DEADLINE_MS: 15_000,
+	// How long shutdown waits for meeting ends and the reminder sweep, inside the deadline above
+	// with room left for the gateway and Mongo to close. What it cuts, the next boot repairs.
+	SHUTDOWN_DRAIN_MS: 8_000,
 	// scheduler
 	SCHEDULER_CRON: "* * * * *", // every minute
 	REMINDER_FIRE_WINDOW_MS: 60_000, // how close to reminder time before we fire it
@@ -1207,6 +1215,13 @@ export const BOT_CONSTANTS = {
 		// A meeting chunk is up to 45 s of audio, three times a command's, so its speech to
 		// text call gets four times the command timeout.
 		STT_TIMEOUT_MS: 60 * 1000,
+		// How long a meeting may stay summarizing with nothing to summarize it before the repair
+		// pass finishes it. Longer than STT_TIMEOUT_MS, so an end still waiting for its last chunk,
+		// in this process or an overlapping one, is never taken over (2026-11 item 420).
+		REPAIR_GRACE_MS: 2 * 60 * 1000,
+		// How long deleting a meeting, or a server's data, waits for the end it interrupts. The
+		// recorder is discarded first, so this bounds database writes, never the provider.
+		END_WAIT_MS: 8 * 1000,
 		// The transcript is deleted this many days after it was written (D7): long enough to
 		// read the notes against it, short enough that other people's words do not linger.
 		TRANSCRIPT_TTL_DAYS: 30,
@@ -1293,5 +1308,8 @@ export const BOT_CONSTANTS = {
 		// A fired reminder row is deleted this many days later, so its private text does not
 		// outlive its use (R18).
 		FIRED_TTL_DAYS: 7,
+		// A row still firing after this long was cut off by a restart, so it is closed as missed.
+		// Far longer than one delivery takes, because a row closed early would be sent and missed.
+		FIRING_STALE_MS: 5 * 60 * 1000,
 	},
 } as const; // ← this is important, explained below

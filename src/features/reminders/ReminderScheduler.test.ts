@@ -56,7 +56,21 @@ vi.mock("@features/schedule/NextUpBoard.js", () => ({
 	_resetNextUpDedupForTest: vi.fn(),
 }));
 
-import { announceSeasonEnd, isReminderDue, recurringFireCandidates, runEventsForTick } from "./ReminderScheduler.js";
+// The minute tick's two fire and forget passes and cron itself (2026-11 item 420), so a test can
+// run one tick and see both started.
+const tick = vi.hoisted(() => ({ crons: new Map<string, () => Promise<void>>(), reminders: vi.fn(async () => undefined), repairs: vi.fn(async () => undefined) }));
+vi.mock("node-cron", () => ({
+	default: {
+		schedule: (expression: string, run: () => Promise<void>) => {
+			tick.crons.set(expression, run);
+			return { stop: () => undefined };
+		},
+	},
+}));
+vi.mock("./dueReminders.js", () => ({ runDueReminders: tick.reminders }));
+vi.mock("@features/meetings/meetingBootRecovery.js", () => ({ runMeetingRepairs: tick.repairs }));
+
+import { announceSeasonEnd, isReminderDue, recurringFireCandidates, runEventsForTick, startScheduler, stopScheduler } from "./ReminderScheduler.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { eventOverrideStore } from "@db/stores/eventOverrideStore.js";
@@ -269,5 +283,18 @@ describe("runEventsForTick", () => {
 
 		expect(eventStoreMock.deleteInGuild).toHaveBeenCalledWith("evt-broken", "guild-1");
 		expect(eventStoreMock.deleteInGuild).toHaveBeenCalledWith("evt-next", "guild-2");
+	});
+});
+
+describe("the minute tick", () => {
+	it("L4: starts the due reminders and the meeting repairs beside each other, and survives either failing", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const client = { guilds: { cache: new Map() } } as unknown as Client;
+		startScheduler(client);
+		tick.repairs.mockRejectedValueOnce(new Error("mongo down"));
+		await tick.crons.get(BOT_CONSTANTS.SCHEDULER_CRON)!();
+		expect(tick.reminders).toHaveBeenCalledWith(client);
+		expect(tick.repairs).toHaveBeenCalledWith(client);
+		stopScheduler();
 	});
 });

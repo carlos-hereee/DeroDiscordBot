@@ -76,8 +76,9 @@ reminderSchema.index({ guildId: 1, userId: 1, kind: 1, status: 1 });
 // $exists filter would put every personal reminder (targetId null) on one key and refuse
 // the second one in the whole collection.
 reminderSchema.index({ targetId: 1, leadKey: 1 }, { unique: true, partialFilterExpression: { targetId: { $type: "string" } } });
-// A fired row, and its private text, is deleted this long after it fired (R18). A row that
-// never fired has a null firedAt, which a TTL index never expires.
+// A fired row, and its private text, is deleted this long after it fired (R18). So is a cancelled
+// personal row and one cut off mid delivery, whose firedAt is when they were closed and whose text
+// is already gone (2026-11 item 420). A null firedAt never expires.
 reminderSchema.index({ firedAt: 1 }, { expireAfterSeconds: BOT_CONSTANTS.REMINDERS.FIRED_TTL_DAYS * 24 * 60 * 60 });
 
 export const Reminder = mongoose.model<IReminder>("Reminder", reminderSchema);

@@ -19,6 +19,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { todoStore } from "@db/stores/todoStore.js";
 import { readMemberTimezone } from "@features/reminders/memberTimezone.js";
 import { registerButton, registerModal } from "@handlers/interactionRegistry.js";
+import { fitLines } from "@utils/clipText.js";
 import { isOwnerOrAdmin } from "@utils/permissions.js";
 import { parseReminderTime } from "@utils/reminderTimeParser.js";
 import { acknowledgeTextModal, showConfirm, showModalOrReply, showNotice } from "@utils/textModal.js";
@@ -174,7 +175,10 @@ export async function addTodoFromMember(interaction: ModalSubmitInteraction | Ch
 	await acknowledgeQuietly(interaction);
 }
 
-/** A member's open todos in this server, privately, each linking to its card. Shared by My todos and /todo mine. */
+/**
+ * A member's open todos in this server, privately, each linking to its card. Shared by My todos
+ * and /todo mine. Long texts are clipped so every line and its link show.
+ */
 export async function replyMyTodos(interaction: ButtonInteraction | ChatInputCommandInteraction): Promise<void> {
 	const context = await pressContext(interaction);
 	if (!context) return;
@@ -184,14 +188,19 @@ export async function replyMyTodos(interaction: ButtonInteraction | ChatInputCom
 		todoStore.listOpenForAssignee(context.guildId, interaction.user.id, limit),
 		todoStore.countOpenForAssignee(context.guildId, interaction.user.id),
 	]);
-	const lines = todos.map((todo) => {
-		const url = todo.channelId && todo.messageId ? `https://discord.com/channels/${context.guildId}/${todo.channelId}/${todo.messageId}` : null;
-		return `• ${words.line(todo.text, url, todo.dueAt ? toSeconds(todo.dueAt) : null)}`;
-	});
-	if (total > todos.length) lines.push("", words.more(total - todos.length));
+	const more = total > todos.length ? `\n\n${words.more(total - todos.length)}` : "";
+	const lines = fitLines(
+		todos.map((todo) => todo.text),
+		(text, index) => {
+			const { channelId, messageId, dueAt } = todos[index];
+			const url = channelId && messageId ? `https://discord.com/channels/${context.guildId}/${channelId}/${messageId}` : null;
+			return `• ${words.line(text, url, dueAt ? toSeconds(dueAt) : null)}`;
+		},
+		BOT_CONSTANTS.DISCORD_LIMITS.MAX_EMBED_DESCRIPTION_LENGTH - more.length
+	);
 	const embed = new EmbedBuilder()
 		.setTitle(words.title)
-		.setDescription(lines.length > 0 ? lines.join("\n") : words.empty)
+		.setDescription(lines.length > 0 ? lines.join("\n") + more : words.empty)
 		.setColor(context.copy.COLORS.SCHEDULE);
 	await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }

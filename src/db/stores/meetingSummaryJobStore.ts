@@ -56,14 +56,32 @@ export const meetingSummaryJobStore = {
 	},
 
 	/**
-	 * Put a waiting or leased job back to pending under a new leaseId, without counting an
-	 * attempt, for a member's Stop recording me: a result built before it is then refused.
+	 * Put a leased job back to pending under a new leaseId and give back the attempt its claim
+	 * counted, for a member's withdrawal: a result built before it is then refused, and the
+	 * withdrawal never costs the meeting a try. A pending job has no holder to refuse.
 	 */
 	async resetLease(guildId: string, meetingId: string, leaseId: string): Promise<void> {
 		await MeetingSummaryJob.updateOne(
-			{ guildId, meetingId, status: { $in: ["pending", "leased"] } },
-			{ $set: { status: "pending", leaseId, leaseUntil: null } }
+			{ guildId, meetingId, status: "leased" },
+			{ $set: { status: "pending", leaseId, leaseUntil: null }, $inc: { attempts: -1 } }
 		);
+	},
+
+	/** Give a claim's attempt back while its lease runs out untouched, for a body that could not be built. */
+	async giveBackAttempt(jobId: string, leaseId: string): Promise<void> {
+		await MeetingSummaryJob.updateOne({ jobId, status: "leased", leaseId }, { $inc: { attempts: -1 } });
+	},
+
+	/**
+	 * Put a job whose result was refused after its lease closed back to pending, its attempt given
+	 * back (2026-11 item 420). True when it was done.
+	 */
+	async reopenDone(jobId: string): Promise<boolean> {
+		const result = await MeetingSummaryJob.updateOne(
+			{ jobId, status: "done" },
+			{ $set: { status: "pending", failureCode: null, leaseId: null, leaseUntil: null }, $inc: { attempts: -1 } }
+		);
+		return result.modifiedCount === 1;
 	},
 
 	/** Mark a job failed whatever its lease, for the attempt cap and an expired transcript. */

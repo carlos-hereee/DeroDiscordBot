@@ -5,6 +5,7 @@ import type { IReminder } from "@db/models/Reminder.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { reminderRowStore } from "@db/stores/reminderRowStore.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
+import { fitLines } from "@utils/clipText.js";
 import { parseReminderTime, type ReminderTimeRefusal } from "@utils/reminderTimeParser.js";
 import { shortId } from "@utils/shortId.js";
 import { showNotice } from "@utils/textModal.js";
@@ -61,14 +62,21 @@ const toSeconds = (date: Date): number => Math.floor(new Date(date).getTime() / 
 
 /**
  * The private list: each waiting reminder numbered, with a Cancel button per reminder. The
- * cap of 25 is exactly five rows of five buttons, Discord's ceiling for one message.
+ * cap of 25 is exactly five rows of five buttons, Discord's ceiling for one message. Long texts
+ * are clipped so every line shows; more embeds would not help, since 25 full reminders also pass
+ * Discord's 6,000 characters for all of one message's embeds.
  */
 export function buildReminderList(reminders: IReminder[], copy: IPluginCopy): InteractionReplyOptions {
 	const words = copy.todoReminders.reminders.list;
+	const lines = fitLines(
+		reminders.map((row) => row.text ?? ""),
+		(text, index) => words.line(index + 1, text, toSeconds(reminders[index].fireAt)),
+		BOT_CONSTANTS.DISCORD_LIMITS.MAX_EMBED_DESCRIPTION_LENGTH
+	);
 	const embed = new EmbedBuilder()
 		.setTitle(words.title)
 		.setColor(copy.COLORS.SCHEDULE)
-		.setDescription(reminders.length > 0 ? reminders.map((row, index) => words.line(index + 1, row.text ?? "", toSeconds(row.fireAt))).join("\n") : words.empty);
+		.setDescription(lines.length > 0 ? lines.join("\n") : words.empty);
 	const { MAX_ROW_BUTTONS, MAX_MESSAGE_ROWS } = BOT_CONSTANTS.DISCORD_LIMITS;
 	const buttons = reminders
 		.slice(0, MAX_ROW_BUTTONS * MAX_MESSAGE_ROWS)
@@ -97,7 +105,7 @@ async function handleReminderButton(interaction: ButtonInteraction): Promise<voi
 	const guildId = interaction.guildId;
 	if (!guildId || action !== CANCEL_ACTION || !reminderId) return;
 	const copy = await copyFor(guildId);
-	const cancelled = await reminderRowStore.cancelPersonal(guildId, interaction.user.id, reminderId);
+	const cancelled = await reminderRowStore.cancelPersonal(guildId, interaction.user.id, reminderId, new Date());
 	if (!cancelled) {
 		await showNotice(interaction, { title: copy.todoReminders.reminders.noticeTitle, sections: [copy.todoReminders.reminders.gone] });
 		return;

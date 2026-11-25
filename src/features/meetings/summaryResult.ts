@@ -8,6 +8,7 @@ import { meetingStore } from "@db/stores/meetingStore.js";
 import { meetingSummaryJobStore } from "@db/stores/meetingSummaryJobStore.js";
 import { syncCardMessage, type CardPayload } from "@utils/cardMessage.js";
 import { createActionItemTodos } from "./actionItemsToTodos.js";
+import { removeWithdrawnWords, withdrawnAmong } from "./meetingConsent.js";
 import { buildFailedNotesCard, buildSummaryCard } from "./notesCard.js";
 import { matchAssignee, resolveSpeakerNames } from "./speakerNames.js";
 
@@ -21,8 +22,10 @@ import { matchAssignee, resolveSpeakerNames } from "./speakerNames.js";
 //        meetingSummaryResultSchema in dev-launcher src/dero/brainContracts.ts.
 // How:   the lease is checked FIRST, by the conditional write that closes it, so a result
 //        for a lease a member's Stop recording me reset (or a second result for one job) is
-//        refused before anything is written. The summary is kept in the language it was
-//        written in; the bot translates nothing.
+//        refused before anything is written. A withdrawal can land after the lease closed, when
+//        no reset can refuse the result, so every speaker's consent is checked before the summary
+//        is written and once more after it, before any todo or card (2026-11 item 420, L5). The
+//        summary is kept in the language it was written in; the bot translates nothing.
 // Does NOT: log the summary, a decision or an action item; logs carry ids, counts and codes.
 
 const MEETINGS = BOT_CONSTANTS.MEETINGS;
@@ -118,8 +121,11 @@ async function showNotesCard(client: Client, meeting: IMeeting, payload: CardPay
 	}
 }
 
-// The meeting's side of a failed job: status failed and the card line, once.
-async function failMeeting(client: Client, guildId: string, meetingId: string, code: string): Promise<void> {
+/**
+ * The meeting's side of a failed job: status failed and the card line, once. Also
+ * meetingBootRecovery's, for a job whose meeting was never told.
+ */
+export async function failSummarizingMeeting(client: Client, guildId: string, meetingId: string, code: string): Promise<void> {
 	const meeting = await meetingStore.claimTransition(guildId, meetingId, "summarizing", { status: "failed" });
 	if (!meeting) return;
 	const { copy } = await guildContext(guildId);
@@ -132,7 +138,7 @@ async function failMeeting(client: Client, guildId: string, meetingId: string, c
  */
 export async function failSummaryJob(client: Client, job: Pick<IMeetingSummaryJob, "jobId" | "guildId" | "meetingId">, code: string): Promise<void> {
 	await meetingSummaryJobStore.markFailed(job.jobId, code);
-	await failMeeting(client, job.guildId, job.meetingId, code);
+	await failSummarizingMeeting(client, job.guildId, job.meetingId, code);
 	console.warn(`[meetings] summary job failed job=${job.jobId} guild=${job.guildId} code=${code}`);
 }
 
@@ -145,20 +151,73 @@ async function acceptFailure(client: Client, job: IMeetingSummaryJob, result: Ex
 	}
 	const closed = await meetingSummaryJobStore.finishLease(job.jobId, result.leaseId, { status: "failed", failureCode: result.code });
 	if (!closed) return "not_found";
-	await failMeeting(client, job.guildId, job.meetingId, result.code);
+	await failSummarizingMeeting(client, job.guildId, job.meetingId, result.code);
 	console.warn(`[meetings] summary job failed job=${job.jobId} code=${result.code} attempt=${job.attempts}`);
 	return "accepted";
 }
 
+// Memory only: summaries whose taking back failed to write, for the repair pass. Nothing durable
+// marks one, since a summarized meeting keeps its notes when a speaker withdraws later.
+const owedTakeBacks = new Map<string, { job: IMeetingSummaryJob; withdrawn: readonly string[] }>();
+
+// The snapshot's speakers who withdrew, or null when that cannot be read, which is a no.
+async function readWithdrawn(guildId: string, speakerIds: readonly string[]): Promise<readonly string[] | null> {
+	return withdrawnAmong(guildId, speakerIds).catch((error: unknown) => {
+		console.error(`[meetings] consent unreadable, summary refused guild=${guildId}`, error instanceof Error ? error.name : "unknown");
+		return null;
+	});
+}
+
+// Hand the meeting back for a summary without the withdrawn members: their words first, and only
+// then the job, its attempt given back. A removal that fails keeps the job closed, so nothing is
+// claimed over words still owed a removal; the repair pass finishes both.
+async function reopenWithout(job: IMeetingSummaryJob, withdrawn: readonly string[]): Promise<void> {
+	let allRemoved = true;
+	for (const userId of withdrawn) if (!(await removeWithdrawnWords(job.guildId, userId))) allRemoved = false;
+	if (!allRemoved) return;
+	await meetingSummaryJobStore.reopenDone(job.jobId).catch((error: unknown) =>
+		console.error(`[meetings] refused job not reopened, kept for the repair pass job=${job.jobId}`, error instanceof Error ? error.name : "unknown")
+	);
+}
+
+async function takeSummaryBack(job: IMeetingSummaryJob, withdrawn: readonly string[]): Promise<void> {
+	try {
+		// Null means the meeting was deleted or taken back already, and then nothing is owed.
+		const takenBack = await meetingStore.claimTransition(job.guildId, job.meetingId, "done", { status: "summarizing", summary: null });
+		owedTakeBacks.delete(job.meetingId);
+		if (!takenBack) return;
+	}
+	catch (error) {
+		owedTakeBacks.set(job.meetingId, { job, withdrawn });
+		console.error(`[meetings] summary not taken back, kept for the repair pass meeting=${job.meetingId}`, error instanceof Error ? error.name : "unknown");
+		return;
+	}
+	await reopenWithout(job, withdrawn);
+}
+
+/** Retry every summary whose taking back failed. meetingBootRecovery's repair pass. */
+export async function retryOwedTakeBacks(): Promise<void> {
+	for (const { job, withdrawn } of [...owedTakeBacks.values()]) await takeSummaryBack(job, withdrawn);
+}
+
 async function acceptSummary(client: Client, job: IMeetingSummaryJob, result: Extract<SummaryResult, { ok: true }>): Promise<SummaryOutcome> {
-	// ① close the lease; a reset or reclaimed lease, or a job already answered, stops here;
+	// ① everything slow is read first, so no Discord call sits between closing the lease and
+	// writing the summary. The speakers are a snapshot: a withdrawal takes its member off the row;
+	const current = await meetingStore.findById(job.guildId, job.meetingId);
+	const heard = current?.speakerIds ?? [];
+	const speakers = await resolveSpeakerNames(client, job.guildId, heard);
+
+	// ② close the lease; a reset or reclaimed lease, or a job already answered, stops here;
 	const closed = await meetingSummaryJobStore.finishLease(job.jobId, result.leaseId, { status: "done", failureCode: null });
 	if (!closed) return "not_found";
-
-	// ② match each assignee to a consenting speaker, then write the summary once;
-	const current = await meetingStore.findById(job.guildId, job.meetingId);
 	if (!current) return "accepted";
-	const speakers = await resolveSpeakerNames(client, job.guildId, current.speakerIds);
+
+	// ③ nobody heard may have withdrawn by now, then match each assignee and write the summary once;
+	const withdrawn = await readWithdrawn(job.guildId, heard);
+	if (withdrawn === null || withdrawn.length > 0) {
+		await reopenWithout(job, withdrawn ?? []);
+		return "not_found";
+	}
 	const summary: IMeetingSummary = {
 		text: result.summary,
 		decisions: result.decisions,
@@ -167,7 +226,15 @@ async function acceptSummary(client: Client, job: IMeetingSummaryJob, result: Ex
 	const meeting = await meetingStore.claimTransition(job.guildId, job.meetingId, "summarizing", { status: "done", summary });
 	if (!meeting) return "accepted";
 
-	// ③ the todos, then the card that points at them; neither undoes the summary.
+	// ④ once more now it is written: a withdrawal since ③ found no lease to reset. One after this
+	// is of a meeting already summarized, which keeps its notes (D1 sub answer);
+	const withdrawnSince = await readWithdrawn(job.guildId, heard);
+	if (withdrawnSince === null || withdrawnSince.length > 0) {
+		await takeSummaryBack(job, withdrawnSince ?? []);
+		return "not_found";
+	}
+
+	// ⑤ the todos, then the card that points at them; neither undoes the summary.
 	const { copy, todosChannelId } = await guildContext(job.guildId);
 	const created = await createActionItemTodos(client, meeting).catch((error: unknown) => {
 		console.error(`[meetings] action item todos could not be made meeting=${meeting.meetingId}`, error instanceof Error ? error.name : "unknown");
@@ -183,7 +250,7 @@ async function acceptSummary(client: Client, job: IMeetingSummaryJob, result: Ex
 /**
  * Apply a result the guard accepted. "not_found" for a job that is unknown, or no longer
  * leased under the result's leaseId (answered already, reclaimed, or reset by a member's
- * Stop recording me); "accepted" otherwise.
+ * withdrawal), or whose speakers include one who withdrew; "accepted" otherwise.
  */
 export async function acceptSummaryResult(client: Client, result: SummaryResult): Promise<SummaryOutcome> {
 	const job = await meetingSummaryJobStore.findByJobId(result.jobId);

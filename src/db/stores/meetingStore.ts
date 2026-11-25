@@ -35,6 +35,22 @@ export const meetingStore = {
 		return Meeting.find({ status: "recording" }).lean<IMeeting[]>();
 	},
 
+	/** Every meeting still waiting for its summary that ended at or before `before`, for the repair pass. */
+	async findSummarizingEndedBefore(before: Date): Promise<IMeeting[]> {
+		return Meeting.find({ status: "summarizing", endedAt: { $lte: before } }).lean<IMeeting[]>();
+	},
+
+	/**
+	 * Every open meeting (findOpenIds' statuses) in any guild that lists a speaker and has not been
+	 * over since before `endedAfter`, for the removals a restart cut off. A recording has no end yet.
+	 */
+	async findOpenWithSpeakers(endedAfter: Date): Promise<Pick<IMeeting, "guildId" | "meetingId" | "speakerIds">[]> {
+		return Meeting.find(
+			{ status: { $in: ["recording", "summarizing", "failed"] }, "speakerIds.0": { $exists: true }, $or: [{ endedAt: null }, { endedAt: { $gte: endedAfter } }] },
+			{ _id: 0, guildId: 1, meetingId: 1, speakerIds: 1 }
+		).lean<Pick<IMeeting, "guildId" | "meetingId" | "speakerIds">[]>();
+	},
+
 	/**
 	 * Move a meeting from `from` to the changes' status in one conditional write, so two
 	 * ends racing (End pressed as the time cap fires) end it once. Null when another write
@@ -49,9 +65,12 @@ export const meetingStore = {
 		return Meeting.findOneAndUpdate({ guildId, meetingId }, { $set: changes }, { new: true }).lean<IMeeting>();
 	},
 
-	/** The meetings whose transcript can still change: recording, or waiting for its summary. */
+	/**
+	 * The meetings a withdrawal still reaches: recording, waiting for its summary, or failed, which
+	 * has a transcript and no summary (2026-11 item 420). meetingConsent's removal is the one caller.
+	 */
 	async findOpenIds(guildId: string): Promise<string[]> {
-		const rows = await Meeting.find({ guildId, status: { $in: ["recording", "summarizing"] } }, { meetingId: 1 }).lean<Pick<IMeeting, "meetingId">[]>();
+		const rows = await Meeting.find({ guildId, status: { $in: ["recording", "summarizing", "failed"] } }, { meetingId: 1 }).lean<Pick<IMeeting, "meetingId">[]>();
 		return rows.map((row) => row.meetingId);
 	},
 
@@ -70,7 +89,12 @@ export const meetingStore = {
 		const change = attending ? { $addToSet: { rsvpIds: userId } } : { $pull: { rsvpIds: userId } };
 		return Meeting.findOneAndUpdate({ guildId, meetingId, status: "scheduled" }, change, { new: true }).lean<IMeeting>();
 	},
-	/** Take a member off the captured list, for Stop recording me. */
+	/** Whether a member is on the captured list. */
+	async hasSpeaker(guildId: string, meetingId: string, userId: string): Promise<boolean> {
+		return (await Meeting.exists({ guildId, meetingId, speakerIds: userId })) !== null;
+	},
+
+	/** Take a member off the captured list, for a withdrawal. */
 	async removeSpeaker(guildId: string, meetingId: string, userId: string): Promise<void> {
 		await Meeting.updateOne({ guildId, meetingId }, { $pull: { speakerIds: userId } });
 	},

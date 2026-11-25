@@ -10,6 +10,7 @@ import { reminderRowStore } from "@db/stores/reminderRowStore.js";
 import { todoStore } from "@db/stores/todoStore.js";
 import { postInChannel } from "@utils/cardMessage.js";
 import { sendDirectMessage } from "@utils/directMessage.js";
+import { mentionBatches } from "@utils/mentions.js";
 import { shortId } from "@utils/shortId.js";
 
 // ── dueReminders ────────────────────────────────────────────────────────────
@@ -22,7 +23,9 @@ import { shortId } from "@utils/shortId.js";
 // How:   each due row is CLAIMED pending to firing in one conditional write before anything
 //        is sent (the partyGameStore claimOpen shape), so two ticks or two processes racing
 //        deliver it once, and a restart never sends what already went. A row past the late
-//        window is closed as missed, never sent (A9).
+//        window is closed as missed, never sent (A9). A row a restart left firing is closed as
+//        missed too, never sent again, and its todo's or meeting's leads are planned again, since
+//        scheduling leaves a firing row alone (2026-11 item 420, L8).
 // Does NOT: touch the KvK reminders (ReminderJob, ReminderLog), which are occurrence shaped
 //        and post to the announcements channel by invariant 1.
 
@@ -147,17 +150,38 @@ async function deliverTodo(row: IReminder, context: DeliveryContext): Promise<De
 	);
 }
 
+// One message per batch of people, each with the whole line and the late note, because a full
+// RSVP list passes what one message may hold (2026-11 item 420, L14). Delivered once any was
+// accepted: the row is at most once, so a refused batch is counted in the log, never sent again.
 async function deliverMeeting(row: IReminder, context: DeliveryContext): Promise<DeliveryOutcome> {
-	if (!context.meetingNotesChannelId || !row.targetId) return "nothing";
+	const channelId = context.meetingNotesChannelId;
+	if (!channelId || !row.targetId) return "nothing";
 	const meeting = await meetingStore.findById(row.guildId, row.targetId);
 	if (!meeting || meeting.status !== "scheduled" || !meeting.scheduledFor) return "nothing";
+	const { title } = meeting;
+	const startSeconds = toSeconds(meeting.scheduledFor);
 	// The host and every RSVP, each once, and exactly those ids may ping.
 	const pinged = [...new Set([...(meeting.hostId ? [meeting.hostId] : []), ...meeting.rsvpIds])];
-	const mentions = pinged.map((id) => `<@${id}>`).join(" ");
 	const words = context.copy.todoReminders.meetings.reminder;
-	const line = row.leadKey === "meeting_lead" ? words.lead(mentions, meeting.title, toSeconds(meeting.scheduledFor)) : words.start(mentions, meeting.title);
-	const posted = await postInChannel(context.client, context.meetingNotesChannelId, { content: withLateNote(line.trim(), context), allowedMentions: pingOnly(pinged) });
-	return posted ? "channel" : "failed";
+	const contentFor = (userIds: readonly string[]): string => {
+		const mentions = userIds.map((id) => `<@${id}>`).join(" ");
+		const line = row.leadKey === "meeting_lead" ? words.lead(mentions, title, startSeconds) : words.start(mentions, title);
+		return withLateNote(line.trim(), context);
+	};
+	const batches = mentionBatches(pinged, contentFor([]).length);
+	// With nobody to ping it is still said in the channel.
+	if (batches.length === 0) batches.push([]);
+
+	let accepted = 0;
+	let unreached = 0;
+	for (const batch of batches) {
+		if (await postInChannel(context.client, channelId, { content: contentFor(batch), allowedMentions: pingOnly(batch) })) accepted += 1;
+		else unreached += batch.length;
+	}
+	if (accepted < batches.length) {
+		console.warn("[dueReminders] a meeting reminder was refused for part of its people", { reminderId: row.reminderId, refused: batches.length - accepted, unreached });
+	}
+	return accepted > 0 ? "channel" : "failed";
 }
 
 async function deliverPersonal(row: IReminder, context: DeliveryContext): Promise<DeliveryOutcome> {
@@ -203,13 +227,77 @@ async function settleClaimed(client: Client, row: IReminder, now: Date): Promise
 	else await reminderRowStore.markFired(row.reminderId, outcome, now);
 }
 
+// ── a delivery a restart cut off ────────────────────────────────────────────
+
+// The todo or meeting a closed row belonged to, as it stands now, or null when it is gone.
+async function targetOf(row: IReminder): Promise<ReminderTarget | null> {
+	if (!row.targetId) return null;
+	if (row.kind === "todo") {
+		const todo = await todoStore.findById(row.guildId, row.targetId);
+		return todo ? { kind: "todo", todo } : null;
+	}
+	const meeting = await meetingStore.findById(row.guildId, row.targetId);
+	return meeting ? { kind: "meeting", meeting } : null;
+}
+
+// At most once, as item 388 R7 asks: whether the cut off delivery reached anyone is unknown, so it
+// is closed and never sent again. Planning again only writes leads still ahead, so a due date that
+// was moved while the row sat firing is reminded, and one that was not is left closed.
+async function closeStaleDeliveries(now: Date): Promise<void> {
+	const staleBefore = new Date(now.getTime() - BOT_CONSTANTS.REMINDERS.FIRING_STALE_MS);
+	for (let closed = 0; closed < BOT_CONSTANTS.REMINDERS.MAX_DELIVERIES_PER_TICK; closed++) {
+		const row = await reminderRowStore.closeStaleFiring(staleBefore, now);
+		if (!row) return;
+		console.warn("[dueReminders] a reminder left firing was closed as missed", { reminderId: row.reminderId, kind: row.kind });
+		try {
+			const target = await targetOf(row);
+			if (target) await scheduleRemindersFor(target, now);
+		} catch (error) {
+			console.error("[dueReminders] the next reminders could not be planned", { reminderId: row.reminderId, kind: row.kind, error: error instanceof Error ? error.name : "unknown" });
+		}
+	}
+}
+
+// ── the sweep ───────────────────────────────────────────────────────────────
+
+// Shutdown's: the sweeps under way, and whether to claim nothing more.
+const sweeps = new Set<Promise<void>>();
+let isStopped = false;
+
+/**
+ * Shutdown: claim no new row from here on. Resolves once the delivery under way, if any, has
+ * ended, so its row is closed rather than left firing. main.ts bounds the wait.
+ */
+export async function stopDueReminders(): Promise<void> {
+	isStopped = true;
+	await Promise.all([...sweeps]);
+}
+
+/** Forget a stop. Tests only. */
+export function _resetDueReminders(): void {
+	isStopped = false;
+	sweeps.clear();
+}
+
 /**
  * Deliver every reminder due at `now`, at most MAX_DELIVERIES_PER_TICK of them; the rest wait
  * for the next tick. Never throws, so the minute tick it rides cannot be broken by it.
  */
-export async function runDueReminders(client: Client, now: Date = new Date()): Promise<void> {
+export function runDueReminders(client: Client, now: Date = new Date()): Promise<void> {
+	if (isStopped) return Promise.resolve();
+	const sweep: Promise<void> = sweepDueReminders(client, now).finally(() => sweeps.delete(sweep));
+	sweeps.add(sweep);
+	return sweep;
+}
+
+async function sweepDueReminders(client: Client, now: Date): Promise<void> {
+	// On its own, so rows that cannot be closed never hold up the ones that are due.
+	await closeStaleDeliveries(now).catch((error: unknown) =>
+		console.error("[dueReminders] rows left firing could not be closed", error instanceof Error ? error.name : "unknown")
+	);
 	try {
 		for (let delivered = 0; delivered < BOT_CONSTANTS.REMINDERS.MAX_DELIVERIES_PER_TICK; delivered++) {
+			if (isStopped) return;
 			const row = await reminderRowStore.claimDue(now);
 			if (!row) return;
 			await settleClaimed(client, row, now);

@@ -2,10 +2,12 @@ import type { Client } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { IMeeting } from "@db/models/Meeting.js";
 import type { IMeetingSummaryJob } from "@db/models/MeetingSummaryJob.js";
+import type { IMeetingTranscriptSegment } from "@db/models/MeetingTranscriptSegment.js";
 import { meetingStore } from "@db/stores/meetingStore.js";
 import { meetingSummaryJobStore } from "@db/stores/meetingSummaryJobStore.js";
 import { meetingTranscriptStore } from "@db/stores/meetingTranscriptStore.js";
 import { shortId } from "@utils/shortId.js";
+import { consentingMembers } from "./meetingConsent.js";
 import { resolveSpeakerNames } from "./speakerNames.js";
 import { failSummaryJob } from "./summaryResult.js";
 
@@ -20,6 +22,9 @@ import { failSummaryJob } from "./summaryResult.js";
 // How:   one conditional write claims a job (meetingSummaryJobStore.claimJob). A claimed job
 //        that is past its attempts, lost its meeting or has no words left is failed on the
 //        spot and the next one is claimed, so the launcher only ever receives work it can do.
+//        Consent is read here, after the claim (2026-11 item 420, L5): the body carries only the
+//        words of members whose consent is current now, so words a failed removal or a restart
+//        left behind never reach a summary, and a consent that cannot be read sends nothing.
 // Does NOT: log what anyone said. Logs carry job ids, counts and codes only.
 
 /** The body GET /brain/meeting-summary/next answers. Field order is the fixture's. */
@@ -110,22 +115,42 @@ export function isTranscriptExpired(meeting: Pick<IMeeting, "endedAt" | "started
 	return now.getTime() - new Date(ended).getTime() >= MEETINGS.TRANSCRIPT_TTL_DAYS * MS_PER_DAY;
 }
 
-// The body for a job just claimed, or null after failing it (the caller then claims again).
-async function bodyForClaim(client: Client, job: IMeetingSummaryJob, leaseId: string, now: Date): Promise<SummaryJobBody | null> {
+// The stored words whose speaker's consent is current, or null when consent cannot be read.
+async function consentedWords(guildId: string, stored: readonly IMeetingTranscriptSegment[]): Promise<IMeetingTranscriptSegment[] | null> {
+	try {
+		const consenting = await consentingMembers(guildId, [...new Set(stored.map((segment) => segment.speakerId))]);
+		return stored.filter((segment) => consenting.has(segment.speakerId));
+	}
+	catch (error) {
+		console.error(`[meetings] consent unreadable, no summary body built guild=${guildId}`, error instanceof Error ? error.name : "unknown");
+		return null;
+	}
+}
+
+// The body for a job just claimed; "failed" after failing it, when the caller claims again; or
+// "unreadable", when the job keeps its lease and the caller must not claim again.
+async function bodyForClaim(client: Client, job: IMeetingSummaryJob, leaseId: string, now: Date): Promise<SummaryJobBody | "failed" | "unreadable"> {
 	if (job.attempts > MEETINGS.SUMMARY_MAX_ATTEMPTS) {
 		await failSummaryJob(client, job, "attempts");
-		return null;
+		return "failed";
 	}
 	const meeting = await meetingStore.findById(job.guildId, job.meetingId);
 	if (!meeting) {
 		await meetingSummaryJobStore.markFailed(job.jobId, "meeting_gone");
-		return null;
+		// A chunk written as the meeting was deleted would otherwise sit out its expiry under an
+		// id nothing lists (2026-11 item 420, L11).
+		await meetingTranscriptStore.deleteForMeeting(job.guildId, job.meetingId);
+		return "failed";
 	}
-	const stored = await meetingTranscriptStore.listForMeeting(job.guildId, job.meetingId);
+	const stored = await consentedWords(job.guildId, await meetingTranscriptStore.listForMeeting(job.guildId, job.meetingId));
+	if (stored === null) {
+		await meetingSummaryJobStore.giveBackAttempt(job.jobId, leaseId).catch(() => undefined);
+		return "unreadable";
+	}
 	if (stored.length === 0) {
-		// Phase 3's revoke can leave a finished meeting with no words at all.
+		// A withdrawal can leave a finished meeting with no words at all.
 		await failSummaryJob(client, job, isTranscriptExpired(meeting, now) ? "transcript_expired" : "transcript_empty");
-		return null;
+		return "failed";
 	}
 	const speakerIds = [...new Set(stored.map((segment) => segment.speakerId))];
 	const resolved = await resolveSpeakerNames(client, job.guildId, speakerIds);
@@ -150,14 +175,17 @@ async function bodyForClaim(client: Client, job: IMeetingSummaryJob, leaseId: st
  * holding the lease leaves the job to the next claim once the lease runs out.
  */
 export async function claimNextSummaryJob(client: Client, now: Date = new Date()): Promise<SummaryJobBody | null> {
-	// Every pass either answers or fails the job it claimed, which no claim matches again, so
-	// the loop ends when the waiting jobs do.
+	// Every pass either answers, ends the poll, or fails the job it claimed, which no claim
+	// matches again, so the loop ends when the waiting jobs do.
 	for (;;) {
 		const leaseId = shortId();
 		const job = await meetingSummaryJobStore.claimJob(now, leaseId, new Date(now.getTime() + MEETINGS.SUMMARY_LEASE_MS));
 		if (!job) return null;
 		const body = await bodyForClaim(client, job, leaseId, now);
-		if (!body) continue;
+		if (body === "failed") continue;
+		// Not a continue: the consent read that failed would fail for the next job too. The lease
+		// runs out on its own and the job is claimed again then.
+		if (body === "unreadable") return null;
 		console.info(`[meetings] summary job claimed job=${job.jobId} guild=${job.guildId} attempt=${job.attempts} segments=${body.segments.length} trimmed=${body.trimmed}`);
 		return body;
 	}

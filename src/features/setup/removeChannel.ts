@@ -24,6 +24,20 @@ import { demolishChannels } from "./selfDestruct.js";
 /** What a Remove came to: the channel went, Dero let go of it, Discord said no, or it was already empty. */
 export type RemoveOutcome = "deleted" | "released" | "refused" | "gone";
 
+/**
+ * Told once 📝meeting-notes has left its slot (2026-11 item 420, L2): deleted, so every consent
+ * notice went with it, or released, so they still stand. meetingLifecycle registers it, which
+ * keeps this feature free of an import of meetings.
+ */
+export type NotesChannelHook = (guildId: string, outcome: "deleted" | "released") => Promise<void>;
+
+let notesChannelHook: NotesChannelHook | null = null;
+
+/** Hand the end of a live recording to the meetings feature. Called once from registerMeetingRecording. */
+export function useNotesChannelHook(hook: NotesChannelHook): void {
+	notesChannelHook = hook;
+}
+
 // A row read field by field: a hydrated row is never spread, and these slots are strings or null.
 type RemoveRow = Record<string, unknown> & { categoryId?: string | null };
 
@@ -55,7 +69,8 @@ export async function removeNoticeBoardChannel(guild: Guild, field: OnDemandFiel
 // ② list the opt out, before anything can be deleted;
 // ③ delete a built channel, and roll the opt out back if Discord refused;
 // ④ empty the slot, its intro and its anchors in one write;
-// ⑤ keep the step moved past, release the Meeting Hall and tidy the category.
+// ⑤ keep the step moved past, tell the meetings feature its notes channel is gone, release the
+//   Meeting Hall and tidy the category.
 async function removeNow(guild: Guild, field: OnDemandField, stepId: string): Promise<RemoveOutcome> {
 	const row = (await guildConfigStore.findByGuildId(guild.id)) as unknown as RemoveRow | null;
 	const channelId = typeof row?.[field] === "string" ? (row[field] as string) : null;
@@ -77,6 +92,13 @@ async function removeNow(guild: Guild, field: OnDemandField, stepId: string): Pr
 
 	const emptied = await guildConfigStore.update(guild.id, slotRelease(field, channelId, adoptedIds));
 	await guildConfigStore.addToList(guild.id, "setupStepsSkipped", stepId);
+	// Not awaited: ending a recording can wait a minute on speech to text, and one Remove at a
+	// time per guild means the next one would wait with it.
+	if (field === "meetingNotesChannelId") {
+		void notesChannelHook?.(guild.id, isAdopted ? "released" : "deleted").catch((error: unknown) =>
+			console.warn(`[remove-channel] guild ${guild.id}: ending the recording after removing ${field} failed`, error)
+		);
+	}
 	if (field === "meetingVoiceChannelId") await revokeDeroVoiceRooms(guild.id, [channelId]);
 	await tidyNoticeBoard(guild, emptied as unknown as RemoveRow | null, deleted > 0 ? channelId : null).catch((error: unknown) =>
 		console.warn(`[remove-channel] guild ${guild.id}: tidying the notice board after removing ${field} failed`, error)

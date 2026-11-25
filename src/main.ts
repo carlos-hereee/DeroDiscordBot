@@ -82,14 +82,16 @@ import { runWeeklyDigest, startWeeklyDigest } from "@features/leveling/weeklyDig
 import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { isAdminCommand } from "@utils/permissions.js";
+import { drainWithin } from "@utils/drainWithin.js";
 import { registerNoticeModal, showEmbedNotice, showNotice } from "@utils/textModal.js";
 import { registerTodoHandlers } from "@features/todos/todoHandlers.js";
+import { stopDueReminders } from "@features/reminders/dueReminders.js";
 import { registerPersonalReminderHandlers } from "@features/reminders/personalReminders.js";
 import { registerMemberTimezoneHandlers } from "@features/reminders/memberTimezone.js";
 import { registerScheduledMeetingHandlers } from "@features/meetings/scheduledMeetings.js";
-import { registerMeetingRecording } from "@features/meetings/meetingLifecycle.js";
+import { meetingWorkInFlight, registerMeetingRecording } from "@features/meetings/meetingLifecycle.js";
 import { registerMeetingPresence } from "@features/meetings/meetingPresence.js";
-import { recoverInterruptedMeetings } from "@features/meetings/meetingBootRecovery.js";
+import { recoverInterruptedMeetings, runMeetingRepairs } from "@features/meetings/meetingBootRecovery.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
 import { registerMessageXp } from "@features/leveling/messageXp.js";
 import { registerReactionXp } from "@features/leveling/reactionXp.js";
@@ -187,16 +189,25 @@ async function gracefulShutdown(signal: string, exitCode = 0): Promise<void> {
 	// ⚠️ This lives INSIDE gracefulShutdown rather than in a second
 	// process.on("SIGTERM") in xpWriter, deliberately. A sibling signal listener
 	// would race this sequence: the flush could be cut off mid bulkWrite, or fire
-	// after ④ below had already closed the socket it needs. One shutdown path,
+	// after ⑥ below had already closed the socket it needs. One shutdown path,
 	// ordered explicitly.
 	try {
 		await flushNow();
 	} catch (err) {
 		console.error(LOG_MESSAGES.leveling.shutdownFlushFailed, err);
 	}
-	// Still step ⓪: end every voice call while the gateway is up. Destroying a voice
+	// ① stop cron so no new reminder tick or meeting repair begins mid-teardown. Before the calls
+	// end, so a repair pass never starts on a meeting this shutdown is ending.
+	try {
+		weeklyDigest?.stop();
+		stopScheduler();
+	} catch (err) {
+		console.error("[shutdown] stopScheduler failed", err);
+	}
+	const reminderSweep = stopDueReminders();
+	// ② end every voice call while the gateway is up. Destroying a voice
 	// connection sends its "leave the channel" update through the gateway
-	// adapter, so after ③ it could only time out and leave Dero sitting in the
+	// adapter, so after ⑤ it could only time out and leave Dero sitting in the
 	// channel until Discord noticed the process was gone. Synchronous: it only
 	// queues the leave and clears each session's timers.
 	try {
@@ -205,26 +216,25 @@ async function gracefulShutdown(signal: string, exitCode = 0): Promise<void> {
 	} catch (err) {
 		console.error("[shutdown] voice leaveAll failed", err);
 	}
-	// ① stop cron so no new reminder tick begins mid-teardown.
-	try {
-		weeklyDigest?.stop();
-		stopScheduler();
-	} catch (err) {
-		console.error("[shutdown] stopScheduler failed", err);
-	}
-	// ② stop accepting new HTTP requests.
+	// ③ wait, bounded, for the meeting ends those calls began and the reminder being delivered
+	// (2026-11 item 420, L4 and L8): an end cut after its first write would sit summarizing with
+	// no job, and a reminder cut mid delivery would sit firing. What the bound cuts, the repair
+	// pass and the next sweep finish after the boot.
+	const drained = await drainWithin([reminderSweep, ...meetingWorkInFlight()], BOT_CONSTANTS.SHUTDOWN_DRAIN_MS);
+	if (!drained) console.warn(`[shutdown] meeting ends or reminders still running after ${BOT_CONSTANTS.SHUTDOWN_DRAIN_MS}ms, left to the repair pass`);
+	// ④ stop accepting new HTTP requests.
 	try {
 		apiServer?.close();
 	} catch (err) {
 		console.error("[shutdown] api server close failed", err);
 	}
-	// ③ disconnect the gateway (halts interaction + event handling).
+	// ⑤ disconnect the gateway (halts interaction + event handling).
 	try {
 		await client.destroy();
 	} catch (err) {
 		console.error("[shutdown] client.destroy failed", err);
 	}
-	// ④ close Mongo last so any in-flight write lands before the socket drops.
+	// ⑥ close Mongo last so any in-flight write lands before the socket drops.
 	try {
 		await disconnectMongoose();
 	} catch (err) {
@@ -965,6 +975,8 @@ process.on("uncaughtException", (err) => {
 		// A meeting a restart cut off ends as interrupted and is summarized from the segments
 		// already written (2026-11 item 388, A3). Never throws.
 		await recoverInterruptedMeetings(client);
+		// What a restart or a failed write left of the rest (2026-11 item 420). Never throws.
+		await runMeetingRepairs(client);
 		// The satellite half of the same catch up: departures from a network table's
 		// satellites that happened while the bot was down. Never throws.
 		await reconcileSatellitesOnBoot(client);

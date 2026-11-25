@@ -1,3 +1,4 @@
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { IPluginCopy } from "@base/copy/index.js";
 import type { IMeeting } from "@db/models/Meeting.js";
 import type { CardPayload } from "@utils/cardMessage.js";
@@ -16,10 +17,10 @@ import { infoEmbed } from "@utils/embedBuilder.js";
 //        and its reminders are what reach them.
 
 const MS_PER_MINUTE = 60_000;
-// Discord refuses an embed description over 4096 characters. The summary, ten decisions and
+// Discord refuses an embed description over this. The summary, ten decisions and
 // fifteen action items at their caps can pass it, so lines past the limit are counted
 // instead of drawn; every action item is still a todo of its own.
-const DESCRIPTION_MAX = 4096;
+const DESCRIPTION_MAX = BOT_CONSTANTS.DISCORD_LIMITS.MAX_EMBED_DESCRIPTION_LENGTH;
 const BULLET = "• ";
 const quiet = { parse: [], users: [], roles: [] } as CardPayload["allowedMentions"];
 

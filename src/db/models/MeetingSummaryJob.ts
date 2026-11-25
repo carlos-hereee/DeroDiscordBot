@@ -11,9 +11,9 @@ import mongoose from "mongoose";
 //
 // ⚠️ THE LEASE IS THE ONE CLAIM. A claim is a conditional write from pending (or from a
 // leased job whose leaseUntil passed) that stamps a fresh leaseId; a result is accepted only
-// when it echoes the job's current leaseId. A member's Stop recording me resets a leased job
+// when it echoes the job's current leaseId. A member's withdrawal resets a leased job
 // to pending with a new leaseId, so a result built from their words is refused (the D1 sub
-// question answer in the plan's session notes).
+// question answer in the plan's session notes). It gives the claim's attempt back.
 
 export const SUMMARY_JOB_STATUSES = ["pending", "leased", "done", "failed"] as const;
 export type SummaryJobStatus = (typeof SUMMARY_JOB_STATUSES)[number];

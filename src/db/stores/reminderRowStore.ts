@@ -46,10 +46,25 @@ export const reminderRowStore = {
 	async cancelLead(targetId: string, leadKey: ReminderLeadKey): Promise<void> {
 		await Reminder.updateMany({ targetId, leadKey, status: "pending" }, { $set: { status: "cancelled" } });
 	},
-	/** Cancel one of a member's own pending reminders. True when it was pending. */
-	async cancelPersonal(guildId: string, userId: string, reminderId: string): Promise<boolean> {
-		const result = await Reminder.updateOne({ guildId, userId, reminderId, kind: "personal", status: "pending" }, { $set: { status: "cancelled" } });
+	/**
+	 * Cancel one of a member's own pending reminders, its private text gone at once and `at` set
+	 * as the date the empty row expires from. True when it was pending.
+	 */
+	async cancelPersonal(guildId: string, userId: string, reminderId: string, at: Date): Promise<boolean> {
+		const result = await Reminder.updateOne(
+			{ guildId, userId, reminderId, kind: "personal", status: "pending" },
+			{ $set: { status: "cancelled", firedAt: at, text: null } }
+		);
 		return result.modifiedCount > 0;
+	},
+
+	/**
+	 * Close one row left firing since `before` as missed, in one conditional write, so two processes
+	 * close it once. Its text goes with it: only a personal row has any, and it will never be sent.
+	 * Null when none is stale.
+	 */
+	async closeStaleFiring(before: Date, at: Date): Promise<IReminder | null> {
+		return Reminder.findOneAndUpdate({ status: "firing", updatedAt: { $lte: before } }, { $set: { status: "missed", firedAt: at, text: null } }, { new: true }).lean<IReminder>();
 	},
 
 	/** A member's pending personal reminders in one server, soonest first. */

@@ -12,7 +12,7 @@ import { SttError, type SttProvider } from "@features/voice/sttProvider.js";
 import type { ReceiveStreamLike, ReceiverLike } from "@features/voice/voiceListener.js";
 import { wavFromPcm16kMono } from "@features/voice/wavFile.js";
 import { elevenLabsApiKey } from "@utils/config.js";
-import { hasMeetingConsent } from "./meetingConsent.js";
+import { hasMeetingConsent, hasMeetingConsentNow } from "./meetingConsent.js";
 
 // ── meetingRecorder ─────────────────────────────────────────────────────────
 // What:  Dero's ears in a Meeting Hall recording (2026-11 item 388 Phase 3). One subscription
@@ -34,8 +34,11 @@ import { hasMeetingConsent } from "./meetingConsent.js";
 //   ② Audio lives only in memory, in the speaker's buffer, until its chunk is transcribed or
 //     dropped. Nothing here writes a file, and no log line carries audio or text: only ids,
 //     durations and error kinds (privacyTripwire.test.ts scans this folder).
-//   ③ A revoke drops the member's unflushed buffer unsent, and a chunk already at the
-//     provider is thrown away when its text returns, never written.
+//   ③ A withdrawal drops the member's unflushed buffer unsent, and a chunk already at the
+//     provider is thrown away when its text returns, never written, even when the member agreed
+//     again while it was there (2026-11 item 420).
+//   ④ Consent is read again before a chunk is paid for, and again, from the row itself, before
+//     and after its words are written. A no, or a read that fails, is a no: the chunk is dropped.
 //
 // Spend (owner decision D3): a meeting meters at the real rate, not estimateSttCents' one cent
 // floor per call, which would let one busy hour spend a free server's whole month. Each chunk
@@ -73,6 +76,12 @@ export interface RecordedSegment {
 	text: string;
 }
 
+/** What a chunk's words may be written on: a consent current now, in a meeting that still takes words. */
+export interface WriteStanding {
+	consents: boolean;
+	meeting: "open" | "closed" | "gone";
+}
+
 export interface MeetingRecorderDeps {
 	now(): number;
 	createDecoder(): OpusPacketDecoder;
@@ -81,8 +90,14 @@ export interface MeetingRecorderDeps {
 	stt: SttProvider;
 	reserve(guildId: string, cents: number, sttSeconds: number): Promise<SpendReservation | null>;
 	refund(reservation: SpendReservation): Promise<void>;
+	/** The member's consent and the meeting as their rows stand now, never from a cache. */
+	readStanding(guildId: string, meetingId: string, userId: string): Promise<WriteStanding>;
 	writeSegment(segment: RecordedSegment): Promise<void>;
 	addSpeaker(guildId: string, meetingId: string, userId: string): Promise<void>;
+	/** Take one member's words, then their speaker entry, out of this meeting. */
+	removeSpeakerWords(guildId: string, meetingId: string, userId: string): Promise<void>;
+	/** Take every word out of a meeting that no longer exists. */
+	removeMeetingWords(guildId: string, meetingId: string): Promise<void>;
 	addUsage(guildId: string, meetingId: string, sttSeconds: number, cents: number): Promise<void>;
 	/** Told once, when a reserve is refused; meetingLifecycle ends the meeting with cap_spend. */
 	onSpendRefused(guildId: string, meetingId: string): void;
@@ -103,8 +118,20 @@ export const defaultMeetingRecorderDeps: MeetingRecorderDeps = {
 		return result.status === "ok" ? result.reservation : null;
 	},
 	refund,
+	readStanding: async (guildId, meetingId, userId) => {
+		const consents = await hasMeetingConsentNow(guildId, userId);
+		const meeting = await meetingStore.findById(guildId, meetingId);
+		if (!meeting) return { consents, meeting: "gone" };
+		return { consents, meeting: meeting.status === "recording" || meeting.status === "summarizing" ? "open" : "closed" };
+	},
 	writeSegment: (segment) => meetingTranscriptStore.insertSegment(segment),
 	addSpeaker: (guildId, meetingId, userId) => meetingStore.addSpeaker(guildId, meetingId, userId),
+	removeSpeakerWords: async (guildId, meetingId, userId) => {
+		await meetingTranscriptStore.deleteForSpeaker(guildId, [meetingId], userId);
+		// Last, so a failure in between leaves the mark that words are still owed a removal.
+		await meetingStore.removeSpeaker(guildId, meetingId, userId);
+	},
+	removeMeetingWords: (guildId, meetingId) => meetingTranscriptStore.deleteForMeeting(guildId, meetingId),
 	addUsage: (guildId, meetingId, sttSeconds, cents) => meetingStore.addUsage(guildId, meetingId, sttSeconds, cents),
 	onSpendRefused: () => undefined,
 };
@@ -124,8 +151,20 @@ export interface MeetingRecorder {
 	stop(): void;
 	/** Stop, transcribe every unflushed buffer, and wait for every chunk still at the provider. */
 	flush(): Promise<void>;
+	/**
+	 * Stop, drop every unflushed buffer unsent and throw away every chunk still at the provider.
+	 * Resolves once a write that had already begun has ended, without waiting on the provider,
+	 * and releases a flush() that was waiting on it. Whoever calls it makes the recorder
+	 * unreachable: a start undone, a meeting deleted, a notes channel gone (2026-11 item 420).
+	 */
+	discard(): Promise<void>;
 	/** Stop recording one member now: buffer dropped, stream closed, a chunk in flight discarded. */
 	dropSpeaker(userId: string): Promise<void>;
+	/**
+	 * A member left the hall: what they said is sent and their slot is free for another speaker.
+	 * Not a withdrawal (2026-11 item 420, L12), so they are heard again when they come back.
+	 */
+	releaseSpeaker(userId: string): void;
 	/** A member who agreed again after a revoke in this meeting may be subscribed again. */
 	allowAgain(userId: string): void;
 }
@@ -171,7 +210,16 @@ export function startMeetingRecorder(start: MeetingRecorderStart, deps: MeetingR
 	// Members who pressed Stop recording me during this meeting: a consent read already in
 	// flight when they pressed it must not subscribe them.
 	const revoked = new Set<string>();
+	// How often each member withdrew during this meeting. `revoked` alone cannot tell a chunk cut
+	// before a withdrawal from one cut after the member agreed again, because agreeing clears it.
+	const withdrawals = new Map<string, number>();
+	const withdrawalsOf = (userId: string): number => withdrawals.get(userId) ?? 0;
 	const inflight = new Map<string, Set<Promise<void>>>();
+	// The database writes of chunks whose text came back, the only work discard() waits for.
+	const writing = new Set<Promise<void>>();
+	let releaseFlush: () => void = () => undefined;
+	const discarded = new Promise<void>((resolve) => (releaseFlush = resolve));
+	let isDiscarded = false;
 	let stopped = false;
 	let capped = false;
 	let accruedMillicents = 0;
@@ -205,9 +253,18 @@ export function startMeetingRecorder(start: MeetingRecorderStart, deps: MeetingR
 
 	// ── one chunk ──
 
-	// ① meter ② transcribe ③ write. Every failure ends only this chunk; the meeting goes on.
+	// ① consent ② meter ③ transcribe ④ write. Every failure ends only this chunk; the meeting goes on.
 	async function transcribe(userId: string, pcm48kStereo: Buffer, offsetMs: number, durationMs: number): Promise<void> {
-		if (capped || revoked.has(userId)) return;
+		const cutAt = withdrawalsOf(userId);
+		const withdrawnSince = (): boolean => revoked.has(userId) || withdrawalsOf(userId) !== cutAt;
+		if (capped || isDiscarded || withdrawnSince()) return;
+		// A read that throws rejects this chunk's promise, which track() logs: unreadable is a no.
+		if (!(await deps.hasConsent(guildId, userId))) {
+			silence(userId);
+			return;
+		}
+		// Asked again after the wait: a cap, a discard or a withdrawal may have landed in it.
+		if (capped || isDiscarded || withdrawnSince()) return;
 		const millicents = sttMillicents(durationMs);
 		const seconds = durationMs / MS_PER_SECOND;
 		const cents = centsOwedFor(millicents);
@@ -236,11 +293,47 @@ export function startMeetingRecorder(start: MeetingRecorderStart, deps: MeetingR
 			console.warn(`[meetings] chunk not transcribed guild=${guildId} meeting=${meetingId} speaker=${userId} kind=${kind} ms=${durationMs}`);
 			return;
 		}
-		// ③ A revoke while the chunk was at the provider: its words are never written.
-		if (revoked.has(userId) || text.length === 0) return;
-		await deps.writeSegment({ meetingId, guildId, speakerId: userId, offsetMs, durationMs, text });
+		// ④ A withdrawal while the chunk was at the provider: its words are never written.
+		if (isDiscarded || withdrawnSince() || text.length === 0) return;
+		const before = await deps.readStanding(guildId, meetingId, userId);
+		if (!before.consents) silence(userId);
+		if (!before.consents || before.meeting !== "open") return;
+		if (isDiscarded || withdrawnSince()) return;
+		const kept = await keep(writeWords({ meetingId, guildId, speakerId: userId, offsetMs, durationMs, text }, withdrawnSince));
+		if (kept) await deps.addUsage(guildId, meetingId, seconds, cents);
+	}
+
+	// Write one chunk's words and look once more, because a withdrawal or a delete can land while
+	// the insert runs. The speaker entry goes first: with a revoked row it is the mark a restart
+	// leaves of words still to be removed, so no word may land before it. True when they were kept.
+	async function writeWords(segment: RecordedSegment, withdrawnSince: () => boolean): Promise<boolean> {
+		const userId = segment.speakerId;
 		await deps.addSpeaker(guildId, meetingId, userId);
-		await deps.addUsage(guildId, meetingId, seconds, cents);
+		await deps.writeSegment(segment);
+		// A read that fails here leaves the words: the read just before the write said yes, a
+		// withdrawal since runs its own removal, and no summary is built without reading again.
+		const after = await deps.readStanding(guildId, meetingId, userId).catch(() => null);
+		if (after?.meeting === "gone") {
+			await deps.removeMeetingWords(guildId, meetingId);
+			return false;
+		}
+		const consentEnded = after !== null && !after.consents;
+		if (consentEnded) silence(userId);
+		if (!consentEnded && !withdrawnSince()) return true;
+		await deps.removeSpeakerWords(guildId, meetingId, userId);
+		return false;
+	}
+
+	// Hold a write where discard() can wait for it.
+	function keep<T>(write: Promise<T>): Promise<T> {
+		const settled: Promise<void> = write
+			.then(
+				() => undefined,
+				() => undefined
+			)
+			.finally(() => writing.delete(settled));
+		writing.add(settled);
+		return write;
 	}
 
 	function track(userId: string, work: Promise<void>): void {
@@ -327,7 +420,9 @@ export function startMeetingRecorder(start: MeetingRecorderStart, deps: MeetingR
 		deps
 			.hasConsent(guildId, userId)
 			.then((agreed) => {
-				if (agreed) subscribe(userId);
+				// Gone from `checking` means they left the hall during the read: a slot taken now
+				// would be held by somebody who is not there.
+				if (agreed && checking.has(userId)) subscribe(userId);
 			})
 			.catch((error: unknown) => {
 				console.warn(`[meetings] consent check failed guild=${guildId} speaker=${userId}`, error instanceof Error ? error.name : "unknown");
@@ -348,6 +443,26 @@ export function startMeetingRecorder(start: MeetingRecorderStart, deps: MeetingR
 		}
 		catch {
 			// A stream the library already tore down has nothing left to close.
+		}
+	}
+
+	// Stop hearing one member and drop what they said, at once. The synchronous half of
+	// dropSpeaker, and all a chunk may run on itself: the other half waits for the member's chunks,
+	// and a chunk that waited for itself would never end (2026-11 item 420, risk R6).
+	function silence(userId: string): void {
+		revoked.add(userId);
+		withdrawals.set(userId, withdrawalsOf(userId) + 1);
+		const capture = captures.get(userId);
+		if (capture) {
+			captures.delete(userId);
+			close(capture, false);
+			capture.decoder.close();
+		}
+		for (let index = pending.length - 1; index >= 0; index -= 1) {
+			if (pending[index].userId !== userId) continue;
+			pending[index].chunks = [];
+			pending[index].bytes = 0;
+			pending.splice(index, 1);
 		}
 	}
 
@@ -385,26 +500,31 @@ export function startMeetingRecorder(start: MeetingRecorderStart, deps: MeetingR
 				flushChunk(capture);
 				capture.decoder.close();
 			}
-			await settle();
+			await Promise.race([settle(), discarded]);
 			if (recorders.get(meetingId) === recorder) recorders.delete(meetingId);
 		},
-		async dropSpeaker(userId) {
-			revoked.add(userId);
-			const capture = captures.get(userId);
-			if (capture) {
-				captures.delete(userId);
-				close(capture, false);
+		async discard() {
+			isDiscarded = true;
+			stopHearing();
+			for (const capture of pending.splice(0)) {
+				capture.chunks = [];
+				capture.bytes = 0;
 				capture.decoder.close();
 			}
-			for (let index = pending.length - 1; index >= 0; index -= 1) {
-				if (pending[index].userId !== userId) continue;
-				pending[index].chunks = [];
-				pending[index].bytes = 0;
-				pending.splice(index, 1);
-			}
+			if (recorders.get(meetingId) === recorder) recorders.delete(meetingId);
+			await Promise.all([...writing]);
+			releaseFlush();
+		},
+		async dropSpeaker(userId) {
+			silence(userId);
 			// A chunk at the provider writes nothing once `revoked` holds them; waiting for it
 			// means the caller's delete runs after any write that had already begun.
 			await settle(userId);
+		},
+		releaseSpeaker(userId) {
+			checking.delete(userId);
+			// The close it raises lands in onStreamGone, which sends the chunk and frees the slot.
+			captures.get(userId)?.stream.destroy();
 		},
 		allowAgain(userId) {
 			revoked.delete(userId);

@@ -8,8 +8,11 @@ import mongoose from "mongoose";
 // by the recorder before it captures anyone.
 //
 // ⚠️ NO ROW MEANS NO CONSENT, and so does a row with revokedAt set or a version below
-// BOT_CONSTANTS.MEETINGS.CONSENT_VERSION (R7 of the plan's session notes). Stop recording me
-// sets revokedAt rather than deleting the row; I agree again clears it. No thanks writes nothing.
+// BOT_CONSTANTS.MEETINGS.CONSENT_VERSION (R7 of the plan's session notes). No thanks
+// and Stop recording me both set revokedAt rather than deleting the row; I agree again clears it.
+// Neither writes a row for a member who has none (2026-11 item 420). A revoked row whose member
+// is still in an open meeting's speakerIds is the durable mark of words still to be removed,
+// which meetingBootRecovery finishes.
 
 export interface IMeetingConsent {
 	guildId: string;
