@@ -4,16 +4,22 @@ import type { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 // ── /dero plan (2026-10 item 262) ──────────────────────────────────────────
 // The promises: only the guild owner gets a code; every owner gets one, covered servers too
 // (it is also the way to a fresh code for the dashboard's pairing panel); the reply is private;
-// only an uncovered server is pitched the plan; the code is logged as a pairing code sent.
+// only an uncovered server is pitched the plan, judged by asking the server at that moment; the
+// code is logged as a pairing code sent.
 
 const mocks = vi.hoisted(() => ({
 	issue: vi.fn(),
-	isServerCovered: vi.fn(),
+	serverGet: vi.fn(),
 	log: vi.fn(),
 }));
 
 vi.mock("@db/stores/pendingPairingStore.js", () => ({ pendingPairingStore: { issue: mocks.issue }, PAIRING_CODE_TTL_MS: 15 * 60 * 1000 }));
-vi.mock("@features/entitlements/serverPlanAccess.js", () => ({ isServerCovered: mocks.isServerCovered }));
+// The wire is mocked and not serverPlanAccess, because which answer the command reads (the cached
+// one or the server's) is the thing under test.
+vi.mock("@utils/serverApi.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@utils/serverApi.js")>()),
+	serverApi: { get: mocks.serverGet },
+}));
 vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { log: mocks.log } }));
 vi.mock("@features/dero-brain/speakerAdminRole.js", () => ({ readSpeakerAdminRoleId: vi.fn(async () => null) }));
 vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({ deroVoiceConfigStore: { findByGuildId: vi.fn(async () => null) } }));
@@ -23,11 +29,14 @@ import { MessageFlags } from "discord.js";
 import { execute } from "./dero.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { _clearServerPlanAccessCache, resolveServerPlanAccess } from "@features/entitlements/serverPlanAccess.js";
 import { serverPlanCommandCopy } from "@features/entitlements/serverPlanCopy.js";
 
 const GUILD_ID = "g1";
 const OWNER_ID = "owner";
 const CODE = "ABC234";
+const COVERED_RESPONSE = { guildId: GUILD_ID, covered: true, voiceCeilingUsd: 5 };
+const UNCOVERED_RESPONSE = { guildId: GUILD_ID, covered: false, voiceCeilingUsd: 2 };
 
 function interactionFor(userId: string, cached = true) {
 	const reply = vi.fn(async () => undefined);
@@ -61,7 +70,8 @@ function replyText(mock: ReturnType<typeof vi.fn>): string {
 
 beforeEach(() => {
 	mocks.issue.mockReset().mockResolvedValue(CODE);
-	mocks.isServerCovered.mockReset().mockResolvedValue(false);
+	_clearServerPlanAccessCache();
+	mocks.serverGet.mockReset().mockResolvedValue(UNCOVERED_RESPONSE);
 	mocks.log.mockReset().mockResolvedValue(undefined);
 });
 
@@ -99,11 +109,26 @@ describe("/dero plan", () => {
 	});
 
 	it("still issues a code for a covered server, with no buy pitch", async () => {
-		mocks.isServerCovered.mockResolvedValue(true);
+		mocks.serverGet.mockResolvedValue(COVERED_RESPONSE);
 		const { interaction, editReply } = interactionFor(OWNER_ID);
 		await execute(interaction);
 
 		expect(mocks.issue).toHaveBeenCalledWith(GUILD_ID, OWNER_ID);
+		const text = embedText(editReply);
+		expect(text).toContain(CODE);
+		expect(text).toContain(serverPlanCommandCopy.covered);
+		expect(text).not.toContain(BOT_CONSTANTS.DERO_SERVER_PLAN_URL);
+	});
+
+	// M5 of 2026-11 item 424: the owner who ran /dero plan, paid and ran it again to check was
+	// told to buy for up to an hour, from the answer the first run cached.
+	it("M5: shows the covered line and no link when the server was covered since the cached answer", async () => {
+		await resolveServerPlanAccess(GUILD_ID);
+		mocks.serverGet.mockResolvedValue(COVERED_RESPONSE);
+
+		const { interaction, editReply } = interactionFor(OWNER_ID);
+		await execute(interaction);
+
 		const text = embedText(editReply);
 		expect(text).toContain(CODE);
 		expect(text).toContain(serverPlanCommandCopy.covered);

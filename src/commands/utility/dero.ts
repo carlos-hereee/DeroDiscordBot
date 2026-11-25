@@ -40,7 +40,7 @@ import { showCooldownNotice, showErrorNotice, showNotice, showPendingNotice } fr
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { pendingPairingStore, PAIRING_CODE_TTL_MS } from "@db/stores/pendingPairingStore.js";
-import { isServerCovered } from "@features/entitlements/serverPlanAccess.js";
+import { isServerCovered, isServerCoveredNow } from "@features/entitlements/serverPlanAccess.js";
 import { serverPlanCommandCopy, serverPlanLine } from "@features/entitlements/serverPlanCopy.js";
 
 // ── /dero ─────────────────────────────────────────────────────────────────
@@ -644,7 +644,9 @@ const PAIRING_CODE_TTL_MINUTES = PAIRING_CODE_TTL_MS / MS_PER_MINUTE;
  * /dero plan: hands the guild owner a fresh one time code, privately. The code buys the Dero
  * server plan on the pricing page and also pairs the server in the dashboard's "Connect your
  * Discord server" panel, so it is issued for EVERY owner, covered servers included (the
- * owner's decision of 2026-10-29); only the plan pitch depends on coverage. Issuing replaces
+ * owner's decision of 2026-10-29); only the plan pitch depends on coverage, asked of the server
+ * on every run because this is where an owner checks a purchase they just made (2026-11 item
+ * 424), and a cached answer would tell them to buy again. Issuing replaces
  * any live code for the guild, the store keeps one per guild.
  */
 async function sendServerPlanCode(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -664,7 +666,7 @@ async function sendServerPlanCode(interaction: ChatInputCommandInteraction): Pro
 	// Deferred because the issue and the coverage read can outlast Discord's 3 second window.
 	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 	try {
-		const [code, covered] = await Promise.all([pendingPairingStore.issue(guild.id, guild.ownerId), isServerCovered(guild.id)]);
+		const [code, covered] = await Promise.all([pendingPairingStore.issue(guild.id, guild.ownerId), isServerCoveredNow(guild.id)]);
 		const pitch = covered ? serverPlanCommandCopy.covered : serverPlanLine();
 		await interaction.editReply({
 			embeds: [infoEmbed(serverPlanCommandCopy.title, [serverPlanCommandCopy.code(code, PAIRING_CODE_TTL_MINUTES), pitch].join("\n\n"))],

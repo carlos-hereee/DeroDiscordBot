@@ -2,6 +2,7 @@ import { EmbedBuilder, type ColorResolvable } from "discord.js";
 import { serverApi } from "@utils/serverApi.js";
 import { enforceGameRoomTier } from "@utils/config.js";
 import { COLORS } from "@base/copy/brand.js";
+import { CONFIRMED_TTL_MS, ERROR_TTL_MS, UNCOVERED_TIER_KEY, UNCOVERED_TTL_MS } from "./entitlementTtl.js";
 
 // ── Game Rooms entitlement seam ──
 // What:  decides whether a member may OPEN a game room. Today it says yes to everyone. It is
@@ -18,7 +19,8 @@ import { COLORS } from "@base/copy/brand.js";
 //        founding-member grandfathering is recorded on the server, not here.
 // How:   ① flag off, or missing context, allow with zero I/O. ② cached answer inside its TTL,
 //        return it. ③ otherwise resolve from the server over the signed serverApi and cache the
-//        result. ④ on ANY error, allow.
+//        result, for five minutes when nothing covers the guild and an hour otherwise.
+//        ④ on ANY error, allow.
 //
 // ⚠️ THIS GATE FAILS OPEN. earlyAccess.ts fails CLOSED and that is correct THERE: an unconfirmable
 // guild must not be handed an in-window feature early, and the feature reaches everyone at
@@ -29,11 +31,9 @@ import { COLORS } from "@base/copy/brand.js";
 // makes this one fail closed needs a deliberate decision, not a consistency cleanup.
 
 // ── Eligibility cache ──
-// A confirmed answer holds for an hour, because a plan change is rare and the Discord button
-// path should not wait on Heroku. An ERROR is cached only briefly, so one bad round-trip does
-// not pin a stale answer for the full hour. Same two TTLs as earlyAccess.
-const CONFIRMED_TTL_MS = 60 * 60 * 1000;
-const ERROR_TTL_MS = 60 * 1000;
+// The three lifetimes and their reasons live in entitlementTtl.ts. The uncovered one matters
+// twice here, because the cache is per member: an hour long free answer let two members of a
+// server that had just paid see different room limits (2026-11 item 424).
 
 interface EligibilityEntry {
 	value: boolean;
@@ -42,7 +42,7 @@ interface EligibilityEntry {
 	// the first denial in an hour show an upgrade link and every later one show none.
 	upgradeUrl?: string;
 	// The private room ceiling and the tier key that produced it, cached with the answer so the
-	// quota gate and its refusal copy ride the same hour of cache the boolean does. An EXPIRED
+	// quota gate and its refusal copy ride the same cache entry the boolean does. An EXPIRED
 	// entry is deliberately never deleted from the map: its quota is the "last known tier" the
 	// fail-open path below prefers over the unsubscribed floor.
 	privateQuota?: number;
@@ -139,7 +139,8 @@ export const checkGameRoomAccess = async (
 			upgradeUrl: res?.upgradeUrl,
 			privateQuota,
 			tierKey: res?.tierKey,
-			expiresAt: now.getTime() + CONFIRMED_TTL_MS,
+			// The server's own key decides, so an older build that sends none keeps the hour.
+			expiresAt: now.getTime() + (res?.tierKey === UNCOVERED_TIER_KEY ? UNCOVERED_TTL_MS : CONFIRMED_TTL_MS),
 		});
 		return value
 			? { allowed: true, privateQuota, tierKey: res?.tierKey }

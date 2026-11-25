@@ -214,6 +214,41 @@ describe("caching", () => {
 	});
 });
 
+// M5 of 2026-11 item 424: each member keeps their own cached answer, so a server that had just
+// paid could show the free room limit for up to an hour, and a different one per member.
+describe("M5: how long an uncovered server's answer lives", () => {
+	const FIVE_MINUTES_MS = 5 * 60 * 1000;
+	const HOUR_MS = 60 * 60 * 1000;
+	const later = (ms: number): Date => new Date(NOW.getTime() + ms);
+
+	beforeEach(() => {
+		flags.enforceGameRoomTier = true;
+	});
+
+	it("reads an unsubscribed answer again after 5 minutes, and not before", async () => {
+		mockGet.mockResolvedValueOnce({ guildId: GUILD, userId: USER, allowed: true, privateQuota: 5, tierKey: "unsubscribed" });
+		await checkGameRoomAccess(GUILD, USER, NOW);
+		await checkGameRoomAccess(GUILD, USER, later(FIVE_MINUTES_MS - 1));
+		expect(mockGet).toHaveBeenCalledTimes(1);
+
+		mockGet.mockResolvedValueOnce({ guildId: GUILD, userId: USER, allowed: true, privateQuota: 10, tierKey: "serverPlan" });
+		const afterPaying = await checkGameRoomAccess(GUILD, USER, later(FIVE_MINUTES_MS));
+		expect(afterPaying.privateQuota).toBe(10);
+		expect(mockGet).toHaveBeenCalledTimes(2);
+	});
+
+	// undefined is an older server build that sends no tier key.
+	it.each(["serverPlan", "free", "pro", "business", undefined])("keeps a %s answer for the hour", async (tierKey) => {
+		mockGet.mockResolvedValue({ guildId: GUILD, userId: USER, allowed: true, privateQuota: 10, tierKey });
+		await checkGameRoomAccess(GUILD, USER, NOW);
+		await checkGameRoomAccess(GUILD, USER, later(HOUR_MS - 1));
+		expect(mockGet).toHaveBeenCalledTimes(1);
+
+		await checkGameRoomAccess(GUILD, USER, later(HOUR_MS));
+		expect(mockGet).toHaveBeenCalledTimes(2);
+	});
+});
+
 describe("gameRoomUpgradeEmbed", () => {
 	it("uses the server-supplied url when present", () => {
 		const embed = gameRoomUpgradeEmbed("https://x.test/plans");

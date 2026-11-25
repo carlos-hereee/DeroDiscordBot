@@ -7,6 +7,7 @@ import type { FlavorTable } from "./matchOutcome.js";
 // Aliased: Monopoly's copy below names its own parameters `chips`.
 import { chips as chipAmount } from "@features/economy/economyCopy.js";
 import type { Stake, StakeKind } from "./chipMatch.js";
+import { UNCOVERED_TIER_KEY } from "@features/entitlements/entitlementTtl.js";
 import { serverPlanLine } from "@features/entitlements/serverPlanCopy.js";
 
 // ── game rooms user-facing copy ──────────────────────────────────────
@@ -72,7 +73,7 @@ const GAME_LABELS: Record<GameSlug, string> = {
 // SERVER's vocabulary (nexious-server resolves the tier; the bot never stores one),
 // so an unknown key renders as itself rather than crashing a refusal message.
 const TIER_NAMES: Record<string, string> = {
-	unsubscribed: "free",
+	[UNCOVERED_TIER_KEY]: "free",
 	free: "Starter",
 	pro: "Creator Pro",
 	business: "Creator Studio",
@@ -80,9 +81,6 @@ const TIER_NAMES: Record<string, string> = {
 	serverPlan: "Dero server plan",
 };
 
-// The tier key the server sends for a guild nothing covers, the one case the room limit
-// names the Dero server plan for.
-const UNCOVERED_TIER_KEY = "unsubscribed";
 const tierNameOf = (tierKey: string): string => TIER_NAMES[tierKey] ?? tierKey;
 // "the Starter plan", but "the Dero server plan" rather than "the Dero server plan plan":
 // the add on's name already ends in the word the sentences add.

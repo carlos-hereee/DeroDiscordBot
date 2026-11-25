@@ -18,6 +18,7 @@ This file starts at v1.4.0. Earlier releases predate the changelog convention; t
 
 * **Meetings record only members whose yes stands at that moment** (2026-11 item 420). No thanks ends an earlier yes and removes words from meetings not yet summarized, nobody is heard before a notice naming them is posted, and a summary leaves out anyone who withdrew.
 * **Meetings, reminders and todos come through a restart** (2026-11 item 420). An interrupted meeting or reminder is finished after the restart, and long lists and large meetings stay within Discord's limits.
+* **Billing reliability improvements** (2026-11 item 424). `/dero plan` and a server's voice and private room limits notice a newly covered server sooner.
 
 * **Meeting notes.** Once an admin adds 📝meeting-notes from its step card in 🧭onboarding, a host starts a recording in 🏛️ Meeting Hall and Dero posts the summary, the decisions and the action items there. Only members who press I agree are recorded, no audio is kept, the transcript is deleted after 30 days, and Stop recording me removes a member's words from any meeting not yet summarized.
 * **Todos.** Once an admin adds ✅todos, each action item becomes a todo card with Done, Assign to me, Assign, Due date and Delete. `/todo add` and `/todo mine` work from any channel.
